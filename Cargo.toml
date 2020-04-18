@@ -1,0 +1,22 @@
+[package]
+name = "procmon"
+version = "0.1.0"
+authors = ["Laurent Pelecq <lpelecq+procmon@circoise.eu>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1"
+config = "0"
+console = "0"
+log = "0"
+loggerv = "0"
+procfs = "0.7"
+structopt = "0.3"
+structopt-derive = "0"
+xdg = "2"
+
+[profile.release]
+lto = true
+panic = 'abort'
