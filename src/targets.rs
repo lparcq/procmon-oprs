@@ -197,8 +197,12 @@ impl Target for MultiTarget {
     }
 
     fn collect(&self, target_number: usize, collector: &mut dyn Collector) {
-        for process in self.processes.iter() {
-            collector.collect(target_number, self.get_name(), process);
+        if self.processes.is_empty() {
+            collector.error(target_number, self.get_name(), &TargetError::NoProcess);
+        } else {
+            for process in self.processes.iter() {
+                collector.collect(target_number, self.get_name(), process);
+            }
         }
     }
 
