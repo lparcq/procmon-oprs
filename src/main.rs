@@ -1,18 +1,13 @@
-extern crate anyhow;
-#[macro_use]
-extern crate log;
-extern crate config;
-extern crate console;
-extern crate loggerv;
-extern crate structopt;
-extern crate structopt_derive;
-extern crate xdg;
+#[cfg(unix)]
+extern crate libc;
 
 use std::path::PathBuf;
-
 use structopt::StructOpt;
 
 mod application;
+mod targets;
+
+use targets::TargetId;
 
 const APP_NAME: &str = "procmon";
 
@@ -37,8 +32,8 @@ struct Opt {
     )]
     every: f64,
 
-    #[structopt(name = "PROCESS", required = true, min_values = 1)]
-    process: Vec<String>,
+    #[structopt(name = "TARGET")]
+    targets: Vec<String>,
 }
 
 //
@@ -69,5 +64,24 @@ fn main() {
         settings.set("count", count as i64).unwrap();
     }
 
-    application::run(&settings, &opt.process);
+    let mut target_ids = Vec::new();
+    for target_name in opt.targets {
+        if let Ok(pid) = target_name.parse::<i32>() {
+            target_ids.push(TargetId::Pid(pid));
+        } else {
+            let path = PathBuf::from(target_name.as_str());
+            match path.parent() {
+                Some(parent) => {
+                    if parent.exists() {
+                        target_ids.push(TargetId::PidFile(path));
+                    } else {
+                        target_ids.push(TargetId::ProcessName(target_name));
+                    }
+                }
+                None => target_ids.push(TargetId::ProcessName(target_name)),
+            }
+        }
+    }
+
+    application::run(&settings, &target_ids);
 }
