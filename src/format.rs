@@ -64,6 +64,22 @@ pub fn size(value: u64) -> String {
     }
 }
 
+pub fn duration(value: u64) -> String {
+    if value < 60 {
+        format!("{}s", value)
+    } else {
+        let minutes = value / 60;
+        let seconds = value - minutes * 60;
+        if minutes < 60 {
+            format!("{}m {}s", minutes, seconds)
+        } else {
+            let hours = minutes / 60;
+            let minutes = minutes - hours * 60;
+            format!("{}h {}m {}s", hours, minutes, seconds)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -73,5 +89,13 @@ mod tests {
         assert_eq!("1.0 K", super::size(1_000));
         assert_eq!("1.0 M", super::size(1_000_000));
         assert_eq!("1.0 G", super::size(1_000_000_000));
+    }
+
+    #[test]
+    fn test_duration() {
+        assert_eq!("59s", super::duration(59));
+        assert_eq!("1m 15s", super::duration(75));
+        assert_eq!("59m 59s", super::duration(3599));
+        assert_eq!("3h 5m 10s", super::duration(((3 * 60) + 5) * 60 + 10));
     }
 }

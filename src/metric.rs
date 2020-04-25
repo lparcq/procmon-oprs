@@ -80,6 +80,7 @@ fn get_format(name: &str) -> std::result::Result<format::Formatter, Error> {
         "m" => Ok(format::mega),
         "g" => Ok(format::giga),
         "sz" => Ok(format::size),
+        "du" => Ok(format::duration),
         _ => Err(Error::UnknownFormatter(name.to_string())),
     }
 }
