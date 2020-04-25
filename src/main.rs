@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use structopt::StructOpt;
 
 mod application;
-mod collectors;
+mod collector;
+mod format;
+mod metric;
 mod output;
 mod targets;
 

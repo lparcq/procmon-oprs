@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::time;
 use thiserror::Error;
 
-use crate::collectors::MetricMapper;
+use crate::metric::{parse_metric_names, MetricMapper};
 use crate::output::{Output, TextOutput};
 use crate::targets::TargetId;
 
@@ -30,10 +30,11 @@ pub fn run(
             .map_err(|_| Error::InvalidParameter("every"))?
             * 1000.0) as u64,
     );
-    let metric_mapper = MetricMapper::new();
-    let metric_ids = metric_mapper.from_names(metric_names)?;
+    let mut metric_ids = Vec::new();
+    let mut formatters = Vec::new();
+    parse_metric_names(&mut metric_ids, &mut formatters, metric_names)?;
     let count = settings.get_int("count").map(|c| c as u64).ok();
-    let mut output = TextOutput::new(target_ids, metric_ids);
+    let mut output = TextOutput::new(target_ids, metric_ids, formatters);
     output.run(every_ms, count);
     Ok(())
 }

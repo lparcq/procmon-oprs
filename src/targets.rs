@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use crate::collectors::Collector;
+use crate::collector::Collector;
 
 /// Different way of identifying processes
 #[derive(Debug)]
@@ -235,11 +235,11 @@ impl Target for MultiTarget {
                             self.targets.push(target);
                         }
                     });
-                    return true;
                 }
             }
+            return count > 0 || self.targets.len() > 0;
         }
-        return false;
+        false
     }
 }
 
@@ -303,5 +303,23 @@ impl TargetContainer {
         for target_id in target_ids {
             self.push(target_id);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_name_from_path() {
+        assert_eq!(
+            "file.pid",
+            super::name_from_path(&PathBuf::from("/a/file.pid"), false).unwrap()
+        );
+        assert_eq!(
+            "file",
+            super::name_from_path(&PathBuf::from("/a/file.pid"), true).unwrap()
+        );
     }
 }

@@ -2,134 +2,201 @@ use std::thread;
 use std::time;
 
 use super::Output;
-use crate::collectors::{Collector, GridCollector, MetricId};
+use crate::collector::{Collector, GridCollector};
+use crate::format::Formatter;
+use crate::metric::MetricId;
 use crate::targets::{TargetContainer, TargetId};
 
-/// Roughly calculate number width in base 10 without logarithm
-fn number_width(number: u64) -> usize {
-    if number < 1000 {
-        3
-    } else if number < 10_000 {
-        4
-    } else if number < 1_000_000 {
-        6
-    } else if number < 100_000_000 {
-        8
-    } else if number < 10_000_000_000 {
-        10
-    } else {
-        20
-    }
-}
+const REPEAT_HEADER_EVERY: u16 = 20;
+const RESIZE_IF_COLUMNS_SHRINK: usize = 2;
 
 fn divide(numerator: usize, denominator: usize) -> (usize, usize) {
     let quotient = numerator / denominator;
     (quotient, numerator - quotient * denominator)
 }
 
+/// Table
+struct Table {
+    titles: Vec<String>,
+    subtitles: Vec<String>,
+    values: Vec<String>,
+    title_width: usize,
+    column_width: usize,
+    repeat: u16,
+}
+
+impl Table {
+    fn new() -> Table {
+        Table {
+            titles: Vec::new(),
+            subtitles: Vec::new(),
+            values: Vec::new(),
+            title_width: 0,
+            column_width: 0,
+            repeat: 0,
+        }
+    }
+
+    fn clear_titles(&mut self) {
+        self.titles.clear();
+    }
+
+    fn push_title(&mut self, title: String) {
+        self.titles.push(title);
+    }
+
+    fn push_subtitle(&mut self, subtitle: String) {
+        self.subtitles.push(subtitle);
+    }
+
+    fn clear_values(&mut self) {
+        self.values.clear();
+    }
+
+    fn push_value(&mut self, value: String) {
+        self.values.push(value);
+    }
+
+    fn horizontal_rule(&self, column_count: usize, column_width: usize, separator: &str) {
+        for _ in 0..column_count {
+            print!("{}{:-<width$}", separator, "", width = column_width + 2);
+        }
+        println!("{}", separator);
+    }
+
+    fn print_header(&self) {
+        // An horizontal rule
+        let title_count = self.titles.len();
+        self.horizontal_rule(title_count, self.title_width, "|");
+        // Titles
+        for title in &self.titles {
+            print!("| {:^width$} ", title, width = self.title_width);
+        }
+        println!("|");
+        self.horizontal_rule(title_count, self.title_width, "+");
+        // Subtitles
+        for _ in 0..title_count {
+            for subtitle in &self.subtitles {
+                print!("| {:^width$} ", subtitle, width = self.column_width);
+            }
+        }
+        println!("|");
+    }
+
+    fn print_values(&self) {
+        for value in &self.values {
+            print!("| {:^width$} ", value, width = self.column_width);
+        }
+        println!("|");
+    }
+
+    /// Calculate the column width
+    fn resize(&mut self) {
+        let subtitle_count = self.subtitles.len();
+        let mut column_width = 0;
+        for title in &self.titles {
+            // minimum column with to display the title
+            let (quotient, remainder) = divide(title.len() + 3, subtitle_count);
+            let min_col_width = quotient - 3 + if remainder > 0 { 1 } else { 0 };
+            if min_col_width > column_width {
+                column_width = min_col_width;
+            }
+        }
+        for subtitle in &self.subtitles {
+            if subtitle.len() > column_width {
+                column_width = subtitle.len();
+            }
+        }
+        for value in &self.values {
+            if value.len() > column_width {
+                column_width = value.len();
+            }
+        }
+        let title_width = (column_width + 3) * subtitle_count - 3;
+        if column_width > self.column_width
+            || self.column_width - column_width > RESIZE_IF_COLUMNS_SHRINK
+        {
+            self.column_width = column_width;
+            self.title_width = title_width;
+            self.repeat = 0;
+        }
+    }
+
+    fn print(&mut self, with_header: bool) {
+        if with_header || self.repeat == 0 {
+            self.print_header();
+        }
+        self.print_values();
+        self.repeat += 1;
+        if self.repeat >= REPEAT_HEADER_EVERY {
+            self.repeat = 0;
+        }
+    }
+}
+
+/// Print on standard output as a table
 pub struct TextOutput {
     targets: TargetContainer,
     collector: GridCollector,
+    formatters: Vec<Formatter>,
 }
 
 impl TextOutput {
-    pub fn new(target_ids: &[TargetId], metric_ids: Vec<MetricId>) -> TextOutput {
+    pub fn new(
+        target_ids: &[TargetId],
+        metric_ids: Vec<MetricId>,
+        formatters: Vec<Formatter>,
+    ) -> TextOutput {
         let mut targets = TargetContainer::new();
         targets.push_all(target_ids);
         let collector = GridCollector::new(target_ids.len(), metric_ids);
-        TextOutput { targets, collector }
+        TextOutput {
+            targets,
+            collector,
+            formatters,
+        }
     }
 }
 
 impl Output for TextOutput {
     fn run(&mut self, every_ms: time::Duration, count: Option<u64>) {
-        let repeat_header_every = 20;
         let mut loop_number: u64 = 0;
         let metric_names = self.collector.metric_names();
         let metric_count = metric_names.len();
-        let mut col_width = 0;
-        let mut repeat: u16 = 0;
-        for name in &metric_names {
-            if name.len() > col_width {
-                col_width = name.len();
-            }
+        let mut table = Table::new();
+        for name in metric_names {
+            table.push_subtitle(name.to_string());
         }
         loop {
-            if self.targets.refresh() {
-                repeat = 0; // must print headers again
-            }
+            let with_header = self.targets.refresh(); // must print headers again
             self.targets.collect(&mut self.collector);
             let lines = self.collector.lines();
-            let line_count = lines.len();
-            // Calculate the column width
+
+            table.clear_titles();
+            table.clear_values();
             for line in lines {
-                // minimum column with to display the process name
-                let (quotient, remainder) = divide(line.name.len() + 8 + 3, metric_count);
-                let min_col_width = quotient - 3 + if remainder > 0 { 1 } else { 0 };
-                if min_col_width > col_width {
-                    col_width = min_col_width;
-                    repeat = 0; // must print headers again
-                }
-                if let Some(metrics) = &line.metrics {
-                    for value in &metrics.series {
-                        let width = number_width(*value);
-                        if width > col_width {
-                            col_width = width;
-                            repeat = 0; // must print headers again
-                        }
-                    }
-                }
-            }
-            //let name_width = (col_width + 2) * metric_count - 1;
-            let name_width = (col_width + 3) * metric_count - 3;
-            // Print headers from time to time
-            if repeat == 0 {
-                // An horizontal rule
-                for _ in 0..line_count {
-                    print!("|{:-<width$}", "", width = name_width + 2);
-                }
-                println!("|");
-                // The process names
-                for line in lines {
-                    let name = format!(
-                        "{} [{}]",
-                        line.name,
-                        match &line.metrics {
-                            Some(metrics) => metrics.pid,
-                            None => -1,
-                        }
-                    );
-                    print!("| {:^width$} ", name, width = name_width);
-                }
-                println!("|");
-                // The metric names
-                for _ in 0..line_count {
-                    for name in &metric_names {
-                        print!("| {:^width$} ", name, width = col_width);
-                    }
-                }
-                println!("|");
-            }
-            // Print values
-            for line in lines {
+                let name = match &line.metrics {
+                    Some(metrics) => format!("{} [{}]", line.name, metrics.pid,),
+                    None => line.name.to_string(),
+                };
+                table.push_title(name);
                 match &line.metrics {
                     Some(metrics) => {
-                        for value in &metrics.series {
-                            print!("| {:^width$} ", value, width = col_width);
+                        for (metric_idx, value) in metrics.series.iter().enumerate() {
+                            let fmt = self.formatters.get(metric_idx).unwrap();
+                            table.push_value((*fmt)(*value));
                         }
                     }
                     None => {
                         for _ in 0..metric_count {
-                            print!("| {:^width$} ", "----", width = col_width);
+                            table.push_value("----".to_string());
                         }
                     }
                 }
             }
-            println!("|");
-            repeat += 1;
-            if repeat >= repeat_header_every {
-                repeat = 0;
-            }
+            table.resize();
+            table.print(with_header);
+
             if let Some(count) = count {
                 loop_number += 1;
                 if loop_number >= count {
@@ -143,22 +210,6 @@ impl Output for TextOutput {
 
 #[cfg(test)]
 mod tests {
-
-    #[test]
-    fn test_number_width() {
-        assert_eq!(3, super::number_width(0));
-        assert_eq!(3, super::number_width(999));
-        assert_eq!(4, super::number_width(1_000));
-        assert_eq!(4, super::number_width(9_999));
-        assert_eq!(6, super::number_width(10_000));
-        assert_eq!(6, super::number_width(999_999));
-        assert_eq!(8, super::number_width(1_000_000));
-        assert_eq!(8, super::number_width(99_999_999));
-        assert_eq!(10, super::number_width(100_000_000));
-        assert_eq!(10, super::number_width(9_999_999_999));
-        assert_eq!(20, super::number_width(10_000_000_000));
-        assert_eq!(20, super::number_width(std::u64::MAX));
-    }
 
     #[test]
     fn test_divide() {
