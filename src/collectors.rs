@@ -112,6 +112,7 @@ impl ProcessLine {
 
 /// Collector
 pub trait Collector {
+    fn clear(&mut self);
     fn collect(
         &mut self,
         target_number: usize,
@@ -139,6 +140,7 @@ impl GridCollector {
 
     /// Extract metrics for a process
     fn extract_values(&self, process: &Process) -> Vec<i64> {
+        //let tps = procfs::ticks_per_second().unwrap();
         self.ids
             .iter()
             .map(|id| match id {
@@ -147,14 +149,14 @@ impl GridCollector {
             })
             .collect()
     }
-
-    /// Clear the lines
-    pub fn clear(&mut self) {
-        self.lines = Vec::with_capacity(self.lines.capacity());
-    }
 }
 
 impl Collector for GridCollector {
+    /// Clear the lines
+    fn clear(&mut self) {
+        self.lines = Vec::with_capacity(self.lines.capacity());
+    }
+
     fn collect(
         &mut self,
         target_number: usize,
@@ -162,7 +164,6 @@ impl Collector for GridCollector {
         target_name: &str,
         process: Option<&Process>,
     ) {
-        self.clear();
         self.lines.push(ProcessLine::new(
             target_name,
             target_number,

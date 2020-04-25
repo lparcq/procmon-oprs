@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use crate::collectors::Collector;
 
 /// Different way of identifying processes
+#[derive(Debug)]
 pub enum TargetId {
     Pid(pid_t),
     PidFile(PathBuf),
@@ -211,6 +212,7 @@ impl TargetContainer {
     }
 
     pub fn collect(&self, collector: &mut dyn Collector) {
+        collector.clear();
         self.targets
             .iter()
             .enumerate()

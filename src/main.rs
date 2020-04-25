@@ -6,6 +6,7 @@ use structopt::StructOpt;
 
 mod application;
 mod collectors;
+mod output;
 mod targets;
 
 use targets::TargetId;
