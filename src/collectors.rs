@@ -13,15 +13,19 @@ enum Error {
 /// Metrics that can be collected for a process
 #[derive(Copy, Clone)]
 pub enum MetricId {
-    MemVm,
     MemRss,
+    MemVm,
+    TimeSystem,
+    TimeUser,
 }
 
 impl MetricId {
     pub fn to_str(self) -> &'static str {
         match self {
-            MetricId::MemVm => "mem:vm",
             MetricId::MemRss => "mem:rss",
+            MetricId::MemVm => "mem:vm",
+            MetricId::TimeSystem => "time:system",
+            MetricId::TimeUser => "time:user",
         }
     }
 }
@@ -38,13 +42,17 @@ impl MetricMapper {
         let mut mapping = BTreeMap::new();
         mapping.insert(MetricId::MemVm.to_str(), MetricId::MemVm);
         mapping.insert(MetricId::MemRss.to_str(), MetricId::MemRss);
+        mapping.insert(MetricId::TimeSystem.to_str(), MetricId::TimeSystem);
+        mapping.insert(MetricId::TimeUser.to_str(), MetricId::TimeUser);
         MetricMapper { mapping }
     }
 
     pub fn help(id: MetricId) -> &'static str {
         match id {
-            MetricId::MemVm => "process virtual memory",
-            MetricId::MemRss => "process resident set size",
+            MetricId::MemVm => "virtual memory",
+            MetricId::MemRss => "resident set size",
+            MetricId::TimeSystem => "elapsed time in kernel mode",
+            MetricId::TimeUser => "elapsed time in user mode",
         }
     }
 
@@ -113,6 +121,7 @@ pub trait Collector {
 pub struct GridCollector {
     ids: Vec<MetricId>,
     lines: Vec<ProcessLine>,
+    tps: u64,
 }
 
 impl GridCollector {
@@ -120,16 +129,16 @@ impl GridCollector {
         GridCollector {
             ids: metric_ids,
             lines: Vec::with_capacity(number_of_targets),
+            tps: procfs::ticks_per_second().unwrap() as u64,
         }
     }
 
     /// Extract metrics for a process
     fn extract_values(&self, process: &Process) -> Vec<u64> {
-        //let tps = procfs::ticks_per_second().unwrap();
         self.ids
             .iter()
             .map(|id| match id {
-                MetricId::MemVm | MetricId::MemRss => {
+                MetricId::MemVm | MetricId::MemRss | MetricId::TimeSystem | MetricId::TimeUser => {
                     let stat = process.stat(); // refresh stat
                     if let Ok(stat) = stat {
                         match id {
@@ -141,6 +150,8 @@ impl GridCollector {
                                     stat.rss as u64
                                 }
                             }
+                            MetricId::TimeSystem => stat.stime / self.tps,
+                            MetricId::TimeUser => stat.utime / self.tps,
                         }
                     } else {
                         0

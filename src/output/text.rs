@@ -49,6 +49,11 @@ impl Output for TextOutput {
         let metric_count = metric_names.len();
         let mut col_width = 0;
         let mut repeat: u16 = 0;
+        for name in &metric_names {
+            if name.len() > col_width {
+                col_width = name.len();
+            }
+        }
         loop {
             if self.targets.refresh() {
                 repeat = 0; // must print headers again
