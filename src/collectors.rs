@@ -144,12 +144,21 @@ impl GridCollector {
         self.ids
             .iter()
             .map(|id| match id {
-                MetricId::MemVm => process.stat.vsize,
-                MetricId::MemRss => {
-                    if process.stat.rss < 0 {
-                        0
+                MetricId::MemVm | MetricId::MemRss => {
+                    let stat = process.stat(); // refresh stat
+                    if let Ok(stat) = stat {
+                        match id {
+                            MetricId::MemVm => stat.vsize,
+                            MetricId::MemRss => {
+                                if stat.rss < 0 {
+                                    0
+                                } else {
+                                    stat.rss as u64
+                                }
+                            }
+                        }
                     } else {
-                        process.stat.rss as u64
+                        0
                     }
                 }
             })

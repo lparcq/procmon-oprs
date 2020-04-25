@@ -39,12 +39,14 @@ struct Opt {
     )]
     every: f64,
 
-    #[structopt(
-        short = "t",
-        long = "target",
-        help = "process id, process name or PID file."
-    )]
-    targets: Vec<String>,
+    #[structopt(short = "p", long = "pid", help = "process id")]
+    pids: Vec<i32>,
+
+    #[structopt(short = "f", long = "file", help = "process id file")]
+    files: Vec<String>,
+
+    #[structopt(short = "n", long = "name", help = "process name")]
+    names: Vec<String>,
 
     #[structopt(name = "METRIC", help = "metric to monitor.")]
     metrics: Vec<String>,
@@ -78,26 +80,19 @@ fn main() {
         settings.set("count", count as i64).unwrap();
     }
 
-    if opt.targets.is_empty() {
+    if opt.pids.is_empty() && opt.files.is_empty() && opt.names.is_empty() {
         application::list_metrics();
     } else {
         let mut target_ids = Vec::new();
-        for target_name in opt.targets {
-            if let Ok(pid) = target_name.parse::<i32>() {
-                target_ids.push(TargetId::Pid(pid));
-            } else {
-                let path = PathBuf::from(target_name.as_str());
-                match path.parent() {
-                    Some(parent) => {
-                        if parent.exists() {
-                            target_ids.push(TargetId::PidFile(path));
-                        } else {
-                            target_ids.push(TargetId::ProcessName(target_name));
-                        }
-                    }
-                    None => target_ids.push(TargetId::ProcessName(target_name)),
-                }
-            }
+        for pid in opt.pids {
+            target_ids.push(TargetId::Pid(pid));
+        }
+        for pid_file in opt.files {
+            let path = PathBuf::from(pid_file.as_str());
+            target_ids.push(TargetId::PidFile(path));
+        }
+        for name in opt.names {
+            target_ids.push(TargetId::ProcessName(name));
         }
 
         if let Err(err) = application::run(&settings, &opt.metrics, &target_ids) {

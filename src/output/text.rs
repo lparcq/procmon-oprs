@@ -50,6 +50,9 @@ impl Output for TextOutput {
         let mut col_width = 0;
         let mut repeat: u16 = 0;
         loop {
+            if self.targets.refresh() {
+                repeat = 0; // must print headers again
+            }
             self.targets.collect(&mut self.collector);
             let lines = self.collector.lines();
             let line_count = lines.len();
