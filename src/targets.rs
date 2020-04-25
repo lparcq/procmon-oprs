@@ -18,7 +18,7 @@ pub enum TargetId {
 /// Target process
 pub trait Target {
     fn get_name(&self) -> &str;
-    fn collect(&self, target_number: usize, collector: &mut dyn Collector);
+    fn collect(&self, collector: &mut dyn Collector);
     fn refresh(&mut self) -> bool;
 }
 
@@ -66,6 +66,10 @@ fn read_pid_file(pid_file: &Path) -> Result<pid_t> {
         .with_context(|| format!("{}: invalid pid file", pid_file.display()))?)
 }
 
+fn proc_dir(pid: pid_t) -> PathBuf {
+    PathBuf::from("/proc").join(format!("{}", pid))
+}
+
 /// Check if a process has a given name
 struct ProcessNameMatcher<'a> {
     name: &'a str,
@@ -80,47 +84,37 @@ impl<'a> ProcessNameMatcher<'a> {
     }
 }
 
-/// Non existent process.
-struct NullTarget {
-    name: String,
-}
-
-impl NullTarget {
-    fn new(pid: pid_t) -> NullTarget {
-        NullTarget {
-            name: format!("process[{}]", pid),
-        }
-    }
-}
-
-impl Target for NullTarget {
-    fn get_name(&self) -> &str {
-        self.name.as_str()
-    }
-
-    fn collect(&self, target_number: usize, collector: &mut dyn Collector) {
-        collector.collect(target_number, 0, self.get_name(), None);
-    }
-
-    fn refresh(&mut self) -> bool {
-        false
-    }
-}
-
 /// Process defined by a pid.
 ///
 /// Once the process is gone, the target returns no metrics.
 struct StaticTarget {
     name: String,
-    process: Process,
+    proc_dir: PathBuf,
+    process: Option<Process>,
 }
 
 impl StaticTarget {
-    fn new(process: Process) -> StaticTarget {
-        StaticTarget {
-            name: name_from_process_or_pid(&process),
-            process,
+    fn new(pid: pid_t) -> StaticTarget {
+        match Process::new(pid) {
+            Ok(process) => StaticTarget {
+                name: name_from_process_or_pid(&process),
+                proc_dir: proc_dir(pid),
+                process: Some(process),
+            },
+            Err(_) => StaticTarget {
+                name: name_from_pid(pid),
+                proc_dir: proc_dir(pid),
+                process: None,
+            },
         }
+    }
+
+    fn has_process(&self) -> bool {
+        self.process.is_some()
+    }
+
+    fn is_alive(&self) -> bool {
+        self.proc_dir.exists()
     }
 }
 
@@ -129,11 +123,17 @@ impl Target for StaticTarget {
         self.name.as_str()
     }
 
-    fn collect(&self, target_number: usize, collector: &mut dyn Collector) {
-        collector.collect(target_number, 0, self.get_name(), Some(&self.process));
+    fn collect(&self, collector: &mut dyn Collector) {
+        collector.collect(self.get_name(), self.process.as_ref());
     }
 
     fn refresh(&mut self) -> bool {
+        if self.has_process() {
+            if !self.is_alive() {
+                self.process = None;
+                return true;
+            }
+        }
         false
     }
 }
@@ -142,38 +142,51 @@ impl Target for StaticTarget {
 ///
 /// The pid can change over the time.
 struct DynamicTarget {
-    name: String,
+    name: Option<String>,
+    target: Option<StaticTarget>,
     pid_file: PathBuf,
-    process: Option<Process>,
 }
 
 impl DynamicTarget {
     fn new(pid_file: &PathBuf) -> DynamicTarget {
         DynamicTarget {
-            name: name_from_path(pid_file, true).unwrap_or_else(|| String::from("<unknown>")),
+            name: name_from_path(pid_file, true),
+            target: read_pid_file(pid_file.as_path())
+                .map_or(None, |pid| Some(StaticTarget::new(pid))),
             pid_file: pid_file.clone(),
-            process: None,
         }
     }
 }
 
 impl Target for DynamicTarget {
     fn get_name(&self) -> &str {
-        self.name.as_str()
+        match &self.name {
+            Some(name) => name.as_str(),
+            None => match &self.target {
+                Some(target) => target.get_name(),
+                None => "<unknown>",
+            },
+        }
     }
 
-    fn collect(&self, target_number: usize, collector: &mut dyn Collector) {
-        collector.collect(target_number, 0, self.get_name(), self.process.as_ref());
+    fn collect(&self, collector: &mut dyn Collector) {
+        if let Some(target) = &self.target {
+            target.collect(collector);
+        }
     }
 
     fn refresh(&mut self) -> bool {
-        if self.process.is_none() {
-            if let Ok(pid) = read_pid_file(self.pid_file.as_path()) {
-                self.process = Process::new(pid).ok();
-                return true;
+        match &mut self.target {
+            Some(target) => target.refresh(),
+            None => {
+                if let Ok(pid) = read_pid_file(self.pid_file.as_path()) {
+                    self.target = Some(StaticTarget::new(pid));
+                    true
+                } else {
+                    false
+                }
             }
         }
-        false
     }
 }
 
@@ -182,14 +195,14 @@ impl Target for DynamicTarget {
 /// There may be multiple instances. The target sums the metrics.
 struct MultiTarget {
     name: String,
-    processes: Vec<Process>,
+    targets: Vec<StaticTarget>,
 }
 
 impl MultiTarget {
     fn new(name: &str) -> MultiTarget {
         MultiTarget {
             name: name.to_string(),
-            processes: Vec::new(),
+            targets: Vec::new(),
         }
     }
 }
@@ -199,31 +212,27 @@ impl Target for MultiTarget {
         self.name.as_str()
     }
 
-    fn collect(&self, target_number: usize, collector: &mut dyn Collector) {
-        for (process_number, process) in self.processes.iter().enumerate() {
-            collector.collect(
-                target_number,
-                process_number,
-                self.get_name(),
-                Some(&process),
-            );
+    fn collect(&self, collector: &mut dyn Collector) {
+        for target in self.targets.iter() {
+            target.collect(collector);
         }
     }
 
     fn refresh(&mut self) -> bool {
-        if self.processes.is_empty() {
-            if let Ok(all_processes) = all_processes() {
+        // Only parse all processes if there are none or if one has died
+        let count = self.targets.len();
+        self.targets.retain(|target| target.is_alive());
+        if count == 0 || self.targets.len() < count {
+            if let Ok(mut processes) = all_processes() {
                 let name_matcher = ProcessNameMatcher {
                     name: self.name.as_str(),
                 };
-                let processes: Vec<&Process> = all_processes
-                    .iter()
-                    .filter(|process| name_matcher.has_name(&process))
-                    .collect();
+                processes.retain(|process| name_matcher.has_name(&process));
                 if !processes.is_empty() {
                     processes.iter().for_each(|process| {
-                        if let Ok(process) = Process::new(process.pid()) {
-                            self.processes.push(process);
+                        let target = StaticTarget::new(process.pid());
+                        if target.has_process() {
+                            self.targets.push(target);
                         }
                     });
                     return true;
@@ -236,7 +245,6 @@ impl Target for MultiTarget {
 
 /// Target holder
 enum TargetHolder {
-    Null(NullTarget),
     Static(Box<StaticTarget>),
     Dynamic(Box<DynamicTarget>),
     Multi(MultiTarget),
@@ -274,23 +282,16 @@ impl TargetContainer {
 
     pub fn collect(&self, collector: &mut dyn Collector) {
         collector.clear();
-        self.targets
-            .iter()
-            .enumerate()
-            .for_each(|(target_number, holder)| match holder {
-                TargetHolder::Null(target) => target.collect(target_number, collector),
-                TargetHolder::Static(target) => target.collect(target_number, collector),
-                TargetHolder::Dynamic(target) => target.collect(target_number, collector),
-                TargetHolder::Multi(target) => target.collect(target_number, collector),
-            })
+        self.targets.iter().for_each(|holder| match holder {
+            TargetHolder::Static(target) => target.collect(collector),
+            TargetHolder::Dynamic(target) => target.collect(collector),
+            TargetHolder::Multi(target) => target.collect(collector),
+        })
     }
 
     pub fn push(&mut self, target_id: &TargetId) {
         self.targets.push(match target_id {
-            TargetId::Pid(pid) => match Process::new(*pid) {
-                Ok(process) => TargetHolder::Static(Box::new(StaticTarget::new(process))),
-                Err(_) => TargetHolder::Null(NullTarget::new(*pid)),
-            },
+            TargetId::Pid(pid) => TargetHolder::Static(Box::new(StaticTarget::new(*pid))),
             TargetId::PidFile(pid_file) => {
                 TargetHolder::Dynamic(Box::new(DynamicTarget::new(&pid_file)))
             }

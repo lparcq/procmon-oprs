@@ -89,22 +89,13 @@ impl ProcessMetrics {
 /// A line for a process in a monitor
 pub struct ProcessLine {
     pub name: String,
-    pub target_number: usize,
-    pub process_number: usize,
     pub metrics: Option<ProcessMetrics>,
 }
 
 impl ProcessLine {
-    fn new(
-        name: &str,
-        target_number: usize,
-        process_number: usize,
-        metrics: Option<ProcessMetrics>,
-    ) -> ProcessLine {
+    fn new(name: &str, metrics: Option<ProcessMetrics>) -> ProcessLine {
         ProcessLine {
             name: String::from(name),
-            target_number,
-            process_number,
             metrics,
         }
     }
@@ -113,13 +104,7 @@ impl ProcessLine {
 /// Collector
 pub trait Collector {
     fn clear(&mut self);
-    fn collect(
-        &mut self,
-        target_number: usize,
-        process_number: usize,
-        target_name: &str,
-        process: Option<&Process>,
-    );
+    fn collect(&mut self, target_name: &str, process: Option<&Process>);
     fn lines(&self) -> &Vec<ProcessLine>;
     fn metric_names(&self) -> Vec<&'static str>;
 }
@@ -172,17 +157,9 @@ impl Collector for GridCollector {
         self.lines = Vec::with_capacity(self.lines.capacity());
     }
 
-    fn collect(
-        &mut self,
-        target_number: usize,
-        process_number: usize,
-        target_name: &str,
-        process: Option<&Process>,
-    ) {
+    fn collect(&mut self, target_name: &str, process: Option<&Process>) {
         self.lines.push(ProcessLine::new(
             target_name,
-            target_number,
-            process_number,
             match process {
                 Some(process) => Some(ProcessMetrics::new(
                     process.pid(),
