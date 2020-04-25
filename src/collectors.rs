@@ -72,7 +72,7 @@ impl MetricMapper {
 }
 
 /// List of values collected
-pub type MetricSeries = Vec<i64>;
+pub type MetricSeries = Vec<u64>;
 
 /// Process metrics inclued the process id and the list of metrics
 pub struct ProcessMetrics {
@@ -139,13 +139,19 @@ impl GridCollector {
     }
 
     /// Extract metrics for a process
-    fn extract_values(&self, process: &Process) -> Vec<i64> {
+    fn extract_values(&self, process: &Process) -> Vec<u64> {
         //let tps = procfs::ticks_per_second().unwrap();
         self.ids
             .iter()
             .map(|id| match id {
-                MetricId::MemVm => process.stat.vsize as i64,
-                MetricId::MemRss => process.stat.rss,
+                MetricId::MemVm => process.stat.vsize,
+                MetricId::MemRss => {
+                    if process.stat.rss < 0 {
+                        0
+                    } else {
+                        process.stat.rss as u64
+                    }
+                }
             })
             .collect()
     }
