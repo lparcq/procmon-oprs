@@ -18,7 +18,7 @@ pub enum MetricId {
 }
 
 impl MetricId {
-    pub fn to_str(&self) -> &'static str {
+    pub fn to_str(self) -> &'static str {
         match self {
             MetricId::MemVm => "mem:vm",
             MetricId::MemRss => "mem:rss",
@@ -56,7 +56,7 @@ impl MetricMapper {
     }
 
     // Return a list of ids from name
-    pub fn from_names(&self, names: &Vec<String>) -> Result<Vec<MetricId>> {
+    pub fn from_names(&self, names: &[String]) -> Result<Vec<MetricId>> {
         let mut ids = Vec::new();
         names
             .iter()

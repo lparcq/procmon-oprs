@@ -66,7 +66,7 @@ fn main() {
     let xdg_dirs = xdg::BaseDirectories::with_prefix(APP_NAME).unwrap();
 
     // Configuration
-    let config_file_name = PathBuf::from(xdg_dirs.place_config_file("settings.toml").unwrap());
+    let config_file_name = xdg_dirs.place_config_file("settings.toml").unwrap();
     let mut settings = config::Config::default();
     if config_file_name.exists() {
         let config_file = config::File::from(config_file_name);

@@ -1,5 +1,5 @@
 [package]
-name = "procmon"
+name = "psloop"
 version = "0.1.0"
 authors = ["Laurent Pelecq <lpelecq+procmon@circoise.eu>"]
 edition = "2018"

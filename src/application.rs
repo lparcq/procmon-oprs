@@ -1,5 +1,4 @@
 use anyhow::Result;
-use config;
 use std::time;
 use thiserror::Error;
 
@@ -22,8 +21,8 @@ pub fn list_metrics() {
 
 pub fn run(
     settings: &config::Config,
-    metric_names: &Vec<String>,
-    target_ids: &Vec<TargetId>,
+    metric_names: &[String],
+    target_ids: &[TargetId],
 ) -> Result<()> {
     let every_ms = time::Duration::from_millis(
         (settings

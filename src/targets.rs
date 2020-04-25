@@ -99,7 +99,7 @@ impl StaticTarget {
     fn new(process: Process) -> StaticTarget {
         StaticTarget {
             name: name_from_process(&process),
-            process: process,
+            process,
         }
     }
 }
@@ -128,7 +128,7 @@ struct DynamicTarget {
 impl DynamicTarget {
     fn new(pid_file: &PathBuf) -> DynamicTarget {
         DynamicTarget {
-            name: name_from_path(pid_file, true).unwrap_or(String::from("<unknown>")),
+            name: name_from_path(pid_file, true).unwrap_or_else(|| String::from("<unknown>")),
             pid_file: pid_file.clone(),
             process: None,
         }
@@ -162,9 +162,9 @@ struct MultiTarget {
 }
 
 impl MultiTarget {
-    fn new(name: &String) -> MultiTarget {
+    fn new(name: &str) -> MultiTarget {
         MultiTarget {
-            name: name.clone(),
+            name: name.to_string(),
             processes: Vec::new(),
         }
     }
@@ -194,8 +194,8 @@ impl Target for MultiTarget {
 /// Target holder
 enum TargetHolder {
     Null(NullTarget),
-    Static(StaticTarget),
-    Dynamic(DynamicTarget),
+    Static(Box<StaticTarget>),
+    Dynamic(Box<DynamicTarget>),
     Multi(MultiTarget),
 }
 
@@ -227,15 +227,17 @@ impl TargetContainer {
     pub fn push(&mut self, target_id: &TargetId) {
         self.targets.push(match target_id {
             TargetId::Pid(pid) => match Process::new(*pid) {
-                Ok(process) => TargetHolder::Static(StaticTarget::new(process)),
+                Ok(process) => TargetHolder::Static(Box::new(StaticTarget::new(process))),
                 Err(_) => TargetHolder::Null(NullTarget::new(*pid)),
             },
-            TargetId::PidFile(pid_file) => TargetHolder::Dynamic(DynamicTarget::new(&pid_file)),
+            TargetId::PidFile(pid_file) => {
+                TargetHolder::Dynamic(Box::new(DynamicTarget::new(&pid_file)))
+            }
             TargetId::ProcessName(name) => TargetHolder::Multi(MultiTarget::new(&name)),
         });
     }
 
-    pub fn push_all(&mut self, target_ids: &Vec<TargetId>) {
+    pub fn push_all(&mut self, target_ids: &[TargetId]) {
         for target_id in target_ids {
             self.push(target_id);
         }

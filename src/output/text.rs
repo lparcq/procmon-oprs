@@ -33,7 +33,7 @@ pub struct TextOutput {
 }
 
 impl TextOutput {
-    pub fn new(target_ids: &Vec<TargetId>, metric_ids: Vec<MetricId>) -> TextOutput {
+    pub fn new(target_ids: &[TargetId], metric_ids: Vec<MetricId>) -> TextOutput {
         let mut targets = TargetContainer::new();
         targets.push_all(target_ids);
         let collector = GridCollector::new(target_ids.len(), metric_ids);
