@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use structopt::StructOpt;
 
 mod application;
+mod collectors;
 mod targets;
 
 use targets::TargetId;
@@ -15,8 +16,13 @@ const APP_NAME: &str = "procmon";
 // Options
 //
 
+const HELP_MESSAGE: &str = "
+Display selected metrics for the system or individual processes.
+
+Without argument, prints the list of available metrics.";
+
 #[derive(StructOpt, Debug)]
-#[structopt(name = "procmon", about = "Process monitor.")]
+#[structopt(name = "procmon", about = HELP_MESSAGE)]
 struct Opt {
     #[structopt(short, long, parse(from_occurrences), help = "Activate verbose mode")]
     verbose: u64,
@@ -32,8 +38,15 @@ struct Opt {
     )]
     every: f64,
 
-    #[structopt(name = "TARGET")]
+    #[structopt(
+        short = "t",
+        long = "target",
+        help = "process id, process name or PID file."
+    )]
     targets: Vec<String>,
+
+    #[structopt(name = "METRIC", help = "metric to monitor.")]
+    metrics: Vec<String>,
 }
 
 //
@@ -64,24 +77,31 @@ fn main() {
         settings.set("count", count as i64).unwrap();
     }
 
-    let mut target_ids = Vec::new();
-    for target_name in opt.targets {
-        if let Ok(pid) = target_name.parse::<i32>() {
-            target_ids.push(TargetId::Pid(pid));
-        } else {
-            let path = PathBuf::from(target_name.as_str());
-            match path.parent() {
-                Some(parent) => {
-                    if parent.exists() {
-                        target_ids.push(TargetId::PidFile(path));
-                    } else {
-                        target_ids.push(TargetId::ProcessName(target_name));
+    if opt.targets.is_empty() {
+        application::list_metrics();
+    } else {
+        let mut target_ids = Vec::new();
+        for target_name in opt.targets {
+            if let Ok(pid) = target_name.parse::<i32>() {
+                target_ids.push(TargetId::Pid(pid));
+            } else {
+                let path = PathBuf::from(target_name.as_str());
+                match path.parent() {
+                    Some(parent) => {
+                        if parent.exists() {
+                            target_ids.push(TargetId::PidFile(path));
+                        } else {
+                            target_ids.push(TargetId::ProcessName(target_name));
+                        }
                     }
+                    None => target_ids.push(TargetId::ProcessName(target_name)),
                 }
-                None => target_ids.push(TargetId::ProcessName(target_name)),
             }
         }
-    }
 
-    application::run(&settings, &target_ids);
+        if let Err(err) = application::run(&settings, &opt.metrics, &target_ids) {
+            eprintln!("{}", err);
+            std::process::exit(1);
+        };
+    }
 }

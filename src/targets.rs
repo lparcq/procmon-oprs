@@ -4,27 +4,14 @@ use procfs::process::Process;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use thiserror::Error;
+
+use crate::collectors::Collector;
 
 /// Different way of identifying processes
 pub enum TargetId {
     Pid(pid_t),
     PidFile(PathBuf),
     ProcessName(String),
-}
-
-#[derive(Error, Debug)]
-pub enum TargetError {
-    #[error("invalid process id {0}")]
-    InvalidProcessId(pid_t),
-    #[error("no process found")]
-    NoProcess,
-}
-
-/// Collector
-pub trait Collector {
-    fn error(&mut self, target_number: usize, target_name: &str, err: &TargetError);
-    fn collect(&mut self, target_number: usize, target_name: &str, process: &Process);
 }
 
 /// Target process
@@ -76,14 +63,12 @@ fn read_pid_file(pid_file: &Path) -> Result<pid_t> {
 
 /// Non existent process.
 struct NullTarget {
-    pid: pid_t,
     name: String,
 }
 
 impl NullTarget {
     fn new(pid: pid_t) -> NullTarget {
         NullTarget {
-            pid: pid,
             name: format!("process[{}]", pid),
         }
     }
@@ -95,11 +80,7 @@ impl Target for NullTarget {
     }
 
     fn collect(&self, target_number: usize, collector: &mut dyn Collector) {
-        collector.error(
-            target_number,
-            self.get_name(),
-            &TargetError::InvalidProcessId(self.pid),
-        );
+        collector.collect(target_number, 0, self.get_name(), None);
     }
 
     fn refresh(&mut self) {}
@@ -128,7 +109,7 @@ impl Target for StaticTarget {
     }
 
     fn collect(&self, target_number: usize, collector: &mut dyn Collector) {
-        collector.collect(target_number, self.get_name(), &self.process);
+        collector.collect(target_number, 0, self.get_name(), Some(&self.process));
     }
 
     fn refresh(&mut self) {}
@@ -159,10 +140,7 @@ impl Target for DynamicTarget {
     }
 
     fn collect(&self, target_number: usize, collector: &mut dyn Collector) {
-        match self.process {
-            Some(ref process) => collector.collect(target_number, self.get_name(), process),
-            None => collector.error(target_number, self.get_name(), &TargetError::NoProcess),
-        }
+        collector.collect(target_number, 0, self.get_name(), self.process.as_ref());
     }
 
     fn refresh(&mut self) {
@@ -197,12 +175,13 @@ impl Target for MultiTarget {
     }
 
     fn collect(&self, target_number: usize, collector: &mut dyn Collector) {
-        if self.processes.is_empty() {
-            collector.error(target_number, self.get_name(), &TargetError::NoProcess);
-        } else {
-            for process in self.processes.iter() {
-                collector.collect(target_number, self.get_name(), process);
-            }
+        for (process_number, process) in self.processes.iter().enumerate() {
+            collector.collect(
+                target_number,
+                process_number,
+                self.get_name(),
+                Some(&process),
+            );
         }
     }
 
