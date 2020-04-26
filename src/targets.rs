@@ -123,7 +123,9 @@ impl SystemFs {
     fn extract_metrics(&mut self, ids: &Vec<MetricId>) -> Vec<u64> {
         ids.iter()
             .map(|id| match id {
-                MetricId::MemVm => self.with_meminfo(|mi| mi.mem_total - mi.mem_free),
+                MetricId::MemVm => {
+                    self.with_meminfo(|mi| mi.mem_total - mi.mem_available.unwrap_or(mi.mem_free))
+                }
                 _ => 0,
             })
             .collect()
