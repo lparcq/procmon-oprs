@@ -16,8 +16,11 @@ enum Error {
 /// Metrics that can be collected for a process
 #[derive(Copy, Clone, Debug)]
 pub enum MetricId {
+    FaultMinor,
+    FaultMajor,
     MemRss,
     MemVm,
+    TimeReal,
     TimeSystem,
     TimeUser,
 }
@@ -25,8 +28,11 @@ pub enum MetricId {
 impl MetricId {
     pub fn to_str(self) -> &'static str {
         match self {
+            MetricId::FaultMinor => "fault:minor",
+            MetricId::FaultMajor => "fault:major",
             MetricId::MemRss => "mem:rss",
             MetricId::MemVm => "mem:vm",
+            MetricId::TimeReal => "time:real",
             MetricId::TimeSystem => "time:system",
             MetricId::TimeUser => "time:user",
         }
@@ -43,8 +49,11 @@ pub struct MetricMapper {
 impl MetricMapper {
     pub fn new() -> MetricMapper {
         let mut mapping = BTreeMap::new();
+        mapping.insert(MetricId::FaultMinor.to_str(), MetricId::FaultMinor);
+        mapping.insert(MetricId::FaultMajor.to_str(), MetricId::FaultMajor);
         mapping.insert(MetricId::MemVm.to_str(), MetricId::MemVm);
         mapping.insert(MetricId::MemRss.to_str(), MetricId::MemRss);
+        mapping.insert(MetricId::TimeReal.to_str(), MetricId::TimeReal);
         mapping.insert(MetricId::TimeSystem.to_str(), MetricId::TimeSystem);
         mapping.insert(MetricId::TimeUser.to_str(), MetricId::TimeUser);
         MetricMapper { mapping }
@@ -56,8 +65,11 @@ impl MetricMapper {
 
     pub fn help(id: MetricId) -> &'static str {
         match id {
+            MetricId::FaultMinor => "page faults without disk access",
+            MetricId::FaultMajor => "page faults with disk access",
             MetricId::MemVm => "virtual memory",
             MetricId::MemRss => "resident set size",
+            MetricId::TimeReal => "elapsed time since process started",
             MetricId::TimeSystem => "elapsed time in kernel mode",
             MetricId::TimeUser => "elapsed time in user mode",
         }
@@ -89,8 +101,10 @@ fn get_human_format(id: MetricId) -> format::Formatter {
     match id {
         MetricId::MemRss => format::size,
         MetricId::MemVm => format::size,
+        MetricId::TimeReal => format::duration,
         MetricId::TimeSystem => format::duration,
         MetricId::TimeUser => format::duration,
+        _ => format::identity,
     }
 }
 

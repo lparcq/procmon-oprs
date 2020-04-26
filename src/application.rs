@@ -1,6 +1,7 @@
 use std::time;
 use thiserror::Error;
 
+use crate::info::SystemConf;
 use crate::metric::{parse_metric_names, MetricMapper};
 use crate::output::{Output, TextOutput};
 use crate::targets::TargetId;
@@ -30,11 +31,12 @@ pub fn run(
             .map_err(|_| Error::InvalidParameter("every"))?
             * 1000.0) as u64,
     );
+    let system_conf = SystemConf::new()?;
     let mut metric_ids = Vec::new();
     let mut formatters = Vec::new();
     parse_metric_names(&mut metric_ids, &mut formatters, metric_names, human_format)?;
     let count = settings.get_int("count").map(|c| c as u64).ok();
-    let mut output = TextOutput::new(target_ids, metric_ids, formatters)?;
+    let mut output = TextOutput::new(target_ids, metric_ids, formatters, &system_conf)?;
     output.run(every_ms, count);
     Ok(())
 }

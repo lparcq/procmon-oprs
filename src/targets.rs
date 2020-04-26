@@ -1,14 +1,13 @@
 use anyhow::Context;
 use libc::pid_t;
-use procfs::process::{all_processes, Process, Stat};
-use procfs::Meminfo;
+use procfs::process::{all_processes, Process};
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 use crate::collector::Collector;
-use crate::metric::MetricId;
+use crate::info::{ProcessInfo, SystemConf, SystemInfo};
 
 #[derive(Error, Debug)]
 enum Error {
@@ -45,7 +44,7 @@ fn name_from_path(path: &PathBuf, no_extension: bool) -> Option<String> {
         path.file_name()
     };
     if let Some(name) = basename.map(|name| name.to_str()) {
-        name.map(|name| String::from(name))
+        name.map(String::from)
     } else {
         None
     }
@@ -93,114 +92,24 @@ impl<'a> ProcessNameMatcher<'a> {
     }
 }
 
-/// System Filesystem
-struct SystemFs {
-    _tps: u64,
-    meminfo: Option<Meminfo>,
-}
-
-impl SystemFs {
-    fn new(ticks_per_second: u64) -> SystemFs {
-        SystemFs {
-            _tps: ticks_per_second,
-            meminfo: None,
-        }
-    }
-
-    fn with_meminfo<F>(&mut self, func: F) -> u64
-    where
-        F: Fn(&Meminfo) -> u64,
-    {
-        if self.meminfo.is_none() {
-            self.meminfo = Some(Meminfo::new().expect("cannot access /proc/meminfo"));
-        }
-        match self.meminfo {
-            Some(ref meminfo) => func(meminfo),
-            None => panic!("internal error"),
-        }
-    }
-
-    fn extract_metrics(&mut self, ids: &Vec<MetricId>) -> Vec<u64> {
-        ids.iter()
-            .map(|id| match id {
-                MetricId::MemVm => {
-                    self.with_meminfo(|mi| mi.mem_total - mi.mem_available.unwrap_or(mi.mem_free))
-                }
-                _ => 0,
-            })
-            .collect()
-    }
-}
-
-/// Extract metrics for a process
-struct ProcessFs<'a> {
-    process: &'a Process,
-    tps: u64,
-    stat: Option<Stat>,
-}
-
-impl<'a> ProcessFs<'a> {
-    fn new(process: &'a Process, ticks_per_second: u64) -> ProcessFs {
-        ProcessFs {
-            process,
-            tps: ticks_per_second,
-            stat: None,
-        }
-    }
-
-    fn stat(&mut self) -> Option<&Stat> {
-        if self.stat.is_none() {
-            self.stat = self.process.stat().ok();
-        }
-        self.stat.as_ref()
-    }
-
-    fn extract_metrics(&mut self, ids: &Vec<MetricId>) -> Vec<u64> {
-        ids.iter()
-            .map(|id| match id {
-                MetricId::MemVm | MetricId::MemRss | MetricId::TimeSystem | MetricId::TimeUser => {
-                    if let Some(stat) = self.stat() {
-                        match id {
-                            MetricId::MemVm => stat.vsize,
-                            MetricId::MemRss => {
-                                if stat.rss < 0 {
-                                    0
-                                } else {
-                                    stat.rss as u64
-                                }
-                            }
-                            MetricId::TimeSystem => stat.stime / self.tps,
-                            MetricId::TimeUser => stat.utime / self.tps,
-                        }
-                    } else {
-                        0
-                    }
-                }
-            })
-            .collect()
-    }
-}
-
 /// The system itself
-struct SystemTarget {
-    tps: u64,
+struct SystemTarget<'a> {
+    system_conf: &'a SystemConf,
 }
 
-impl SystemTarget {
-    fn new() -> anyhow::Result<SystemTarget> {
-        Ok(SystemTarget {
-            tps: procfs::ticks_per_second()? as u64,
-        })
+impl<'a> SystemTarget<'a> {
+    fn new(system_conf: &'a SystemConf) -> anyhow::Result<SystemTarget<'a>> {
+        Ok(SystemTarget { system_conf })
     }
 }
 
-impl Target for SystemTarget {
+impl<'a> Target for SystemTarget<'a> {
     fn get_name(&self) -> &str {
         "system"
     }
 
     fn collect(&self, collector: &mut dyn Collector) {
-        let mut system = SystemFs::new(self.tps);
+        let mut system = SystemInfo::new(self.system_conf);
         collector.collect(
             self.get_name(),
             0,
@@ -216,30 +125,30 @@ impl Target for SystemTarget {
 /// Process defined by a pid.
 ///
 /// Once the process is gone, the target returns no metrics.
-struct StaticTarget {
+struct StaticTarget<'a> {
     name: String,
     proc_dir: PathBuf,
     process: Option<Process>,
-    tps: u64,
+    system_conf: &'a SystemConf,
 }
 
-impl StaticTarget {
-    fn new(pid: pid_t) -> anyhow::Result<StaticTarget> {
+impl<'a> StaticTarget<'a> {
+    fn new(pid: pid_t, system_conf: &'a SystemConf) -> anyhow::Result<StaticTarget<'a>> {
         let process = Process::new(pid).map_err(|_| Error::InvalidProcessId(pid))?;
         Ok(StaticTarget {
             name: name_from_process_or_pid(&process),
             proc_dir: proc_dir(pid),
             process: Some(process),
-            tps: procfs::ticks_per_second()? as u64,
+            system_conf,
         })
     }
 
-    fn new_no_error(pid: pid_t) -> StaticTarget {
-        StaticTarget::new(pid).unwrap_or_else(|_| StaticTarget {
+    fn new_no_error(pid: pid_t, system_conf: &'a SystemConf) -> StaticTarget<'a> {
+        StaticTarget::new(pid, system_conf).unwrap_or_else(|_| StaticTarget {
             name: name_from_pid(pid),
             proc_dir: proc_dir(pid),
             process: None,
-            tps: 0,
+            system_conf,
         })
     }
 
@@ -254,11 +163,11 @@ impl StaticTarget {
     fn collect_with_name(&self, name: &str, collector: &mut dyn Collector) {
         match self.process {
             Some(ref process) => {
-                let mut procfs = ProcessFs::new(process, self.tps);
+                let mut proc_info = ProcessInfo::new(process, self.system_conf);
                 collector.collect(
                     name,
                     process.pid(),
-                    procfs.extract_metrics(collector.metric_ids()),
+                    proc_info.extract_metrics(collector.metric_ids()),
                 )
             }
             None => collector.no_data(self.get_name()),
@@ -266,7 +175,7 @@ impl StaticTarget {
     }
 }
 
-impl Target for StaticTarget {
+impl<'a> Target for StaticTarget<'a> {
     fn get_name(&self) -> &str {
         self.name.as_str()
     }
@@ -276,11 +185,9 @@ impl Target for StaticTarget {
     }
 
     fn refresh(&mut self) -> bool {
-        if self.has_process() {
-            if !self.is_alive() {
-                self.process = None;
-                return true;
-            }
+        if self.has_process() && !self.is_alive() {
+            self.process = None;
+            return true;
         }
         false
     }
@@ -289,24 +196,27 @@ impl Target for StaticTarget {
 /// Process defined by a pid file.
 ///
 /// The pid can change over the time.
-struct DynamicTarget {
+struct DynamicTarget<'a> {
     name: Option<String>,
-    target: Option<StaticTarget>,
+    target: Option<StaticTarget<'a>>,
     pid_file: PathBuf,
+    system_conf: &'a SystemConf,
 }
 
-impl DynamicTarget {
-    fn new(pid_file: &PathBuf) -> DynamicTarget {
+impl<'a> DynamicTarget<'a> {
+    fn new(pid_file: &PathBuf, system_conf: &'a SystemConf) -> DynamicTarget<'a> {
         DynamicTarget {
             name: name_from_path(pid_file, true),
-            target: read_pid_file(pid_file.as_path())
-                .map_or(None, |pid| Some(StaticTarget::new_no_error(pid))),
+            target: read_pid_file(pid_file.as_path()).map_or(None, |pid| {
+                Some(StaticTarget::new_no_error(pid, system_conf))
+            }),
             pid_file: pid_file.clone(),
+            system_conf,
         }
     }
 }
 
-impl Target for DynamicTarget {
+impl<'a> Target for DynamicTarget<'a> {
     fn get_name(&self) -> &str {
         match &self.name {
             Some(name) => name.as_str(),
@@ -330,7 +240,7 @@ impl Target for DynamicTarget {
             Some(target) => target.refresh(),
             None => {
                 if let Ok(pid) = read_pid_file(self.pid_file.as_path()) {
-                    self.target = Some(StaticTarget::new_no_error(pid));
+                    self.target = Some(StaticTarget::new_no_error(pid, self.system_conf));
                     true
                 } else {
                     false
@@ -343,21 +253,23 @@ impl Target for DynamicTarget {
 /// Process defined by name.
 ///
 /// There may be multiple instances. The target sums the metrics.
-struct MultiTarget {
+struct MultiTarget<'a> {
     name: String,
-    targets: Vec<StaticTarget>,
+    targets: Vec<StaticTarget<'a>>,
+    system_conf: &'a SystemConf,
 }
 
-impl MultiTarget {
-    fn new(name: &str) -> MultiTarget {
+impl<'a> MultiTarget<'a> {
+    fn new(name: &str, system_conf: &'a SystemConf) -> MultiTarget<'a> {
         MultiTarget {
             name: name.to_string(),
             targets: Vec::new(),
+            system_conf,
         }
     }
 }
 
-impl Target for MultiTarget {
+impl<'a> Target for MultiTarget<'a> {
     fn get_name(&self) -> &str {
         self.name.as_str()
     }
@@ -380,35 +292,37 @@ impl Target for MultiTarget {
                 processes.retain(|process| name_matcher.has_name(&process));
                 if !processes.is_empty() {
                     processes.iter().for_each(|process| {
-                        if let Ok(target) = StaticTarget::new(process.pid()) {
+                        if let Ok(target) = StaticTarget::new(process.pid(), self.system_conf) {
                             self.targets.push(target);
                         }
                     });
                 }
             }
-            return count > 0 || self.targets.len() > 0;
+            return count > 0 || !self.targets.is_empty();
         }
         false
     }
 }
 
 /// Target holder
-enum TargetHolder {
-    System(SystemTarget),
-    Static(Box<StaticTarget>),
-    Dynamic(Box<DynamicTarget>),
-    Multi(MultiTarget),
+enum TargetHolder<'a> {
+    System(SystemTarget<'a>),
+    Static(Box<StaticTarget<'a>>),
+    Dynamic(Box<DynamicTarget<'a>>),
+    Multi(MultiTarget<'a>),
 }
 
 /// Target container
-pub struct TargetContainer {
-    targets: Vec<TargetHolder>,
+pub struct TargetContainer<'a> {
+    targets: Vec<TargetHolder<'a>>,
+    system_conf: &'a SystemConf,
 }
 
-impl TargetContainer {
-    pub fn new() -> TargetContainer {
+impl<'a> TargetContainer<'a> {
+    pub fn new(system_conf: &'a SystemConf) -> TargetContainer<'a> {
         TargetContainer {
             targets: Vec::new(),
+            system_conf,
         }
     }
 
@@ -442,12 +356,16 @@ impl TargetContainer {
 
     pub fn push(&mut self, target_id: &TargetId) -> anyhow::Result<()> {
         self.targets.push(match target_id {
-            TargetId::Pid(pid) => TargetHolder::Static(Box::new(StaticTarget::new(*pid)?)),
-            TargetId::PidFile(pid_file) => {
-                TargetHolder::Dynamic(Box::new(DynamicTarget::new(&pid_file)))
+            TargetId::Pid(pid) => {
+                TargetHolder::Static(Box::new(StaticTarget::new(*pid, self.system_conf)?))
             }
-            TargetId::ProcessName(name) => TargetHolder::Multi(MultiTarget::new(&name)),
-            TargetId::System => TargetHolder::System(SystemTarget::new()?),
+            TargetId::PidFile(pid_file) => {
+                TargetHolder::Dynamic(Box::new(DynamicTarget::new(&pid_file, self.system_conf)))
+            }
+            TargetId::ProcessName(name) => {
+                TargetHolder::Multi(MultiTarget::new(&name, self.system_conf))
+            }
+            TargetId::System => TargetHolder::System(SystemTarget::new(self.system_conf)?),
         });
         Ok(())
     }

@@ -7,6 +7,7 @@ use structopt::StructOpt;
 mod application;
 mod collector;
 mod format;
+mod info;
 mod metric;
 mod output;
 mod targets;
@@ -120,10 +121,8 @@ fn main() {
     if opt.metrics.is_empty() {
         dbg!(opt.names);
         application::list_metrics();
-    } else {
-        if let Err(err) = start(opt) {
-            eprintln!("{}", err);
-            std::process::exit(1);
-        };
+    } else if let Err(err) = start(opt) {
+        eprintln!("{}", err);
+        std::process::exit(1);
     }
 }

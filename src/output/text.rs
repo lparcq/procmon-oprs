@@ -4,6 +4,7 @@ use std::time;
 use super::Output;
 use crate::collector::{Collector, GridCollector};
 use crate::format::Formatter;
+use crate::info::SystemConf;
 use crate::metric::MetricId;
 use crate::targets::{TargetContainer, TargetId};
 
@@ -135,19 +136,20 @@ impl Table {
 }
 
 /// Print on standard output as a table
-pub struct TextOutput {
-    targets: TargetContainer,
+pub struct TextOutput<'a> {
+    targets: TargetContainer<'a>,
     collector: GridCollector,
     formatters: Vec<Formatter>,
 }
 
-impl TextOutput {
+impl<'a> TextOutput<'a> {
     pub fn new(
         target_ids: &[TargetId],
         metric_ids: Vec<MetricId>,
         formatters: Vec<Formatter>,
-    ) -> anyhow::Result<TextOutput> {
-        let mut targets = TargetContainer::new();
+        system_conf: &'a SystemConf,
+    ) -> anyhow::Result<TextOutput<'a>> {
+        let mut targets = TargetContainer::new(system_conf);
         targets.push_all(target_ids)?;
         let collector = GridCollector::new(target_ids.len(), metric_ids);
         Ok(TextOutput {
@@ -158,7 +160,7 @@ impl TextOutput {
     }
 }
 
-impl Output for TextOutput {
+impl<'a> Output for TextOutput<'a> {
     fn run(&mut self, every_ms: time::Duration, count: Option<u64>) {
         let mut loop_number: u64 = 0;
         let metric_names = self.collector.metric_names();
