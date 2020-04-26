@@ -20,6 +20,8 @@ pub enum MetricId {
     FaultMajor,
     MemRss,
     MemVm,
+    MemText,
+    MemData,
     TimeReal,
     TimeSystem,
     TimeUser,
@@ -32,6 +34,8 @@ impl MetricId {
             MetricId::FaultMajor => "fault:major",
             MetricId::MemRss => "mem:rss",
             MetricId::MemVm => "mem:vm",
+            MetricId::MemText => "mem:text",
+            MetricId::MemData => "mem:data",
             MetricId::TimeReal => "time:real",
             MetricId::TimeSystem => "time:system",
             MetricId::TimeUser => "time:user",
@@ -53,6 +57,8 @@ impl MetricMapper {
         mapping.insert(MetricId::FaultMajor.to_str(), MetricId::FaultMajor);
         mapping.insert(MetricId::MemVm.to_str(), MetricId::MemVm);
         mapping.insert(MetricId::MemRss.to_str(), MetricId::MemRss);
+        mapping.insert(MetricId::MemText.to_str(), MetricId::MemText);
+        mapping.insert(MetricId::MemData.to_str(), MetricId::MemData);
         mapping.insert(MetricId::TimeReal.to_str(), MetricId::TimeReal);
         mapping.insert(MetricId::TimeSystem.to_str(), MetricId::TimeSystem);
         mapping.insert(MetricId::TimeUser.to_str(), MetricId::TimeUser);
@@ -69,6 +75,8 @@ impl MetricMapper {
             MetricId::FaultMajor => "page faults with disk access",
             MetricId::MemVm => "virtual memory",
             MetricId::MemRss => "resident set size",
+            MetricId::MemText => "text size (code)",
+            MetricId::MemData => "data + stack size",
             MetricId::TimeReal => "elapsed time since process started",
             MetricId::TimeSystem => "elapsed time in kernel mode",
             MetricId::TimeUser => "elapsed time in user mode",
@@ -101,6 +109,8 @@ fn get_human_format(id: MetricId) -> format::Formatter {
     match id {
         MetricId::MemRss => format::size,
         MetricId::MemVm => format::size,
+        MetricId::MemText => format::size,
+        MetricId::MemData => format::size,
         MetricId::TimeReal => format::duration,
         MetricId::TimeSystem => format::duration,
         MetricId::TimeUser => format::duration,

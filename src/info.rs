@@ -1,5 +1,5 @@
 /// Extract metrics from procfs interface.
-use procfs::process::{Process, Stat};
+use procfs::process::{Process, Stat, StatM};
 use procfs::Meminfo;
 use std::time::SystemTime;
 
@@ -23,15 +23,18 @@ fn elapsed_time_since(start_time: u64) -> u64 {
 pub struct SystemConf {
     ticks_per_second: u64,
     boot_time: u64,
+    page_size: u64,
 }
 
 impl SystemConf {
     pub fn new() -> anyhow::Result<SystemConf> {
         let ticks_per_second = procfs::ticks_per_second()?;
         let kstat = procfs::KernelStats::new()?;
+        let page_size = procfs::page_size()?;
         Ok(SystemConf {
             ticks_per_second: ticks_per_second as u64,
             boot_time: kstat.btime,
+            page_size: page_size as u64,
         })
     }
 }
@@ -81,6 +84,7 @@ pub struct ProcessInfo<'a, 'b> {
     process: &'a Process,
     system_conf: &'b SystemConf,
     stat: Option<Stat>,
+    statm: Option<StatM>,
 }
 
 impl<'a, 'b> ProcessInfo<'a, 'b> {
@@ -89,6 +93,7 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
             process,
             system_conf,
             stat: None,
+            statm: None,
         }
     }
 
@@ -114,6 +119,18 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
             .map_or(0, |stat| func(stat, self.system_conf))
     }
 
+    fn with_system_statm<F>(&mut self, func: F) -> u64
+    where
+        F: Fn(&StatM, &SystemConf) -> u64,
+    {
+        if self.statm.is_none() {
+            self.statm = self.process.statm().ok();
+        }
+        self.statm
+            .as_ref()
+            .map_or(0, |statm| func(statm, self.system_conf))
+    }
+
     fn elapsed_time(stat: &Stat, system_conf: &SystemConf) -> u64 {
         let process_start = system_conf.boot_time + stat.starttime / system_conf.ticks_per_second;
         elapsed_time_since(process_start)
@@ -128,6 +145,8 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
                 MetricId::MemRss => {
                     self.with_stat(|stat| if stat.rss < 0 { 0 } else { stat.rss as u64 })
                 }
+                MetricId::MemText => self.with_system_statm(|statm, sc| statm.text * sc.page_size),
+                MetricId::MemData => self.with_system_statm(|statm, sc| statm.data * sc.page_size),
                 MetricId::TimeReal => self.with_system_stat(ProcessInfo::elapsed_time),
                 MetricId::TimeSystem => {
                     self.with_stat(|stat| stat.stime) / self.system_conf.ticks_per_second
