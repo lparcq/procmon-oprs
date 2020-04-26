@@ -18,6 +18,12 @@ enum Error {
 pub enum MetricId {
     FaultMinor,
     FaultMajor,
+    IoReadCall,
+    IoReadCount,
+    IoReadStorage,
+    IoWriteCall,
+    IoWriteCount,
+    IoWriteStorage,
     MemRss,
     MemVm,
     MemText,
@@ -32,6 +38,12 @@ impl MetricId {
         match self {
             MetricId::FaultMinor => "fault:minor",
             MetricId::FaultMajor => "fault:major",
+            MetricId::IoReadCall => "io:read:call",
+            MetricId::IoReadCount => "io:read:count",
+            MetricId::IoReadStorage => "io:read:storage",
+            MetricId::IoWriteCall => "io:write:call",
+            MetricId::IoWriteCount => "io:write:count",
+            MetricId::IoWriteStorage => "io:write:storage",
             MetricId::MemRss => "mem:rss",
             MetricId::MemVm => "mem:vm",
             MetricId::MemText => "mem:text",
@@ -55,6 +67,12 @@ impl MetricMapper {
         let mut mapping = BTreeMap::new();
         mapping.insert(MetricId::FaultMinor.to_str(), MetricId::FaultMinor);
         mapping.insert(MetricId::FaultMajor.to_str(), MetricId::FaultMajor);
+        mapping.insert(MetricId::IoReadCall.to_str(), MetricId::IoReadCall);
+        mapping.insert(MetricId::IoReadCount.to_str(), MetricId::IoReadCount);
+        mapping.insert(MetricId::IoReadStorage.to_str(), MetricId::IoReadStorage);
+        mapping.insert(MetricId::IoWriteCall.to_str(), MetricId::IoWriteCall);
+        mapping.insert(MetricId::IoWriteCount.to_str(), MetricId::IoWriteCount);
+        mapping.insert(MetricId::IoWriteStorage.to_str(), MetricId::IoWriteStorage);
         mapping.insert(MetricId::MemVm.to_str(), MetricId::MemVm);
         mapping.insert(MetricId::MemRss.to_str(), MetricId::MemRss);
         mapping.insert(MetricId::MemText.to_str(), MetricId::MemText);
@@ -73,6 +91,20 @@ impl MetricMapper {
         match id {
             MetricId::FaultMinor => "page faults without disk access",
             MetricId::FaultMajor => "page faults with disk access",
+            MetricId::IoReadCall => {
+                "number of read operations with system calls such as read(2) and pread(2)"
+            }
+            MetricId::IoReadCount => {
+                "number of bytes read from storage even if from page cache only"
+            }
+            MetricId::IoReadStorage => "number of bytes really fetched from storage",
+            MetricId::IoWriteCall => {
+                "number of write operations with system calls such as write(2) and pwrite(2)"
+            }
+            MetricId::IoWriteCount => {
+                "number of bytes written to storage even if to page cache only"
+            }
+            MetricId::IoWriteStorage => "number of bytes really sent to storage",
             MetricId::MemVm => "virtual memory",
             MetricId::MemRss => "resident set size",
             MetricId::MemText => "text size (code)",
@@ -107,6 +139,12 @@ fn get_format(name: &str) -> std::result::Result<format::Formatter, Error> {
 
 fn get_human_format(id: MetricId) -> format::Formatter {
     match id {
+        MetricId::IoReadCall => format::size,
+        MetricId::IoReadCount => format::size,
+        MetricId::IoReadStorage => format::size,
+        MetricId::IoWriteCall => format::size,
+        MetricId::IoWriteCount => format::size,
+        MetricId::IoWriteStorage => format::size,
         MetricId::MemRss => format::size,
         MetricId::MemVm => format::size,
         MetricId::MemText => format::size,

@@ -1,5 +1,5 @@
 /// Extract metrics from procfs interface.
-use procfs::process::{Process, Stat, StatM};
+use procfs::process::{Io, Process, Stat, StatM};
 use procfs::Meminfo;
 use std::time::SystemTime;
 
@@ -83,6 +83,7 @@ impl<'a> SystemInfo<'a> {
 pub struct ProcessInfo<'a, 'b> {
     process: &'a Process,
     system_conf: &'b SystemConf,
+    io: Option<Io>,
     stat: Option<Stat>,
     statm: Option<StatM>,
 }
@@ -92,9 +93,20 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
         ProcessInfo {
             process,
             system_conf,
+            io: None,
             stat: None,
             statm: None,
         }
+    }
+
+    fn with_io<F>(&mut self, func: F) -> u64
+    where
+        F: Fn(&Io) -> u64,
+    {
+        if self.io.is_none() {
+            self.io = self.process.io().ok();
+        }
+        self.io.as_ref().map_or(0, |io| func(io))
     }
 
     fn with_stat<F>(&mut self, func: F) -> u64
@@ -141,6 +153,12 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
             .map(|id| match id {
                 MetricId::FaultMinor => self.with_stat(|stat| stat.minflt),
                 MetricId::FaultMajor => self.with_stat(|stat| stat.majflt),
+                MetricId::IoReadCall => self.with_io(|io| io.rchar),
+                MetricId::IoReadCount => self.with_io(|io| io.syscr),
+                MetricId::IoReadStorage => self.with_io(|io| io.read_bytes),
+                MetricId::IoWriteCall => self.with_io(|io| io.wchar),
+                MetricId::IoWriteCount => self.with_io(|io| io.syscw),
+                MetricId::IoWriteStorage => self.with_io(|io| io.write_bytes),
                 MetricId::MemVm => self.with_stat(|stat| stat.vsize),
                 MetricId::MemRss => {
                     self.with_stat(|stat| if stat.rss < 0 { 0 } else { stat.rss as u64 })
