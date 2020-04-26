@@ -146,15 +146,15 @@ impl TextOutput {
         target_ids: &[TargetId],
         metric_ids: Vec<MetricId>,
         formatters: Vec<Formatter>,
-    ) -> TextOutput {
+    ) -> anyhow::Result<TextOutput> {
         let mut targets = TargetContainer::new();
-        targets.push_all(target_ids);
+        targets.push_all(target_ids)?;
         let collector = GridCollector::new(target_ids.len(), metric_ids);
-        TextOutput {
+        Ok(TextOutput {
             targets,
             collector,
             formatters,
-        }
+        })
     }
 }
 
@@ -171,31 +171,34 @@ impl Output for TextOutput {
             let with_header = self.targets.refresh(); // must print headers again
             self.targets.collect(&mut self.collector);
             let lines = self.collector.lines();
-
-            table.clear_titles();
-            table.clear_values();
-            for line in lines {
-                let name = match &line.metrics {
-                    Some(metrics) => format!("{} [{}]", line.name, metrics.pid,),
-                    None => line.name.to_string(),
-                };
-                table.push_title(name);
-                match &line.metrics {
-                    Some(metrics) => {
-                        for (metric_idx, value) in metrics.series.iter().enumerate() {
-                            let fmt = self.formatters.get(metric_idx).unwrap();
-                            table.push_value((*fmt)(*value));
+            if lines.is_empty() {
+                eprintln!("no process found")
+            } else {
+                table.clear_titles();
+                table.clear_values();
+                for line in lines {
+                    let name = match &line.metrics {
+                        Some(metrics) => format!("{} [{}]", line.name, metrics.pid,),
+                        None => line.name.to_string(),
+                    };
+                    table.push_title(name);
+                    match &line.metrics {
+                        Some(metrics) => {
+                            for (metric_idx, value) in metrics.series.iter().enumerate() {
+                                let fmt = self.formatters.get(metric_idx).unwrap();
+                                table.push_value((*fmt)(*value));
+                            }
                         }
-                    }
-                    None => {
-                        for _ in 0..metric_count {
-                            table.push_value("----".to_string());
+                        None => {
+                            for _ in 0..metric_count {
+                                table.push_value("----".to_string());
+                            }
                         }
                     }
                 }
+                table.resize();
+                table.print(with_header);
             }
-            table.resize();
-            table.print(with_header);
 
             if let Some(count) = count {
                 loop_number += 1;

@@ -1,4 +1,3 @@
-use anyhow::Result;
 use std::time;
 use thiserror::Error;
 
@@ -23,7 +22,7 @@ pub fn run(
     settings: &config::Config,
     metric_names: &[String],
     target_ids: &[TargetId],
-) -> Result<()> {
+) -> anyhow::Result<()> {
     let every_ms = time::Duration::from_millis(
         (settings
             .get_float("every")
@@ -34,7 +33,7 @@ pub fn run(
     let mut formatters = Vec::new();
     parse_metric_names(&mut metric_ids, &mut formatters, metric_names)?;
     let count = settings.get_int("count").map(|c| c as u64).ok();
-    let mut output = TextOutput::new(target_ids, metric_ids, formatters);
+    let mut output = TextOutput::new(target_ids, metric_ids, formatters)?;
     output.run(every_ms, count);
     Ok(())
 }

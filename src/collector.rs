@@ -1,4 +1,4 @@
-use procfs::process::Process;
+use libc::pid_t;
 
 use crate::metric::{MetricId, ProcessMetrics};
 
@@ -20,8 +20,10 @@ impl ProcessLine {
 /// Collector
 pub trait Collector {
     fn clear(&mut self);
-    fn collect(&mut self, target_name: &str, process: Option<&Process>);
+    fn no_data(&mut self, target_name: &str);
+    fn collect(&mut self, target_name: &str, pid: pid_t, values: Vec<u64>);
     fn lines(&self) -> &Vec<ProcessLine>;
+    fn metric_ids(&self) -> &Vec<MetricId>;
     fn metric_names(&self) -> Vec<&'static str>;
 }
 
@@ -29,7 +31,6 @@ pub trait Collector {
 pub struct GridCollector {
     ids: Vec<MetricId>,
     lines: Vec<ProcessLine>,
-    tps: u64,
 }
 
 impl GridCollector {
@@ -37,36 +38,7 @@ impl GridCollector {
         GridCollector {
             ids: metric_ids,
             lines: Vec::with_capacity(number_of_targets),
-            tps: procfs::ticks_per_second().unwrap() as u64,
         }
-    }
-
-    /// Extract metrics for a process
-    fn extract_values(&self, process: &Process) -> Vec<u64> {
-        self.ids
-            .iter()
-            .map(|id| match id {
-                MetricId::MemVm | MetricId::MemRss | MetricId::TimeSystem | MetricId::TimeUser => {
-                    let stat = process.stat(); // refresh stat
-                    if let Ok(stat) = stat {
-                        match id {
-                            MetricId::MemVm => stat.vsize,
-                            MetricId::MemRss => {
-                                if stat.rss < 0 {
-                                    0
-                                } else {
-                                    stat.rss as u64
-                                }
-                            }
-                            MetricId::TimeSystem => stat.stime / self.tps,
-                            MetricId::TimeUser => stat.utime / self.tps,
-                        }
-                    } else {
-                        0
-                    }
-                }
-            })
-            .collect()
     }
 }
 
@@ -76,17 +48,19 @@ impl Collector for GridCollector {
         self.lines = Vec::with_capacity(self.lines.capacity());
     }
 
-    fn collect(&mut self, target_name: &str, process: Option<&Process>) {
+    fn no_data(&mut self, target_name: &str) {
+        self.lines.push(ProcessLine::new(target_name, None));
+    }
+
+    fn collect(&mut self, target_name: &str, pid: pid_t, values: Vec<u64>) {
         self.lines.push(ProcessLine::new(
             target_name,
-            match process {
-                Some(process) => Some(ProcessMetrics::new(
-                    process.pid(),
-                    self.extract_values(process),
-                )),
-                None => None,
-            },
-        ))
+            Some(ProcessMetrics::new(pid, values)),
+        ));
+    }
+
+    fn metric_ids(&self) -> &Vec<MetricId> {
+        &self.ids
     }
 
     /// Metric names

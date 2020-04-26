@@ -14,7 +14,7 @@ enum Error {
 }
 
 /// Metrics that can be collected for a process
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum MetricId {
     MemRss,
     MemVm,
