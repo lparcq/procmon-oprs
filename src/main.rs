@@ -41,6 +41,9 @@ struct Opt {
     )]
     every: f64,
 
+    #[structopt(short = "H", long = "human", help = "use human-readable units")]
+    human_format: bool,
+
     #[structopt(short, long, help = "monitor system")]
     system: bool,
 
@@ -100,7 +103,7 @@ fn start(opt: Opt) -> anyhow::Result<()> {
     if target_ids.is_empty() {
         eprintln!("no process to monitor, exiting.");
     } else {
-        application::run(&settings, &opt.metrics, &target_ids)?;
+        application::run(&settings, &opt.metrics, opt.human_format, &target_ids)?;
     }
     Ok(())
 }

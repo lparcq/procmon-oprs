@@ -21,6 +21,7 @@ pub fn list_metrics() {
 pub fn run(
     settings: &config::Config,
     metric_names: &[String],
+    human_format: bool,
     target_ids: &[TargetId],
 ) -> anyhow::Result<()> {
     let every_ms = time::Duration::from_millis(
@@ -31,7 +32,7 @@ pub fn run(
     );
     let mut metric_ids = Vec::new();
     let mut formatters = Vec::new();
-    parse_metric_names(&mut metric_ids, &mut formatters, metric_names)?;
+    parse_metric_names(&mut metric_ids, &mut formatters, metric_names, human_format)?;
     let count = settings.get_int("count").map(|c| c as u64).ok();
     let mut output = TextOutput::new(target_ids, metric_ids, formatters)?;
     output.run(every_ms, count);

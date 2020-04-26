@@ -85,11 +85,21 @@ fn get_format(name: &str) -> std::result::Result<format::Formatter, Error> {
     }
 }
 
+fn get_human_format(id: MetricId) -> format::Formatter {
+    match id {
+        MetricId::MemRss => format::size,
+        MetricId::MemVm => format::size,
+        MetricId::TimeSystem => format::duration,
+        MetricId::TimeUser => format::duration,
+    }
+}
+
 // Return a list of ids from name
 pub fn parse_metric_names(
     ids: &mut Vec<MetricId>,
     formatters: &mut Vec<format::Formatter>,
     names: &[String],
+    human_format: bool,
 ) -> Result<()> {
     let mapper = MetricMapper::new();
     names.iter().try_for_each(|name| {
@@ -99,6 +109,8 @@ pub fn parse_metric_names(
                 ids.push(*id);
                 if tokens.len() > 1 {
                     formatters.push(get_format(tokens[1])?);
+                } else if human_format {
+                    formatters.push(get_human_format(*id));
                 } else {
                     formatters.push(format::identity);
                 }
