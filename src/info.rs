@@ -1,4 +1,5 @@
-/// Extract metrics from procfs interface.
+// Extract metrics from procfs interface.
+
 use procfs::process::{Io, Process, Stat, StatM};
 use procfs::Meminfo;
 use std::time::SystemTime;

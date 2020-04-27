@@ -1,13 +1,13 @@
-use anyhow::Context;
 use libc::pid_t;
-use procfs::process::{all_processes, Process};
-use std::fs::File;
-use std::io::Read;
-use std::path::{Path, PathBuf};
+use procfs::process::Process;
+use std::collections::{BTreeSet, HashMap};
+use std::path::PathBuf;
+use std::str::FromStr;
 use thiserror::Error;
 
 use crate::collector::Collector;
 use crate::info::{ProcessInfo, SystemConf, SystemInfo};
+use crate::utils::*;
 
 #[derive(Error, Debug)]
 enum Error {
@@ -28,68 +28,6 @@ pub enum TargetId {
 pub trait Target {
     fn get_name(&self) -> &str;
     fn collect(&self, collector: &mut dyn Collector);
-    fn refresh(&mut self) -> bool;
-}
-
-// Utilities
-
-fn name_from_pid(pid: pid_t) -> String {
-    format!("[{}]", pid)
-}
-
-fn name_from_path(path: &PathBuf, no_extension: bool) -> Option<String> {
-    let basename: Option<&std::ffi::OsStr> = if no_extension {
-        path.file_stem()
-    } else {
-        path.file_name()
-    };
-    if let Some(name) = basename.map(|name| name.to_str()) {
-        name.map(String::from)
-    } else {
-        None
-    }
-}
-
-fn name_from_process(process: &Process) -> Option<String> {
-    if let Ok(path) = process.exe() {
-        if let Some(name) = name_from_path(&path, false) {
-            return Some(name);
-        }
-    }
-    None
-}
-
-fn name_from_process_or_pid(process: &Process) -> String {
-    name_from_process(process).unwrap_or_else(|| name_from_pid(process.pid()))
-}
-
-fn read_pid_file(pid_file: &Path) -> anyhow::Result<pid_t> {
-    let mut file = File::open(pid_file)
-        .with_context(|| format!("{}: cannot open file", pid_file.display()))?;
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)?;
-    Ok(contents
-        .trim()
-        .parse::<i32>()
-        .with_context(|| format!("{}: invalid pid file", pid_file.display()))?)
-}
-
-fn proc_dir(pid: pid_t) -> PathBuf {
-    PathBuf::from("/proc").join(format!("{}", pid))
-}
-
-/// Check if a process has a given name
-struct ProcessNameMatcher<'a> {
-    name: &'a str,
-}
-
-impl<'a> ProcessNameMatcher<'a> {
-    fn has_name(&self, process: &Process) -> bool {
-        match name_from_process(process) {
-            Some(name) => name == self.name,
-            None => false,
-        }
-    }
 }
 
 /// The system itself
@@ -115,10 +53,6 @@ impl<'a> Target for SystemTarget<'a> {
             0,
             system.extract_metrics(collector.metric_ids()),
         );
-    }
-
-    fn refresh(&mut self) -> bool {
-        false
     }
 }
 
@@ -160,6 +94,10 @@ impl<'a> StaticTarget<'a> {
         self.proc_dir.exists()
     }
 
+    fn get_pid(&self) -> Option<pid_t> {
+        self.process.as_ref().map(|proc| proc.pid())
+    }
+
     fn collect_with_name(&self, name: &str, collector: &mut dyn Collector) {
         match self.process {
             Some(ref process) => {
@@ -173,6 +111,14 @@ impl<'a> StaticTarget<'a> {
             None => collector.no_data(self.get_name()),
         }
     }
+
+    fn refresh(&mut self) -> bool {
+        if self.has_process() && !self.is_alive() {
+            self.process = None;
+            return true;
+        }
+        false
+    }
 }
 
 impl<'a> Target for StaticTarget<'a> {
@@ -182,14 +128,6 @@ impl<'a> Target for StaticTarget<'a> {
 
     fn collect(&self, collector: &mut dyn Collector) {
         self.collect_with_name(self.get_name(), collector);
-    }
-
-    fn refresh(&mut self) -> bool {
-        if self.has_process() && !self.is_alive() {
-            self.process = None;
-            return true;
-        }
-        false
     }
 }
 
@@ -214,6 +152,20 @@ impl<'a> DynamicTarget<'a> {
             system_conf,
         }
     }
+
+    fn refresh(&mut self) -> bool {
+        match &mut self.target {
+            Some(target) => target.refresh(),
+            None => {
+                if let Ok(pid) = read_pid_file(self.pid_file.as_path()) {
+                    self.target = Some(StaticTarget::new_no_error(pid, self.system_conf));
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+    }
 }
 
 impl<'a> Target for DynamicTarget<'a> {
@@ -234,20 +186,6 @@ impl<'a> Target for DynamicTarget<'a> {
             collector.no_data(self.get_name());
         }
     }
-
-    fn refresh(&mut self) -> bool {
-        match &mut self.target {
-            Some(target) => target.refresh(),
-            None => {
-                if let Ok(pid) = read_pid_file(self.pid_file.as_path()) {
-                    self.target = Some(StaticTarget::new_no_error(pid, self.system_conf));
-                    true
-                } else {
-                    false
-                }
-            }
-        }
-    }
 }
 
 /// Process defined by name.
@@ -255,17 +193,45 @@ impl<'a> Target for DynamicTarget<'a> {
 /// There may be multiple instances. The target sums the metrics.
 struct MultiTarget<'a> {
     name: String,
+    index: usize,
     targets: Vec<StaticTarget<'a>>,
     system_conf: &'a SystemConf,
 }
 
 impl<'a> MultiTarget<'a> {
-    fn new(name: &str, system_conf: &'a SystemConf) -> MultiTarget<'a> {
+    fn new(name: &str, index: usize, system_conf: &'a SystemConf) -> MultiTarget<'a> {
         MultiTarget {
             name: name.to_string(),
+            index,
             targets: Vec::new(),
             system_conf,
         }
+    }
+
+    fn get_index(&self) -> usize {
+        self.index
+    }
+
+    fn refresh(&mut self, current_pids: &[pid_t]) -> bool {
+        // Only parse all processes if there are none or if one has died
+        let count = self.targets.len();
+        let mut previous_pids = BTreeSet::new();
+        self.targets.retain(|target| {
+            if let Some(pid) = target.get_pid() {
+                previous_pids.insert(pid);
+                target.is_alive()
+            } else {
+                false
+            }
+        });
+        for pid in current_pids {
+            if !previous_pids.contains(pid) {
+                if let Ok(target) = StaticTarget::new(*pid, self.system_conf) {
+                    self.targets.push(target);
+                }
+            }
+        }
+        self.targets.len() != count
     }
 }
 
@@ -279,94 +245,113 @@ impl<'a> Target for MultiTarget<'a> {
             target.collect(collector);
         }
     }
-
-    fn refresh(&mut self) -> bool {
-        // Only parse all processes if there are none or if one has died
-        let count = self.targets.len();
-        self.targets.retain(|target| target.is_alive());
-        if count == 0 || self.targets.len() < count {
-            if let Ok(mut processes) = all_processes() {
-                let name_matcher = ProcessNameMatcher {
-                    name: self.name.as_str(),
-                };
-                processes.retain(|process| name_matcher.has_name(&process));
-                if !processes.is_empty() {
-                    processes.iter().for_each(|process| {
-                        if let Ok(target) = StaticTarget::new(process.pid(), self.system_conf) {
-                            self.targets.push(target);
-                        }
-                    });
-                }
-            }
-            return count > 0 || !self.targets.is_empty();
-        }
-        false
-    }
-}
-
-/// Target holder
-enum TargetHolder<'a> {
-    System(SystemTarget<'a>),
-    Static(Box<StaticTarget<'a>>),
-    Dynamic(Box<DynamicTarget<'a>>),
-    Multi(MultiTarget<'a>),
 }
 
 /// Target container
 pub struct TargetContainer<'a> {
-    targets: Vec<TargetHolder<'a>>,
+    system: Option<SystemTarget<'a>>,
+    statics: Vec<StaticTarget<'a>>,
+    dynamics: Vec<DynamicTarget<'a>>,
+    multis: Vec<MultiTarget<'a>>,
     system_conf: &'a SystemConf,
 }
 
 impl<'a> TargetContainer<'a> {
     pub fn new(system_conf: &'a SystemConf) -> TargetContainer<'a> {
         TargetContainer {
-            targets: Vec::new(),
+            system: None,
+            statics: Vec::new(),
+            dynamics: Vec::new(),
+            multis: Vec::new(),
             system_conf,
+        }
+    }
+
+    /// For multiple targets, find the corresponding pids
+    fn get_target_pids(&self, target_pids: &mut Vec<Vec<pid_t>>) {
+        let mut target_indexes = HashMap::<&str, usize>::new();
+        self.multis.iter().for_each(|target| {
+            target_indexes.insert(target.get_name(), target.get_index());
+            target_pids.push(Vec::new());
+        });
+        if let Ok(entries) = std::fs::read_dir("/proc") {
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    if let Ok(pid) = i32::from_str(&entry.file_name().to_string_lossy()) {
+                        if let Some(first_string) =
+                            read_file_first_string(entry.path().join("cmdline"), b'\0')
+                        {
+                            if let Some(name) = PathBuf::from(first_string)
+                                .file_name()
+                                .and_then(|os_name| os_name.to_str())
+                            {
+                                if let Some(index) = target_indexes.get(name) {
+                                    target_pids[*index].push(pid);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
     pub fn refresh(&mut self) -> bool {
         let mut changed = false;
-        self.targets.iter_mut().for_each(|holder| match holder {
-            TargetHolder::Dynamic(ref mut target) => {
-                if target.refresh() {
-                    changed = true;
-                }
+        self.statics.iter_mut().for_each(|target| {
+            if target.refresh() {
+                changed = true;
             }
-            TargetHolder::Multi(ref mut target) => {
-                if target.refresh() {
-                    changed = true;
-                }
-            }
-            _ => (),
         });
+        self.dynamics.iter_mut().for_each(|target| {
+            if target.refresh() {
+                changed = true;
+            }
+        });
+
+        if !self.multis.is_empty() {
+            let mut target_pids = Vec::new();
+            self.get_target_pids(&mut target_pids);
+            self.multis.iter_mut().for_each(|target| {
+                if target.refresh(&target_pids[target.get_index()]) {
+                    changed = true;
+                }
+            });
+        }
         changed
     }
 
     pub fn collect(&self, collector: &mut dyn Collector) {
         collector.clear();
-        self.targets.iter().for_each(|holder| match holder {
-            TargetHolder::Static(target) => target.collect(collector),
-            TargetHolder::Dynamic(target) => target.collect(collector),
-            TargetHolder::Multi(target) => target.collect(collector),
-            TargetHolder::System(target) => target.collect(collector),
-        })
+        if let Some(system) = &self.system {
+            system.collect(collector);
+        }
+        self.statics
+            .iter()
+            .for_each(|target| target.collect(collector));
+        self.dynamics
+            .iter()
+            .for_each(|target| target.collect(collector));
+        self.multis
+            .iter()
+            .for_each(|target| target.collect(collector));
     }
 
     pub fn push(&mut self, target_id: &TargetId) -> anyhow::Result<()> {
-        self.targets.push(match target_id {
-            TargetId::Pid(pid) => {
-                TargetHolder::Static(Box::new(StaticTarget::new(*pid, self.system_conf)?))
-            }
-            TargetId::PidFile(pid_file) => {
-                TargetHolder::Dynamic(Box::new(DynamicTarget::new(&pid_file, self.system_conf)))
-            }
-            TargetId::ProcessName(name) => {
-                TargetHolder::Multi(MultiTarget::new(&name, self.system_conf))
-            }
-            TargetId::System => TargetHolder::System(SystemTarget::new(self.system_conf)?),
-        });
+        match target_id {
+            TargetId::System => self.system = Some(SystemTarget::new(self.system_conf)?),
+            TargetId::Pid(pid) => self
+                .statics
+                .push(StaticTarget::new(*pid, self.system_conf)?),
+            TargetId::PidFile(pid_file) => self
+                .dynamics
+                .push(DynamicTarget::new(&pid_file, self.system_conf)),
+            TargetId::ProcessName(name) => self.multis.push(MultiTarget::new(
+                name.as_str(),
+                self.multis.len(),
+                self.system_conf,
+            )),
+        };
         Ok(())
     }
 
@@ -375,23 +360,5 @@ impl<'a> TargetContainer<'a> {
             self.push(target_id)?;
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-
-    use std::path::PathBuf;
-
-    #[test]
-    fn test_name_from_path() {
-        assert_eq!(
-            "file.pid",
-            super::name_from_path(&PathBuf::from("/a/file.pid"), false).unwrap()
-        );
-        assert_eq!(
-            "file",
-            super::name_from_path(&PathBuf::from("/a/file.pid"), true).unwrap()
-        );
     }
 }

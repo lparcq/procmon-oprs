@@ -11,6 +11,7 @@ mod info;
 mod metric;
 mod output;
 mod targets;
+mod utils;
 
 use targets::TargetId;
 
@@ -26,7 +27,7 @@ O(bserve)P(rocess)R(e)s(ourses) displays selected metrics for the system or indi
 Without argument, prints the list of available metrics.";
 
 #[derive(StructOpt, Debug)]
-#[structopt(name = "oprs", about = HELP_MESSAGE)]
+#[structopt(name = APP_NAME, about = HELP_MESSAGE)]
 struct Opt {
     #[structopt(short, long, parse(from_occurrences), help = "Activate verbose mode")]
     verbose: u64,
