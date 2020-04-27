@@ -1,7 +1,7 @@
 [package]
-name = "psloop"
+name = "oprs"
 version = "0.1.0"
-authors = ["Laurent Pelecq <lpelecq+procmon@circoise.eu>"]
+authors = ["Laurent Pelecq <lpelecq+oprs@circoise.eu>"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
