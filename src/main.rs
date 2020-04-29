@@ -14,6 +14,9 @@ mod output;
 mod targets;
 mod utils;
 
+#[cfg(test)]
+mod mocks;
+
 use targets::TargetId;
 
 const APP_NAME: &str = "oprs";

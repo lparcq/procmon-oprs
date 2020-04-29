@@ -3,9 +3,14 @@
 use anyhow::Context;
 use libc::pid_t;
 use procfs::process::Process;
-use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
+
+#[cfg(not(test))]
+use std::fs;
+
+#[cfg(test)]
+use crate::mocks::fs;
 
 /// Name identifying a process if only the pid is known
 pub fn name_from_pid(pid: pid_t) -> String {
@@ -86,5 +91,14 @@ mod tests {
             "file",
             super::name_from_path(&PathBuf::from("/a/file.pid"), true).unwrap()
         );
+    }
+
+    #[test]
+    fn test_read_file_first_string() {
+        let path = PathBuf::from("content:/a/b\tone\ttwo");
+        match super::read_file_first_string(path, b'\t') {
+            Some(value) => assert_eq!("/a/b", value),
+            None => panic!("no string"),
+        }
     }
 }
