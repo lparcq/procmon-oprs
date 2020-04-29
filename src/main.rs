@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use structopt::StructOpt;
 
 mod application;
+mod cfg;
 mod collector;
 mod format;
 mod info;
@@ -70,19 +71,16 @@ struct Opt {
 //
 
 fn start(opt: Opt) -> anyhow::Result<()> {
-    let xdg_dirs = xdg::BaseDirectories::with_prefix(APP_NAME)?;
-
     // Configuration
-    let config_file_name = xdg_dirs.place_config_file("settings.toml")?;
     let mut settings = config::Config::default();
-    if config_file_name.exists() {
-        let config_file = config::File::from(config_file_name);
-        settings.merge(config_file)?;
-    };
-    settings.set("name", APP_NAME)?;
-    settings.set("every", opt.every)?;
+    if let Ok(config_reader) = cfg::Reader::new(APP_NAME) {
+        config_reader.read_config_file(&mut settings, "settings")?;
+    }
+    settings.set(cfg::KEY_APP_NAME, APP_NAME)?;
+    settings.set(cfg::KEY_EVERY, opt.every)?;
+    cfg::provide(&mut settings, cfg::KEY_HUMAN_FORMAT, opt.human_format)?;
     if let Some(count) = opt.count {
-        settings.set("count", count as i64)?;
+        settings.set(cfg::KEY_COUNT, count as i64)?;
     }
 
     let mut target_ids = Vec::new();
@@ -105,7 +103,7 @@ fn start(opt: Opt) -> anyhow::Result<()> {
     if target_ids.is_empty() {
         eprintln!("no process to monitor, exiting.");
     } else {
-        application::run(&settings, &opt.metrics, opt.human_format, &target_ids)?;
+        application::run(&settings, &opt.metrics, &target_ids)?;
     }
     Ok(())
 }

@@ -22,3 +22,10 @@ xdg = "2"
 [profile.release]
 lto = true
 panic = 'abort'
+opt-level = 3
+debug = false
+
+[profile.dev]
+opt-level = 0
+debug = true
+
