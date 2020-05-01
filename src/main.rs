@@ -28,7 +28,22 @@ const APP_NAME: &str = "oprs";
 const HELP_MESSAGE: &str = "
 O(bserve)P(rocess)R(e)s(ourses) displays selected metrics for the system or individual processes.
 
-Without argument, prints the list of available metrics.";
+Without argument, prints the list of available metrics.
+
+A metric may be followed by a unit. For example: mem:vm/gi
+
+Available units:
+ki  kibi
+mi  mebi
+gi  gibi
+ti  tebi
+k   kilo
+m   mega
+g   giga
+t   tera
+sz  the best unit in k, m, g or t.
+du  format duration as hour, minutes, seconds.
+";
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = APP_NAME, about = HELP_MESSAGE)]

@@ -108,9 +108,11 @@ fn get_format(name: &str) -> std::result::Result<format::Formatter, Error> {
         "ki" => Ok(format::kibi),
         "mi" => Ok(format::mebi),
         "gi" => Ok(format::gibi),
+        "ti" => Ok(format::tebi),
         "k" => Ok(format::kilo),
         "m" => Ok(format::mega),
         "g" => Ok(format::giga),
+        "t" => Ok(format::tera),
         "sz" => Ok(format::size),
         "du" => Ok(format::duration),
         _ => Err(Error::UnknownFormatter(name.to_string())),
@@ -220,5 +222,44 @@ mod tests {
                 None => panic!("{} has no short name", metric_id.to_str()),
             }
         }
+    }
+
+    #[test]
+    fn test_parse_metric_names() {
+        let metric_names: Vec<String> = [
+            "fault:minor",
+            "fault:major/k",
+            "io:read:call",
+            "io:read:count/sz",
+            "io:read:storage",
+            "io:write:call",
+            "io:write:count",
+            "io:write:storage",
+            "mem:rss/mi",
+            "mem:vm/ti",
+            "mem:text/m",
+            "mem:data/g",
+            "time:real/du",
+            "time:system",
+            "time:user",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        // Check few metrics
+        let mut metric_ids = Vec::new();
+        let mut formatters = Vec::new();
+        super::parse_metric_names(&mut metric_ids, &mut formatters, &metric_names[0..2], false)
+            .unwrap();
+        assert_eq!(2, metric_ids.len());
+        assert_eq!(2, formatters.len());
+
+        // Check all metrics
+        metric_ids.clear();
+        formatters.clear();
+        let metric_count = metric_names.len();
+        super::parse_metric_names(&mut metric_ids, &mut formatters, &metric_names, false).unwrap();
+        assert_eq!(metric_count, metric_ids.len());
+        assert_eq!(metric_count, formatters.len());
     }
 }
