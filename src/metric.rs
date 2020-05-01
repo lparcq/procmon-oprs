@@ -1,12 +1,15 @@
-use anyhow::Result;
 use libc::pid_t;
-use std::collections::BTreeMap;
+use std::result;
+use std::str::FromStr;
+use strum_macros::{EnumIter, EnumMessage, EnumString, IntoStaticStr};
 use thiserror::Error;
 
 use crate::format;
 
+const SHORT_NAME_MAX_LEN: usize = 10;
+
 #[derive(Error, Debug)]
-enum Error {
+pub enum Error {
     #[error("{0}: unknown metric")]
     UnknownMetric(String),
     #[error("{0}: unknown formatter")]
@@ -14,115 +17,92 @@ enum Error {
 }
 
 /// Metrics that can be collected for a process
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, EnumIter, EnumString, EnumMessage, IntoStaticStr)]
 pub enum MetricId {
+    #[strum(serialize = "fault:minor", message = "page faults without disk access")]
     FaultMinor,
+    #[strum(serialize = "fault:major", message = "page faults with disk access")]
     FaultMajor,
+    #[strum(
+        serialize = "io:read:call",
+        message = "number of read operations with system calls such as read(2) and pread(2)"
+    )]
     IoReadCall,
+    #[strum(
+        serialize = "io:read:count",
+        message = "number of bytes read from storage or page cache"
+    )]
     IoReadCount,
+    #[strum(
+        serialize = "io:read:storage",
+        message = "number of bytes really fetched from storage"
+    )]
     IoReadStorage,
+    #[strum(
+        serialize = "io:write:call",
+        message = "number of write operations with system calls such as write(2) and pwrite(2)"
+    )]
     IoWriteCall,
+    #[strum(
+        serialize = "io:write:count",
+        message = "number of bytes written to storage or page cache"
+    )]
     IoWriteCount,
+    #[strum(
+        serialize = "io:write:storage",
+        message = "number of bytes really sent to storage"
+    )]
     IoWriteStorage,
+    #[strum(serialize = "mem:rss", message = "resident set size")]
     MemRss,
+    #[strum(serialize = "mem:vm", message = "virtual memory")]
     MemVm,
+    #[strum(serialize = "mem:text", message = "text size (code)")]
     MemText,
+    #[strum(serialize = "mem:data", message = "data + stack size")]
     MemData,
+    #[strum(
+        serialize = "time:real",
+        message = "elapsed time since process started"
+    )]
     TimeReal,
+    #[strum(serialize = "time:system", message = "elapsed time in kernel mode")]
     TimeSystem,
+    #[strum(serialize = "time:user", message = "elapsed time in user mode")]
     TimeUser,
 }
 
 impl MetricId {
-    pub fn to_str(self) -> &'static str {
+    pub fn to_str(&self) -> &'static str {
+        self.into()
+    }
+
+    /// Return a string of less than SHORT_NAME_MAX_LEN characters.
+    pub fn to_short_str(self) -> Option<&'static str> {
         match self {
-            MetricId::FaultMinor => "fault:minor",
-            MetricId::FaultMajor => "fault:major",
-            MetricId::IoReadCall => "io:read:call",
-            MetricId::IoReadCount => "io:read:count",
-            MetricId::IoReadStorage => "io:read:storage",
-            MetricId::IoWriteCall => "io:write:call",
-            MetricId::IoWriteCount => "io:write:count",
-            MetricId::IoWriteStorage => "io:write:storage",
-            MetricId::MemRss => "mem:rss",
-            MetricId::MemVm => "mem:vm",
-            MetricId::MemText => "mem:text",
-            MetricId::MemData => "mem:data",
-            MetricId::TimeReal => "time:real",
-            MetricId::TimeSystem => "time:system",
-            MetricId::TimeUser => "time:user",
+            MetricId::FaultMinor => Some("flt:min"),
+            MetricId::FaultMajor => Some("flt:maj"),
+            MetricId::IoReadCall => Some("rd:call"),
+            MetricId::IoReadCount => Some("rd:cnt"),
+            MetricId::IoReadStorage => Some("rd:store"),
+            MetricId::IoWriteCall => Some("wr:call"),
+            MetricId::IoWriteCount => Some("wr:cnt"),
+            MetricId::IoWriteStorage => Some("wr:store"),
+            MetricId::TimeReal => Some("tm:real"),
+            MetricId::TimeSystem => Some("tm:sys"),
+            MetricId::TimeUser => Some("tm:user"),
+            _ => {
+                let name: &'static str = self.into();
+                if name.len() > SHORT_NAME_MAX_LEN {
+                    panic!("{}: internal error, no short name", name)
+                }
+                Some(name)
+            }
         }
     }
 }
 
-type MetricIdMap = BTreeMap<&'static str, MetricId>;
-
-/// Mapping of metric name and id
-pub struct MetricMapper {
-    mapping: MetricIdMap,
-}
-
-impl MetricMapper {
-    pub fn new() -> MetricMapper {
-        let mut mapping = BTreeMap::new();
-        mapping.insert(MetricId::FaultMinor.to_str(), MetricId::FaultMinor);
-        mapping.insert(MetricId::FaultMajor.to_str(), MetricId::FaultMajor);
-        mapping.insert(MetricId::IoReadCall.to_str(), MetricId::IoReadCall);
-        mapping.insert(MetricId::IoReadCount.to_str(), MetricId::IoReadCount);
-        mapping.insert(MetricId::IoReadStorage.to_str(), MetricId::IoReadStorage);
-        mapping.insert(MetricId::IoWriteCall.to_str(), MetricId::IoWriteCall);
-        mapping.insert(MetricId::IoWriteCount.to_str(), MetricId::IoWriteCount);
-        mapping.insert(MetricId::IoWriteStorage.to_str(), MetricId::IoWriteStorage);
-        mapping.insert(MetricId::MemVm.to_str(), MetricId::MemVm);
-        mapping.insert(MetricId::MemRss.to_str(), MetricId::MemRss);
-        mapping.insert(MetricId::MemText.to_str(), MetricId::MemText);
-        mapping.insert(MetricId::MemData.to_str(), MetricId::MemData);
-        mapping.insert(MetricId::TimeReal.to_str(), MetricId::TimeReal);
-        mapping.insert(MetricId::TimeSystem.to_str(), MetricId::TimeSystem);
-        mapping.insert(MetricId::TimeUser.to_str(), MetricId::TimeUser);
-        MetricMapper { mapping }
-    }
-
-    pub fn get(&self, name: &str) -> Option<&MetricId> {
-        self.mapping.get(name)
-    }
-
-    pub fn help(id: MetricId) -> &'static str {
-        match id {
-            MetricId::FaultMinor => "page faults without disk access",
-            MetricId::FaultMajor => "page faults with disk access",
-            MetricId::IoReadCall => {
-                "number of read operations with system calls such as read(2) and pread(2)"
-            }
-            MetricId::IoReadCount => {
-                "number of bytes read from storage even if from page cache only"
-            }
-            MetricId::IoReadStorage => "number of bytes really fetched from storage",
-            MetricId::IoWriteCall => {
-                "number of write operations with system calls such as write(2) and pwrite(2)"
-            }
-            MetricId::IoWriteCount => {
-                "number of bytes written to storage even if to page cache only"
-            }
-            MetricId::IoWriteStorage => "number of bytes really sent to storage",
-            MetricId::MemVm => "virtual memory",
-            MetricId::MemRss => "resident set size",
-            MetricId::MemText => "text size (code)",
-            MetricId::MemData => "data + stack size",
-            MetricId::TimeReal => "elapsed time since process started",
-            MetricId::TimeSystem => "elapsed time in kernel mode",
-            MetricId::TimeUser => "elapsed time in user mode",
-        }
-    }
-
-    pub fn for_each<F>(&self, func: F)
-    where
-        F: Fn(MetricId, &str),
-    {
-        self.mapping.iter().for_each(|(name, id)| func(*id, *name));
-    }
-}
-
+// Convert unit name to a formatter
 fn get_format(name: &str) -> std::result::Result<format::Formatter, Error> {
     match name {
         "ki" => Ok(format::kibi),
@@ -137,6 +117,7 @@ fn get_format(name: &str) -> std::result::Result<format::Formatter, Error> {
     }
 }
 
+// Return the more readable format for a human
 fn get_human_format(id: MetricId) -> format::Formatter {
     match id {
         MetricId::IoReadCall => format::size,
@@ -162,24 +143,20 @@ pub fn parse_metric_names(
     formatters: &mut Vec<format::Formatter>,
     names: &[String],
     human_format: bool,
-) -> Result<()> {
-    let mapper = MetricMapper::new();
+) -> result::Result<(), Error> {
     names.iter().try_for_each(|name| {
         let tokens: Vec<&str> = name.split('/').collect();
-        match mapper.get(tokens[0]) {
-            Some(id) => {
-                ids.push(*id);
-                if tokens.len() > 1 {
-                    formatters.push(get_format(tokens[1])?);
-                } else if human_format {
-                    formatters.push(get_human_format(*id));
-                } else {
-                    formatters.push(format::identity);
-                }
-                Ok(())
-            }
-            None => Err(Error::UnknownMetric(name.to_string())),
+        let id =
+            MetricId::from_str(tokens[0]).map_err(|_| Error::UnknownMetric(name.to_string()))?;
+        ids.push(id);
+        if tokens.len() > 1 {
+            formatters.push(get_format(tokens[1])?);
+        } else if human_format {
+            formatters.push(get_human_format(id));
+        } else {
+            formatters.push(format::identity);
         }
+        Ok(())
     })?;
     Ok(())
 }
@@ -196,5 +173,52 @@ pub struct ProcessMetrics {
 impl ProcessMetrics {
     pub fn new(pid: pid_t, series: MetricSeries) -> ProcessMetrics {
         ProcessMetrics { pid, series }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use std::str::FromStr;
+    use strum::{EnumMessage, IntoEnumIterator};
+
+    use super::MetricId;
+
+    #[test]
+    fn test_metricid_to_str() {
+        assert_eq!("mem:vm", MetricId::MemVm.to_str());
+        let name: &'static str = MetricId::MemVm.into();
+        assert_eq!("mem:vm", name);
+    }
+
+    #[test]
+    fn test_metricid_from_str() {
+        assert_eq!(MetricId::MemVm, MetricId::from_str("mem:vm").unwrap());
+    }
+
+    #[test]
+    fn test_metricid_help() {
+        assert_eq!("virtual memory", MetricId::MemVm.get_message().unwrap());
+        for metric_id in MetricId::iter() {
+            assert!(
+                metric_id.get_message().is_some(),
+                "{}: no message",
+                metric_id.to_str()
+            )
+        }
+    }
+
+    #[test]
+    fn test_metricid_short_str() {
+        for metric_id in MetricId::iter() {
+            match metric_id.to_short_str() {
+                Some(name) => assert!(
+                    name.len() <= super::SHORT_NAME_MAX_LEN,
+                    "{}: short name is too long",
+                    metric_id.to_str()
+                ),
+                None => panic!("{} has no short name", metric_id.to_str()),
+            }
+        }
     }
 }

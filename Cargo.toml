@@ -16,6 +16,8 @@ loggerv = "0"
 procfs = "0.7"
 structopt = "0.3"
 structopt-derive = "0"
+strum = "0.18"
+strum_macros = "0.18"
 thiserror = "1.0"
 xdg = "2"
 

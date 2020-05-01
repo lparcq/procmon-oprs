@@ -24,7 +24,6 @@ pub trait Collector {
     fn collect(&mut self, target_name: &str, pid: pid_t, values: Vec<u64>);
     fn lines(&self) -> &Vec<ProcessLine>;
     fn metric_ids(&self) -> &Vec<MetricId>;
-    fn metric_names(&self) -> Vec<&'static str>;
 }
 
 /// Collect a grid of metrics by process
@@ -61,11 +60,6 @@ impl Collector for GridCollector {
 
     fn metric_ids(&self) -> &Vec<MetricId> {
         &self.ids
-    }
-
-    /// Metric names
-    fn metric_names(&self) -> Vec<&'static str> {
-        self.ids.iter().map(|id| id.to_str()).collect()
     }
 
     /// Return lines

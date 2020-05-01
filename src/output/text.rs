@@ -16,10 +16,15 @@ fn divide(numerator: usize, denominator: usize) -> (usize, usize) {
     (quotient, numerator - quotient * denominator)
 }
 
+struct SubTitle {
+    name: &'static str,
+    short_name: Option<&'static str>,
+}
+
 /// Table
 struct Table {
     titles: Vec<String>,
-    subtitles: Vec<String>,
+    subtitles: Vec<SubTitle>,
     values: Vec<String>,
     title_width: usize,
     column_width: usize,
@@ -46,8 +51,8 @@ impl Table {
         self.titles.push(title);
     }
 
-    fn push_subtitle(&mut self, subtitle: String) {
-        self.subtitles.push(subtitle);
+    fn push_subtitle(&mut self, name: &'static str, short_name: Option<&'static str>) {
+        self.subtitles.push(SubTitle { name, short_name });
     }
 
     fn clear_values(&mut self) {
@@ -78,7 +83,17 @@ impl Table {
         // Subtitles
         for _ in 0..title_count {
             for subtitle in &self.subtitles {
-                print!("| {:^width$} ", subtitle, width = self.column_width);
+                print!(
+                    "| {:^width$} ",
+                    if subtitle.name.len() > self.column_width {
+                        subtitle
+                            .short_name
+                            .expect("cannot have sub-title larger than column width")
+                    } else {
+                        subtitle.name
+                    },
+                    width = self.column_width
+                );
             }
         }
         println!("|");
@@ -104,8 +119,12 @@ impl Table {
             }
         }
         for subtitle in &self.subtitles {
-            if subtitle.len() > column_width {
-                column_width = subtitle.len();
+            let slen = match subtitle.short_name {
+                Some(name) => name.len(),
+                None => subtitle.name.len(),
+            };
+            if slen > column_width {
+                column_width = slen;
             }
         }
         for value in &self.values {
@@ -163,11 +182,11 @@ impl<'a> TextOutput<'a> {
 impl<'a> Output for TextOutput<'a> {
     fn run(&mut self, every_ms: time::Duration, count: Option<u64>) {
         let mut loop_number: u64 = 0;
-        let metric_names = self.collector.metric_names();
-        let metric_count = metric_names.len();
+        let metric_ids = self.collector.metric_ids();
+        let metric_count = metric_ids.len();
         let mut table = Table::new();
-        for name in metric_names {
-            table.push_subtitle(name.to_string());
+        for metric_id in metric_ids {
+            table.push_subtitle(metric_id.to_str(), metric_id.to_short_str());
         }
         loop {
             let with_header = self.targets.refresh(); // must print headers again

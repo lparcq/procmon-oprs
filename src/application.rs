@@ -1,9 +1,10 @@
 use std::time;
+use strum::{EnumMessage, IntoEnumIterator};
 use thiserror::Error;
 
 use crate::cfg;
 use crate::info::SystemConf;
-use crate::metric::{parse_metric_names, MetricMapper};
+use crate::metric::{parse_metric_names, MetricId};
 use crate::output::{Output, TextOutput};
 use crate::targets::TargetId;
 
@@ -14,10 +15,13 @@ enum Error {
 }
 
 pub fn list_metrics() {
-    let metric_mapper = MetricMapper::new();
-    metric_mapper.for_each(|id, name| {
-        println!("{:<15}\t{}", name, MetricMapper::help(id));
-    })
+    for metric_id in MetricId::iter() {
+        println!(
+            "{:<18}\t{}",
+            metric_id.to_str(),
+            metric_id.get_message().unwrap_or("not documented")
+        );
+    }
 }
 
 pub fn run(
