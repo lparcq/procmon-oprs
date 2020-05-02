@@ -17,6 +17,7 @@ mod utils;
 #[cfg(test)]
 mod mocks;
 
+use application::OutputType;
 use targets::TargetId;
 
 const APP_NAME: &str = "oprs";
@@ -82,6 +83,9 @@ struct Opt {
 
     #[structopt(short = "m", long = "metric", help = "metric to monitor.")]
     metrics: Vec<String>,
+
+    #[structopt(short, long, possible_values = &OutputType::variants(), case_insensitive = true, default_value = "any")]
+    output: OutputType,
 }
 
 //
@@ -121,7 +125,7 @@ fn start(opt: Opt) -> anyhow::Result<()> {
     if target_ids.is_empty() {
         eprintln!("no process to monitor, exiting.");
     } else {
-        application::run(&settings, &opt.metrics, &target_ids)?;
+        application::run(&settings, &opt.metrics, &target_ids, opt.output)?;
     }
     Ok(())
 }

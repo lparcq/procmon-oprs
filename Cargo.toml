@@ -1,6 +1,6 @@
 [package]
 name = "oprs"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Laurent Pelecq <lpelecq+oprs@circoise.eu>"]
 edition = "2018"
 
@@ -8,6 +8,7 @@ edition = "2018"
 
 [dependencies]
 anyhow = "1"
+clap = "2"
 config = "0"
 console = "0"
 libc = "0.2"
@@ -20,6 +21,8 @@ strum = "0.18"
 strum_macros = "0.18"
 thiserror = "1.0"
 xdg = "2"
+tui = "0.9"
+termion = "1.5"
 
 [profile.release]
 lto = true

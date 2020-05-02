@@ -1,5 +1,5 @@
-use std::thread;
-use std::time;
+use std::thread::sleep;
+use std::time::Duration;
 
 use super::Output;
 use crate::collector::{Collector, GridCollector};
@@ -180,7 +180,7 @@ impl<'a> TextOutput<'a> {
 }
 
 impl<'a> Output for TextOutput<'a> {
-    fn run(&mut self, every_ms: time::Duration, count: Option<u64>) {
+    fn run(&mut self, every_ms: Duration, count: Option<u64>) -> anyhow::Result<()> {
         let mut loop_number: u64 = 0;
         let metric_ids = self.collector.metric_ids();
         let metric_count = metric_ids.len();
@@ -227,8 +227,9 @@ impl<'a> Output for TextOutput<'a> {
                     break;
                 }
             }
-            thread::sleep(every_ms);
+            sleep(every_ms);
         }
+        Ok(())
     }
 }
 
