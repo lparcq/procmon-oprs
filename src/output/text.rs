@@ -164,17 +164,17 @@ pub struct TextOutput<'a> {
 impl<'a> TextOutput<'a> {
     pub fn new(
         target_ids: &[TargetId],
-        metric_ids: Vec<MetricId>,
-        formatters: Vec<Formatter>,
+        metric_ids: &Vec<MetricId>,
+        formatters: &Vec<Formatter>,
         system_conf: &'a SystemConf,
     ) -> anyhow::Result<TextOutput<'a>> {
         let mut targets = TargetContainer::new(system_conf);
         targets.push_all(target_ids)?;
-        let collector = GridCollector::new(target_ids.len(), metric_ids);
+        let collector = GridCollector::new(target_ids.len(), metric_ids.to_vec());
         Ok(TextOutput {
             targets,
             collector,
-            formatters,
+            formatters: formatters.to_vec(),
         })
     }
 }

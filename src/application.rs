@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::cfg;
 use crate::info::SystemConf;
-use crate::metric::{parse_metric_names, MetricId};
+use crate::metric::{MetricId, MetricNamesParser};
 use crate::output::{Output, TerminalOutput, TextOutput};
 use crate::targets::TargetId;
 
@@ -47,10 +47,9 @@ pub fn run(
             * 1000.0) as u64,
     );
     let system_conf = SystemConf::new()?;
-    let mut metric_ids = Vec::new();
-    let mut formatters = Vec::new();
     let human_format = settings.get_bool(cfg::KEY_HUMAN_FORMAT).unwrap_or(false);
-    parse_metric_names(&mut metric_ids, &mut formatters, metric_names, human_format)?;
+    let mut metrics_parser = MetricNamesParser::new(human_format);
+    metrics_parser.parse_metric_names(metric_names)?;
     let count = settings.get_int(cfg::KEY_COUNT).map(|c| c as u64).ok();
     let use_term = match output_type {
         OutputType::Any | OutputType::Term => TerminalOutput::is_available(),
@@ -59,15 +58,15 @@ pub fn run(
     let mut output: Box<dyn Output> = if use_term {
         Box::new(TerminalOutput::new(
             target_ids,
-            metric_ids,
-            formatters,
+            metrics_parser.get_metric_ids(),
+            metrics_parser.get_formatters(),
             &system_conf,
         )?)
     } else {
         Box::new(TextOutput::new(
             target_ids,
-            metric_ids,
-            formatters,
+            metrics_parser.get_metric_ids(),
+            metrics_parser.get_formatters(),
             &system_conf,
         )?)
     };

@@ -34,17 +34,17 @@ pub struct TerminalOutput<'a> {
 impl<'a> TerminalOutput<'a> {
     pub fn new(
         target_ids: &[TargetId],
-        metric_ids: Vec<MetricId>,
-        formatters: Vec<Formatter>,
+        metric_ids: &Vec<MetricId>,
+        formatters: &Vec<Formatter>,
         system_conf: &'a SystemConf,
     ) -> anyhow::Result<TerminalOutput<'a>> {
         let mut targets = TargetContainer::new(system_conf);
         targets.push_all(target_ids)?;
-        let collector = GridCollector::new(target_ids.len(), metric_ids);
+        let collector = GridCollector::new(target_ids.len(), metric_ids.to_vec());
         Ok(TerminalOutput {
             targets,
             collector,
-            formatters,
+            formatters: formatters.to_vec(),
         })
     }
 
@@ -85,17 +85,7 @@ impl<'a> Output for TerminalOutput<'a> {
                 let mut widths = Vec::new();
                 widths.push(Constraint::Min(left_column_width as u16));
                 (0..lines.len()).for_each(|_| widths.push(Constraint::Min(10)));
-                message = format!(
-                    "Esc to exit: #{} {}",
-                    lines.len(),
-                    lines
-                        .iter()
-                        .map(|line| match &line.metrics {
-                            Some(metrics) => format!("{} [{}]", line.name, metrics.pid,),
-                            None => line.name.to_string(),
-                        })
-                        .collect::<String>()
-                );
+                message = format!("Esc to exit");
                 let header_iter =
                     top_left
                         .iter()

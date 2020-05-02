@@ -31,6 +31,8 @@ O(bserve)P(rocess)R(e)s(ourses) displays selected metrics for the system or indi
 
 Without argument, prints the list of available metrics.
 
+Limited patterns are allowed for metrics: by prefix mem:*, suffix *:call, both io:*:count.
+
 A metric may be followed by a unit. For example: mem:vm/gi
 
 Available units:
@@ -44,6 +46,9 @@ g   giga
 t   tera
 sz  the best unit in k, m, g or t.
 du  format duration as hour, minutes, seconds.
+
+Example:
+  oprs --system -n bash -p 1234 -m mem:vm time:real
 ";
 
 #[derive(StructOpt, Debug)]

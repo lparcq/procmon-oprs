@@ -1,10 +1,11 @@
 use libc::pid_t;
 use std::result;
 use std::str::FromStr;
+use strum::IntoEnumIterator;
 use strum_macros::{EnumIter, EnumMessage, EnumString, IntoStaticStr};
 use thiserror::Error;
 
-use crate::format;
+use crate::format::{self, Formatter};
 
 const SHORT_NAME_MAX_LEN: usize = 10;
 
@@ -12,6 +13,8 @@ const SHORT_NAME_MAX_LEN: usize = 10;
 pub enum Error {
     #[error("{0}: unknown metric")]
     UnknownMetric(String),
+    #[error("{0}: invalid metric pattern")]
+    InvalidMetricPattern(String),
     #[error("{0}: unknown formatter")]
     UnknownFormatter(String),
 }
@@ -102,65 +105,143 @@ impl MetricId {
     }
 }
 
-// Convert unit name to a formatter
-fn get_format(name: &str) -> std::result::Result<format::Formatter, Error> {
-    match name {
-        "ki" => Ok(format::kibi),
-        "mi" => Ok(format::mebi),
-        "gi" => Ok(format::gibi),
-        "ti" => Ok(format::tebi),
-        "k" => Ok(format::kilo),
-        "m" => Ok(format::mega),
-        "g" => Ok(format::giga),
-        "t" => Ok(format::tera),
-        "sz" => Ok(format::size),
-        "du" => Ok(format::duration),
-        _ => Err(Error::UnknownFormatter(name.to_string())),
-    }
-}
-
-// Return the more readable format for a human
-fn get_human_format(id: MetricId) -> format::Formatter {
-    match id {
-        MetricId::IoReadCall => format::size,
-        MetricId::IoReadCount => format::size,
-        MetricId::IoReadStorage => format::size,
-        MetricId::IoWriteCall => format::size,
-        MetricId::IoWriteCount => format::size,
-        MetricId::IoWriteStorage => format::size,
-        MetricId::MemRss => format::size,
-        MetricId::MemVm => format::size,
-        MetricId::MemText => format::size,
-        MetricId::MemData => format::size,
-        MetricId::TimeReal => format::duration,
-        MetricId::TimeSystem => format::duration,
-        MetricId::TimeUser => format::duration,
-        _ => format::identity,
-    }
-}
-
-// Return a list of ids from name
-pub fn parse_metric_names(
-    ids: &mut Vec<MetricId>,
-    formatters: &mut Vec<format::Formatter>,
-    names: &[String],
+/// Metric names parser
+pub struct MetricNamesParser {
+    metric_ids: Vec<MetricId>,
+    formatters: Vec<Formatter>,
     human_format: bool,
-) -> result::Result<(), Error> {
-    names.iter().try_for_each(|name| {
-        let tokens: Vec<&str> = name.split('/').collect();
-        let id =
-            MetricId::from_str(tokens[0]).map_err(|_| Error::UnknownMetric(name.to_string()))?;
-        ids.push(id);
-        if tokens.len() > 1 {
-            formatters.push(get_format(tokens[1])?);
-        } else if human_format {
-            formatters.push(get_human_format(id));
-        } else {
-            formatters.push(format::identity);
+}
+
+impl MetricNamesParser {
+    pub fn new(human_format: bool) -> MetricNamesParser {
+        MetricNamesParser {
+            metric_ids: Vec::new(),
+            formatters: Vec::new(),
+            human_format,
         }
+    }
+
+    // Convert unit name to a formatter
+    fn get_format(name: &str) -> std::result::Result<Formatter, Error> {
+        match name {
+            "ki" => Ok(format::kibi),
+            "mi" => Ok(format::mebi),
+            "gi" => Ok(format::gibi),
+            "ti" => Ok(format::tebi),
+            "k" => Ok(format::kilo),
+            "m" => Ok(format::mega),
+            "g" => Ok(format::giga),
+            "t" => Ok(format::tera),
+            "sz" => Ok(format::size),
+            "du" => Ok(format::duration),
+            _ => Err(Error::UnknownFormatter(name.to_string())),
+        }
+    }
+
+    // Return the more readable format for a human
+    fn get_human_format(id: MetricId) -> Formatter {
+        match id {
+            MetricId::IoReadCall => format::size,
+            MetricId::IoReadCount => format::size,
+            MetricId::IoReadStorage => format::size,
+            MetricId::IoWriteCall => format::size,
+            MetricId::IoWriteCount => format::size,
+            MetricId::IoWriteStorage => format::size,
+            MetricId::MemRss => format::size,
+            MetricId::MemVm => format::size,
+            MetricId::MemText => format::size,
+            MetricId::MemData => format::size,
+            MetricId::TimeReal => format::duration,
+            MetricId::TimeSystem => format::duration,
+            MetricId::TimeUser => format::duration,
+            _ => format::identity,
+        }
+    }
+
+    fn get_default_formatter(&self, id: MetricId) -> Formatter {
+        if self.human_format {
+            MetricNamesParser::get_human_format(id)
+        } else {
+            format::identity
+        }
+    }
+
+    /// Expands limited globbing
+    /// Allowed: prefix mem:*, suffix *:call, middle io:*:call
+    fn expand_metric_name(
+        &mut self,
+        name: &str,
+        fmt: Option<Formatter>,
+    ) -> result::Result<(), Error> {
+        let matches: Vec<MetricId> = if name.starts_with("*:") {
+            // match by suffix
+            let suffix = &name[2..];
+            MetricId::iter()
+                .filter(|id| id.to_str().ends_with(suffix))
+                .collect()
+        } else if name.ends_with(":*") {
+            // match by prefix
+            let prefix = &name[..name.len() - 2];
+            MetricId::iter()
+                .filter(|id| id.to_str().starts_with(prefix))
+                .collect()
+        } else {
+            let parts: Vec<&str> = name.split(":*:").collect();
+            if parts.len() != 2 {
+                return Err(Error::InvalidMetricPattern(String::from(name)));
+            }
+            let prefix = parts[0];
+            let suffix = parts[1];
+            MetricId::iter()
+                .filter(|id| {
+                    let name = id.to_str();
+                    name.starts_with(prefix) && name.ends_with(suffix)
+                })
+                .collect()
+        };
+        if matches.is_empty() {
+            Err(Error::UnknownMetric(name.to_string()))
+        } else {
+            matches.iter().for_each(|id| {
+                self.metric_ids.push(*id);
+                self.formatters
+                    .push(fmt.unwrap_or_else(|| self.get_default_formatter(*id)));
+            });
+            Ok(())
+        }
+    }
+
+    /// Return a list of ids from name
+    pub fn parse_metric_names(&mut self, names: &[String]) -> result::Result<(), Error> {
+        names.iter().try_for_each(|name| {
+            let tokens: Vec<&str> = name.split('/').collect();
+            let fmt = if tokens.len() > 1 {
+                Some(MetricNamesParser::get_format(tokens[1])?)
+            } else {
+                None
+            };
+            match MetricId::from_str(tokens[0]) {
+                Ok(id) => {
+                    self.metric_ids.push(id);
+                    self.formatters
+                        .push(fmt.unwrap_or_else(|| self.get_default_formatter(id)));
+                }
+                Err(_) => {
+                    self.expand_metric_name(tokens[0], fmt)?;
+                }
+            }
+            Ok(())
+        })?;
         Ok(())
-    })?;
-    Ok(())
+    }
+
+    pub fn get_metric_ids(&self) -> &Vec<MetricId> {
+        &self.metric_ids
+    }
+
+    pub fn get_formatters(&self) -> &Vec<Formatter> {
+        &self.formatters
+    }
 }
 
 /// List of values collected
@@ -184,7 +265,11 @@ mod tests {
     use std::str::FromStr;
     use strum::{EnumMessage, IntoEnumIterator};
 
-    use super::MetricId;
+    use super::{MetricId, MetricNamesParser};
+
+    fn vec_of_string(vstr: &[&str]) -> Vec<String> {
+        vstr.iter().map(|s| s.to_string()).collect()
+    }
 
     #[test]
     fn test_metricid_to_str() {
@@ -226,7 +311,7 @@ mod tests {
 
     #[test]
     fn test_parse_metric_names() {
-        let metric_names: Vec<String> = [
+        let metric_names = vec_of_string(&[
             "fault:minor",
             "fault:major/k",
             "io:read:call",
@@ -242,24 +327,58 @@ mod tests {
             "time:real/du",
             "time:system",
             "time:user",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+        ]);
         // Check few metrics
-        let mut metric_ids = Vec::new();
-        let mut formatters = Vec::new();
-        super::parse_metric_names(&mut metric_ids, &mut formatters, &metric_names[0..2], false)
-            .unwrap();
-        assert_eq!(2, metric_ids.len());
-        assert_eq!(2, formatters.len());
+        let mut parser1 = MetricNamesParser::new(false);
+        parser1.parse_metric_names(&metric_names[0..2]).unwrap();
+        assert_eq!(2, parser1.get_metric_ids().len());
+        assert_eq!(2, parser1.get_formatters().len());
 
         // Check all metrics
-        metric_ids.clear();
-        formatters.clear();
+        let mut parser2 = MetricNamesParser::new(false);
         let metric_count = metric_names.len();
-        super::parse_metric_names(&mut metric_ids, &mut formatters, &metric_names, false).unwrap();
-        assert_eq!(metric_count, metric_ids.len());
-        assert_eq!(metric_count, formatters.len());
+        parser2.parse_metric_names(&metric_names).unwrap();
+        assert_eq!(metric_count, parser2.get_metric_ids().len());
+        assert_eq!(metric_count, parser2.get_formatters().len());
+    }
+
+    #[test]
+    fn test_expand_metric_names() {
+        // Check prefix
+        let metric_names1 = vec_of_string(&["mem:*"]);
+        let mut parser1 = MetricNamesParser::new(false);
+        parser1.parse_metric_names(&metric_names1).unwrap();
+        let metrics1 = parser1.get_metric_ids();
+        assert_eq!(4, metrics1.len());
+        assert_eq!(4, parser1.get_formatters().len());
+
+        // Check suffix
+        let metric_names2 = vec_of_string(&["*:storage"]);
+        let mut parser2 = MetricNamesParser::new(false);
+        parser2.parse_metric_names(&metric_names2).unwrap();
+        let metrics2 = parser2.get_metric_ids();
+        assert_eq!(2, metrics2.len());
+        assert_eq!(2, parser2.get_formatters().len());
+
+        // Check middle
+        let metric_names3 = vec_of_string(&["io:*:count"]);
+        let mut parser3 = MetricNamesParser::new(false);
+        parser3.parse_metric_names(&metric_names3).unwrap();
+        let metrics3 = parser3.get_metric_ids();
+        assert_eq!(2, metrics3.len());
+        assert_eq!(2, parser3.get_formatters().len());
+    }
+
+    #[test]
+    fn test_expand_metric_names_errors() {
+        for pattern in &["mem:*:*", "me*", "not:*"] {
+            let metric_names = vec_of_string(&[pattern]);
+            let mut parser = MetricNamesParser::new(false);
+            assert!(
+                parser.parse_metric_names(&metric_names).is_err(),
+                "pattern \"{}\" works unexpectedly",
+                pattern
+            );
+        }
     }
 }
