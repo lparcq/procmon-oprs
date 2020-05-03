@@ -21,7 +21,6 @@ strum = "0.18"
 strum_macros = "0.18"
 thiserror = "1.0"
 xdg = "2"
-tui = "0.9"
 termion = "1.5"
 
 [profile.release]
