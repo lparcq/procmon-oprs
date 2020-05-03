@@ -34,7 +34,7 @@ impl EventChannel {
         match self.chin.recv_timeout(timeout) {
             Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
             Err(_) => Err(EventChannel::disconnected()),
-            Ok(res) => res.map(|msg| Some(msg)),
+            Ok(res) => res.map(Some),
         }
     }
 }

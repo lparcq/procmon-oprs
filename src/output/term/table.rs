@@ -66,14 +66,14 @@ impl TableWidget {
         I: IntoIterator<Item = String>,
     {
         let column_count = self.columns.len();
-        if col_num == column_count {
-            let mut column = Vec::new();
-            column.extend(values);
-            self.columns.push(column);
-        } else if col_num > column_count {
-            panic!("internal error");
-        } else {
-            self.columns[col_num] = values.into_iter().collect();
+        match col_num.cmp(&column_count) {
+            cmp::Ordering::Equal => {
+                let mut column = Vec::new();
+                column.extend(values);
+                self.columns.push(column);
+            }
+            cmp::Ordering::Less => self.columns[col_num] = values.into_iter().collect(),
+            _ => panic!("internal error"),
         }
     }
 
@@ -89,13 +89,12 @@ impl TableWidget {
             })
             .collect();
         // total_width is the width of columns plus one char in between
-        let mut total_width =
-            column_widths.iter().fold(0, |acc, width| acc + width) + column_widths.len() - 1;
+        let mut total_width = column_widths.iter().sum::<usize>() + column_widths.len() - 1;
         while total_width > max_width {
             if column_widths.is_empty() {
                 total_width = 0;
             } else {
-                let last_width = column_widths.last().unwrap().clone();
+                let last_width = *(column_widths.last().unwrap());
                 if total_width - last_width > max_width {
                     column_widths.pop().unwrap();
                     if column_widths.is_empty() {

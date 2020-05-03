@@ -34,8 +34,8 @@ pub struct TerminalOutput<'a> {
 impl<'a> TerminalOutput<'a> {
     pub fn new(
         target_ids: &[TargetId],
-        metric_ids: &Vec<MetricId>,
-        formatters: &Vec<Formatter>,
+        metric_ids: &[MetricId],
+        formatters: &[Formatter],
         system_conf: &'a SystemConf,
     ) -> anyhow::Result<TerminalOutput<'a>> {
         let mut targets = TargetContainer::new(system_conf);

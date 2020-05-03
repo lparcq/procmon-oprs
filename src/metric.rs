@@ -73,10 +73,12 @@ pub enum MetricId {
     TimeSystem,
     #[strum(serialize = "time:user", message = "elapsed time in user mode")]
     TimeUser,
+    #[strum(serialize = "thread:count", message = "number of threads")]
+    ThreadCount,
 }
 
 impl MetricId {
-    pub fn to_str(&self) -> &'static str {
+    pub fn to_str(self) -> &'static str {
         self.into()
     }
 
@@ -94,6 +96,7 @@ impl MetricId {
             MetricId::TimeReal => Some("tm:real"),
             MetricId::TimeSystem => Some("tm:sys"),
             MetricId::TimeUser => Some("tm:user"),
+            MetricId::ThreadCount => Some("thread:cnt"),
             _ => {
                 let name: &'static str = self.into();
                 if name.len() > SHORT_NAME_MAX_LEN {
@@ -332,6 +335,7 @@ mod tests {
             "time:real/du",
             "time:system",
             "time:user",
+            "thread:count",
         ]);
         // Check few metrics
         let mut parser1 = MetricNamesParser::new(false);

@@ -192,6 +192,7 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
                 MetricId::TimeUser => self
                     .system_conf
                     .ticks_to_millis(self.with_stat(|stat| stat.utime)),
+                MetricId::ThreadCount => self.with_stat(|stat| stat.num_threads as u64),
             })
             .collect()
     }
