@@ -6,7 +6,9 @@ use std::time::SystemTime;
 
 use crate::metric::MetricId;
 
-fn elapsed_time_since(start_time: u64) -> u64 {
+// Elapsed time since a start time
+// Since the boot time is in seconds since the Epoch, no need to be more precise than the second.
+fn elapsed_seconds_since(start_time: u64) -> u64 {
     match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
         Ok(duration) => {
             let now = duration.as_secs();
@@ -23,7 +25,7 @@ fn elapsed_time_since(start_time: u64) -> u64 {
 /// System Configuration
 pub struct SystemConf {
     ticks_per_second: u64,
-    boot_time: u64,
+    boot_time_seconds: u64,
     page_size: u64,
 }
 
@@ -34,9 +36,15 @@ impl SystemConf {
         let page_size = procfs::page_size()?;
         Ok(SystemConf {
             ticks_per_second: ticks_per_second as u64,
-            boot_time: kstat.btime,
+            boot_time_seconds: kstat.btime,
             page_size: page_size as u64,
         })
+    }
+
+    /// Convert a number of ticks in milliseconds.
+    /// A u64 can hold more than 10 millions years
+    pub fn ticks_to_millis(&self, ticks: u64) -> u64 {
+        ticks * 1000 / self.ticks_per_second
     }
 }
 
@@ -73,7 +81,9 @@ impl<'a> SystemInfo<'a> {
                 MetricId::MemVm => {
                     self.with_meminfo(|mi| mi.mem_total - mi.mem_available.unwrap_or(mi.mem_free))
                 }
-                MetricId::TimeReal => elapsed_time_since(self.system_conf.boot_time),
+                MetricId::TimeReal => {
+                    elapsed_seconds_since(self.system_conf.boot_time_seconds) * 1000
+                }
                 _ => 0,
             })
             .collect()
@@ -81,6 +91,13 @@ impl<'a> SystemInfo<'a> {
 }
 
 /// Extract metrics for a process
+///
+/// Duration returned by the kernel are given in ticks. There are typically 100 ticks per
+/// seconds. So the precision is 10ms. The duration are returned as a number of milliseconds.
+///
+/// Elapsed time is returned as a number of ticks since boot time. And boot time is given
+/// as a number of seconds since the Epoch. Elapsed time is returned as milliseconds also
+/// even if it's only precise in seconds.
 pub struct ProcessInfo<'a, 'b> {
     process: &'a Process,
     system_conf: &'b SystemConf,
@@ -144,9 +161,11 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
             .map_or(0, |statm| func(statm, self.system_conf))
     }
 
-    fn elapsed_time(stat: &Stat, system_conf: &SystemConf) -> u64 {
-        let process_start = system_conf.boot_time + stat.starttime / system_conf.ticks_per_second;
-        elapsed_time_since(process_start)
+    /// Elapsed seconds of the process
+    fn elapsed_seconds(stat: &Stat, system_conf: &SystemConf) -> u64 {
+        let process_start =
+            system_conf.boot_time_seconds + stat.starttime / system_conf.ticks_per_second;
+        elapsed_seconds_since(process_start)
     }
 
     pub fn extract_metrics(&mut self, ids: &[MetricId]) -> Vec<u64> {
@@ -166,13 +185,13 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
                 }
                 MetricId::MemText => self.with_system_statm(|statm, sc| statm.text * sc.page_size),
                 MetricId::MemData => self.with_system_statm(|statm, sc| statm.data * sc.page_size),
-                MetricId::TimeReal => self.with_system_stat(ProcessInfo::elapsed_time),
-                MetricId::TimeSystem => {
-                    self.with_stat(|stat| stat.stime) / self.system_conf.ticks_per_second
-                }
-                MetricId::TimeUser => {
-                    self.with_stat(|stat| stat.utime) / self.system_conf.ticks_per_second
-                }
+                MetricId::TimeReal => self.with_system_stat(ProcessInfo::elapsed_seconds) * 1000,
+                MetricId::TimeSystem => self
+                    .system_conf
+                    .ticks_to_millis(self.with_stat(|stat| stat.stime)),
+                MetricId::TimeUser => self
+                    .system_conf
+                    .ticks_to_millis(self.with_stat(|stat| stat.utime)),
             })
             .collect()
     }

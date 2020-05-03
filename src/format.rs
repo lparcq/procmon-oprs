@@ -94,19 +94,40 @@ pub fn size(value: u64) -> String {
     }
 }
 
-// Number of seconds formatted in hms.
-pub fn duration(value: u64) -> String {
-    if value < 60 {
-        format!("{}s", value)
+// Number of seconds and fraction of milliseconds
+pub fn duration_seconds(millis: u64) -> String {
+    let seconds = millis / 1000;
+    let remaining_millis = millis - seconds * 1000;
+    format!("{}.{}", seconds, remaining_millis)
+}
+
+// Number of milliseconds formatted in hms.
+pub fn duration_human(millis: u64) -> String {
+    if millis < 1000 {
+        format!("{}ms", millis)
     } else {
-        let minutes = value / 60;
-        let seconds = value - minutes * 60;
-        if minutes < 60 {
-            format!("{}m {}s", minutes, seconds)
+        let seconds = millis / 1000;
+        let remaining_millis = millis - seconds * 1000;
+        if seconds < 60 {
+            if remaining_millis > 0 {
+                format!("{}s {}ms", seconds, remaining_millis)
+            } else {
+                format!("{}s", seconds)
+            }
         } else {
-            let hours = minutes / 60;
-            let minutes = minutes - hours * 60;
-            format!("{}h {}m {}s", hours, minutes, seconds)
+            let minutes = seconds / 60;
+            let remaining_seconds = seconds - minutes * 60;
+            if minutes < 60 {
+                format!("{}m {}s", minutes, remaining_seconds)
+            } else {
+                let hours = minutes / 60;
+                let remaining_minutes = minutes - hours * 60;
+                if hours < 24 {
+                    format!("{}h {}m {}s", hours, remaining_minutes, remaining_seconds)
+                } else {
+                    format!("{}h {}m", hours, remaining_minutes)
+                }
+            }
         }
     }
 }
@@ -124,10 +145,33 @@ mod tests {
     }
 
     #[test]
-    fn test_duration() {
-        assert_eq!("59s", super::duration(59));
-        assert_eq!("1m 15s", super::duration(75));
-        assert_eq!("59m 59s", super::duration(3599));
-        assert_eq!("3h 5m 10s", super::duration(((3 * 60) + 5) * 60 + 10));
+    fn test_duration_seconds() {
+        assert_eq!("59.150", super::duration_seconds(59150));
+    }
+
+    #[test]
+    fn test_duration_human() {
+        let seconds_millis = 1000;
+        let minutes_millis = 60 * seconds_millis;
+        let hour_millis = 60 * minutes_millis;
+        assert_eq!("59s", super::duration_human(59 * seconds_millis));
+        assert_eq!("59s 150ms", super::duration_human(59150));
+        assert_eq!("1m 15s", super::duration_human(75 * seconds_millis));
+        assert_eq!(
+            "59m 59s",
+            super::duration_human(59 * minutes_millis + 59 * seconds_millis)
+        );
+        assert_eq!(
+            "3h 5m 10s",
+            super::duration_human((((3 * 60) + 5) * 60 + 10) * 1000)
+        );
+        assert_eq!(
+            "3h 5m 10s",
+            super::duration_human(3 * hour_millis + 5 * minutes_millis + 10 * seconds_millis)
+        );
+        assert_eq!(
+            "26h 5m",
+            super::duration_human(26 * hour_millis + 5 * minutes_millis + 10 * seconds_millis)
+        );
     }
 }

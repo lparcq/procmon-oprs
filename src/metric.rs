@@ -133,7 +133,7 @@ impl MetricNamesParser {
             "g" => Ok(format::giga),
             "t" => Ok(format::tera),
             "sz" => Ok(format::size),
-            "du" => Ok(format::duration),
+            "du" => Ok(format::duration_human),
             _ => Err(Error::UnknownFormatter(name.to_string())),
         }
     }
@@ -151,9 +151,9 @@ impl MetricNamesParser {
             MetricId::MemVm => format::size,
             MetricId::MemText => format::size,
             MetricId::MemData => format::size,
-            MetricId::TimeReal => format::duration,
-            MetricId::TimeSystem => format::duration,
-            MetricId::TimeUser => format::duration,
+            MetricId::TimeReal => format::duration_human,
+            MetricId::TimeSystem => format::duration_human,
+            MetricId::TimeUser => format::duration_human,
             _ => format::identity,
         }
     }
@@ -162,7 +162,12 @@ impl MetricNamesParser {
         if self.human_format {
             MetricNamesParser::get_human_format(id)
         } else {
-            format::identity
+            match id {
+                MetricId::TimeReal | MetricId::TimeSystem | MetricId::TimeUser => {
+                    format::duration_seconds
+                }
+                _ => format::identity,
+            }
         }
     }
 
