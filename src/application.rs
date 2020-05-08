@@ -1,4 +1,5 @@
 use clap::arg_enum;
+use log::info;
 use std::time;
 use strum::{EnumMessage, IntoEnumIterator};
 use thiserror::Error;
@@ -70,6 +71,8 @@ pub fn run(
             &system_conf,
         )?)
     };
+    info!("starting");
     output.run(every_ms, count)?;
+    info!("stopping");
     Ok(())
 }
