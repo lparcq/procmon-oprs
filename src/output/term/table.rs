@@ -1,6 +1,6 @@
 use std::cmp;
 use std::io::{Result, Write};
-use std::iter::IntoIterator;
+use std::iter::{IntoIterator, Iterator};
 use std::slice;
 use termion::{clear, cursor::Goto};
 
@@ -14,7 +14,8 @@ fn strings_max_len(iter: slice::Iter<String>, initial: usize) -> usize {
 ///
 /// Table with horizontal header and vertical header
 pub struct TableWidget {
-    horizontal_header: Vec<String>,
+    horizontal_header: Vec<Vec<String>>,
+    horizontal_header_widths: Vec<usize>,
     vertical_header: Vec<String>,
     vertical_header_width: usize,
     columns: Vec<Vec<String>>,
@@ -26,6 +27,7 @@ impl TableWidget {
     pub fn new() -> TableWidget {
         TableWidget {
             horizontal_header: Vec::new(),
+            horizontal_header_widths: Vec::new(),
             vertical_header: Vec::new(),
             vertical_header_width: 0,
             columns: Vec::new(),
@@ -43,13 +45,31 @@ impl TableWidget {
         self.vertical_header_width = strings_max_len(self.vertical_header.iter(), 0);
     }
 
-    pub fn set_horizontal_header<I>(&mut self, header: I)
-    where
-        I: IntoIterator<Item = String>,
-    {
+    pub fn clear_horizontal_header(&mut self) {
         self.horizontal_header.clear();
-        self.horizontal_header.extend(header);
-        self.vertical_header_width = strings_max_len(self.vertical_header.iter(), 0);
+        self.horizontal_header_widths.clear();
+    }
+
+    pub fn append_horizontal_header<I>(&mut self, header: I)
+    where
+        I: Iterator<Item = String>,
+    {
+        let row = header
+            .enumerate()
+            .map(|(col_num, hdr)| {
+                let hdr_len = hdr.len();
+                if col_num >= self.horizontal_header_widths.len() {
+                    self.horizontal_header_widths.push(hdr_len);
+                } else {
+                    let width = self.horizontal_header_widths[col_num];
+                    if hdr_len > width {
+                        self.horizontal_header_widths[col_num] = hdr_len;
+                    }
+                }
+                hdr
+            })
+            .collect();
+        self.horizontal_header.push(row);
     }
 
     pub fn clear_columns(&mut self) {
@@ -85,7 +105,7 @@ impl TableWidget {
             .enumerate()
             .skip(self.horizontal_offset)
             .map(|(col_num, col)| {
-                strings_max_len(col.iter(), self.horizontal_header[col_num].len())
+                strings_max_len(col.iter(), self.horizontal_header_widths[col_num])
             })
             .collect();
         // total_width is the width of columns plus one char in between
@@ -120,14 +140,18 @@ impl Widget for TableWidget {
 
         write!(out, "{}{}{}", pos, clear::CurrentLine, Goto(body_pos_x, y))?;
 
-        for (width, title) in column_widths
-            .iter()
-            .zip(self.horizontal_header.iter())
-            .skip(self.horizontal_offset)
-        {
-            if *width > 0 {
-                write!(out, " {:^width$}", title, width = *width)?;
+        for header in &self.horizontal_header {
+            for (width, title) in column_widths
+                .iter()
+                .zip(header.iter())
+                .skip(self.horizontal_offset)
+            {
+                if *width > 0 {
+                    write!(out, " {:^width$}", title, width = *width)?;
+                }
             }
+            y += 1;
+            write!(out, "{}", Goto(body_pos_x, y))?;
         }
         let empty_string = String::from("");
         for (row_num, title) in self
@@ -137,7 +161,6 @@ impl Widget for TableWidget {
             .skip(self.vertical_offset)
             .take(cmp::min((height as usize) - 1, self.vertical_header.len()))
         {
-            y += 1;
             write!(
                 out,
                 "{}{:<width$}",
@@ -157,6 +180,7 @@ impl Widget for TableWidget {
                     )?;
                 }
             }
+            y += 1;
         }
         Ok(())
     }

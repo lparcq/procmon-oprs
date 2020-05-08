@@ -77,9 +77,11 @@ impl<'a> Output for TerminalOutput<'a> {
             let screen_size = terminal_size()?;
             let (screen_width, screen_height) = screen_size;
             table.clear_columns();
-            table.set_horizontal_header(lines.iter().map(|line| match &line.metrics {
-                Some(metrics) => format!("{} [{}]", line.name, metrics.pid,),
-                None => line.name.to_string(),
+            table.clear_horizontal_header();
+            table.append_horizontal_header(lines.iter().map(|line| line.name.to_string()));
+            table.append_horizontal_header(lines.iter().map(|line| match &line.metrics {
+                Some(metrics) => format!("{}", metrics.pid,),
+                None => "---".to_string(),
             }));
             lines
                 .iter()
