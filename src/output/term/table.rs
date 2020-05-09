@@ -76,11 +76,6 @@ impl TableWidget {
         self.columns.clear();
     }
 
-    pub fn set_empty_column(&mut self, col_num: usize) {
-        let empty = Vec::<String>::new();
-        self.set_column(col_num, empty.iter().map(|s| s.to_string()));
-    }
-
     pub fn set_column<I>(&mut self, col_num: usize, values: I)
     where
         I: IntoIterator<Item = String>,

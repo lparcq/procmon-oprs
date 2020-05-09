@@ -183,7 +183,6 @@ impl<'a> Output for TextOutput<'a> {
     fn run(&mut self, every_ms: Duration, count: Option<u64>) -> anyhow::Result<()> {
         let mut loop_number: u64 = 0;
         let metric_ids = self.collector.metric_ids();
-        let metric_count = metric_ids.len();
         let mut table = Table::new();
         for metric_id in metric_ids {
             table.push_subtitle(metric_id.to_str(), metric_id.to_short_str());
@@ -198,23 +197,11 @@ impl<'a> Output for TextOutput<'a> {
                 table.clear_titles();
                 table.clear_values();
                 for line in lines {
-                    let name = match &line.metrics {
-                        Some(metrics) => format!("{} [{}]", line.name, metrics.pid,),
-                        None => line.name.to_string(),
-                    };
+                    let name = format!("{} [{}]", line.name, line.pid,);
                     table.push_title(name);
-                    match &line.metrics {
-                        Some(metrics) => {
-                            for (metric_idx, value) in metrics.series.iter().enumerate() {
-                                let fmt = self.formatters.get(metric_idx).unwrap();
-                                table.push_value((*fmt)(*value));
-                            }
-                        }
-                        None => {
-                            for _ in 0..metric_count {
-                                table.push_value("----".to_string());
-                            }
-                        }
+                    for (metric_idx, value) in line.metrics.iter().enumerate() {
+                        let fmt = self.formatters.get(metric_idx).unwrap();
+                        table.push_value((*fmt)(*value));
                     }
                 }
                 table.resize();

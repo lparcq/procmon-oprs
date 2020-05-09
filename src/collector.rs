@@ -1,17 +1,19 @@
 use libc::pid_t;
 
-use crate::metric::{MetricId, ProcessMetrics};
+use crate::metric::{MetricId, MetricSeries};
 
 /// A line for a process in a monitor
 pub struct ProcessLine {
     pub name: String,
-    pub metrics: Option<ProcessMetrics>,
+    pub pid: pid_t,
+    pub metrics: MetricSeries,
 }
 
 impl ProcessLine {
-    fn new(name: &str, metrics: Option<ProcessMetrics>) -> ProcessLine {
+    fn new(name: &str, pid: pid_t, metrics: MetricSeries) -> ProcessLine {
         ProcessLine {
             name: String::from(name),
+            pid,
             metrics,
         }
     }
@@ -20,8 +22,7 @@ impl ProcessLine {
 /// Collector
 pub trait Collector {
     fn clear(&mut self);
-    fn no_data(&mut self, target_name: &str);
-    fn collect(&mut self, target_name: &str, pid: pid_t, values: Vec<u64>);
+    fn collect(&mut self, target_name: &str, pid: pid_t, values: MetricSeries);
     fn lines(&self) -> &Vec<ProcessLine>;
     fn metric_ids(&self) -> &Vec<MetricId>;
 }
@@ -47,15 +48,8 @@ impl Collector for GridCollector {
         self.lines = Vec::with_capacity(self.lines.capacity());
     }
 
-    fn no_data(&mut self, target_name: &str) {
-        self.lines.push(ProcessLine::new(target_name, None));
-    }
-
-    fn collect(&mut self, target_name: &str, pid: pid_t, values: Vec<u64>) {
-        self.lines.push(ProcessLine::new(
-            target_name,
-            Some(ProcessMetrics::new(pid, values)),
-        ));
+    fn collect(&mut self, target_name: &str, pid: pid_t, values: MetricSeries) {
+        self.lines.push(ProcessLine::new(target_name, pid, values));
     }
 
     fn metric_ids(&self) -> &Vec<MetricId> {

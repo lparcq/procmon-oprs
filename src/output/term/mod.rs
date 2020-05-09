@@ -2,7 +2,7 @@ use std::io::{self, Write};
 use std::time::{Duration, Instant};
 use termion::{
     clear,
-    cursor::{Goto, Hide},
+    cursor::{self, Goto},
     input::MouseTerminal,
     raw::IntoRawMode,
     screen::AlternateScreen,
@@ -61,7 +61,7 @@ impl<'a> Output for TerminalOutput<'a> {
         let mut initial_timeout = every;
         let mut timeout = initial_timeout;
 
-        let mut stdout = AlternateScreen::from(MouseTerminal::from(io::stdout().into_raw_mode()?));
+        let mut screen = AlternateScreen::from(MouseTerminal::from(io::stdout().into_raw_mode()?));
 
         let in_events = input::EventChannel::new();
         let mut menu = MenuBar::new();
@@ -79,28 +79,21 @@ impl<'a> Output for TerminalOutput<'a> {
             table.clear_columns();
             table.clear_horizontal_header();
             table.append_horizontal_header(lines.iter().map(|line| line.name.to_string()));
-            table.append_horizontal_header(lines.iter().map(|line| match &line.metrics {
-                Some(metrics) => format!("{}", metrics.pid,),
-                None => "---".to_string(),
-            }));
-            lines
-                .iter()
-                .enumerate()
-                .for_each(|(col_num, line)| match &line.metrics {
-                    Some(metrics) => table.set_column(
-                        col_num,
-                        self.formatters
-                            .iter()
-                            .zip(metrics.series.iter())
-                            .map(|(fmt, value)| fmt(*value)),
-                    ),
-                    None => table.set_empty_column(col_num),
-                });
-            write!(stdout, "{}", clear::All)?;
-            table.write(&mut stdout, Goto(1, 1), screen_size)?;
-            menu.write(&mut stdout, Goto(1, screen_height), (screen_width, 1))?;
-            write!(stdout, "{}", Hide)?;
-            stdout.flush()?;
+            table.append_horizontal_header(lines.iter().map(|line| format!("{}", line.pid,)));
+            lines.iter().enumerate().for_each(|(col_num, line)| {
+                table.set_column(
+                    col_num,
+                    self.formatters
+                        .iter()
+                        .zip(line.metrics.iter())
+                        .map(|(fmt, value)| fmt(*value)),
+                )
+            });
+            write!(screen, "{}", clear::All)?;
+            table.write(&mut screen, Goto(1, 1), screen_size)?;
+            menu.write(&mut screen, Goto(1, screen_height), (screen_width, 1))?;
+            write!(screen, "{}", cursor::Hide)?;
+            screen.flush()?;
 
             let stop_watch = Instant::now();
             match in_events.receive_timeout(timeout)? {
@@ -136,6 +129,8 @@ impl<'a> Output for TerminalOutput<'a> {
                 }
             }
         }
+        write!(screen, "{}", cursor::Show)?;
+        screen.flush()?;
         Ok(())
     }
 }

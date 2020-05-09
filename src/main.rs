@@ -1,6 +1,10 @@
 #[cfg(unix)]
 extern crate libc;
 
+use clap::arg_enum;
+use log::{error, warn};
+use simplelog::{self, SimpleLogger, TermLogger, WriteLogger};
+use std::fs::File;
 use std::path::PathBuf;
 use structopt::StructOpt;
 
@@ -51,11 +55,27 @@ Example:
   oprs --system -n bash -p 1234 -m mem:vm time:real
 ";
 
+arg_enum! {
+    #[derive(Clone, Copy, Debug)]
+    enum LoggingTarget {
+        Console,
+        File,
+    }
+}
+
 #[derive(StructOpt, Debug)]
 #[structopt(name = APP_NAME, about = HELP_MESSAGE)]
 struct Opt {
-    #[structopt(short, long, parse(from_occurrences), help = "Activate verbose mode")]
-    verbose: u64,
+    #[structopt(short, long, parse(from_occurrences), help = "activate verbose mode")]
+    verbose: u8,
+
+    #[structopt(
+        short = "L",
+        long = "logging",
+        help = "logging target (console, file)",
+        default_value = "console"
+    )]
+    logging_target: LoggingTarget,
 
     #[structopt(short, long, help = "number of loops")]
     count: Option<u64>,
@@ -94,13 +114,55 @@ struct Opt {
 }
 
 //
+// Logging
+//
+
+fn configure_logging(dirs: &cfg::Directories, verbosity: u8, target: LoggingTarget) {
+    fn configure_console_logging(log_level: simplelog::LevelFilter) -> anyhow::Result<()> {
+        TermLogger::init(
+            log_level,
+            simplelog::Config::default(),
+            simplelog::TerminalMode::Mixed,
+        )?;
+        Ok(())
+    }
+    fn configure_file_logging(
+        dirs: &cfg::Directories,
+        log_level: simplelog::LevelFilter,
+    ) -> anyhow::Result<()> {
+        WriteLogger::init(
+            log_level,
+            simplelog::Config::default(),
+            File::create(dirs.get_log_file()?)?,
+        )?;
+        Ok(())
+    }
+    let log_level = match verbosity {
+        0 => simplelog::LevelFilter::Off,
+        1 => simplelog::LevelFilter::Error,
+        2 => simplelog::LevelFilter::Warn,
+        3 => simplelog::LevelFilter::Info,
+        4 => simplelog::LevelFilter::Debug,
+        _ => simplelog::LevelFilter::Trace,
+    };
+    match target {
+        LoggingTarget::Console => configure_console_logging(log_level),
+        LoggingTarget::File => configure_file_logging(&dirs, log_level),
+    }
+    .unwrap_or_else(|_| {
+        SimpleLogger::init(log_level, simplelog::Config::default())
+            .expect("cannot initialize logging")
+    });
+}
+
+//
 // Main
 //
 
-fn start(opt: Opt) -> anyhow::Result<()> {
+fn start(dirs: &cfg::Directories, opt: Opt) -> anyhow::Result<()> {
     // Configuration
     let mut settings = config::Config::default();
-    if let Ok(config_reader) = cfg::Reader::new(APP_NAME) {
+    if let Ok(config_reader) = cfg::Reader::new(&dirs) {
         config_reader.read_config_file(&mut settings, "settings")?;
     }
     settings.set(cfg::KEY_APP_NAME, APP_NAME)?;
@@ -128,7 +190,7 @@ fn start(opt: Opt) -> anyhow::Result<()> {
         target_ids.push(TargetId::ProcessName(name));
     }
     if target_ids.is_empty() {
-        eprintln!("no process to monitor, exiting.");
+        warn!("no process to monitor, exiting.");
     } else {
         application::run(&settings, &opt.metrics, &target_ids, opt.output)?;
     }
@@ -136,19 +198,18 @@ fn start(opt: Opt) -> anyhow::Result<()> {
 }
 
 fn main() {
-    let opt = Opt::from_args();
-    loggerv::Logger::new()
-        .verbosity(opt.verbose)
-        .level(true) // add a tag on the line
-        .module_path(false)
-        .init()
-        .unwrap();
+    if let Ok(dirs) = cfg::Directories::new(APP_NAME) {
+        let opt = Opt::from_args();
+        configure_logging(&dirs, opt.verbose, opt.logging_target);
 
-    if opt.metrics.is_empty() {
-        dbg!(opt.names);
-        application::list_metrics();
-    } else if let Err(err) = start(opt) {
-        eprintln!("{}", err);
+        if opt.metrics.is_empty() {
+            application::list_metrics();
+        } else if let Err(err) = start(&dirs, opt) {
+            error!("{}", err);
+            std::process::exit(1);
+        }
+    } else {
+        eprintln!("cannot initialize directories");
         std::process::exit(1);
     }
 }

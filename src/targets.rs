@@ -99,16 +99,13 @@ impl<'a> StaticTarget<'a> {
     }
 
     fn collect_with_name(&self, name: &str, collector: &mut dyn Collector) {
-        match self.process {
-            Some(ref process) => {
-                let mut proc_info = ProcessInfo::new(process, self.system_conf);
-                collector.collect(
-                    name,
-                    process.pid(),
-                    proc_info.extract_metrics(collector.metric_ids()),
-                )
-            }
-            None => collector.no_data(self.get_name()),
+        if let Some(ref process) = self.process {
+            let mut proc_info = ProcessInfo::new(process, self.system_conf);
+            collector.collect(
+                name,
+                process.pid(),
+                proc_info.extract_metrics(collector.metric_ids()),
+            )
         }
     }
 
@@ -182,8 +179,6 @@ impl<'a> Target for DynamicTarget<'a> {
     fn collect(&self, collector: &mut dyn Collector) {
         if let Some(target) = &self.target {
             target.collect_with_name(self.get_name(), collector);
-        } else {
-            collector.no_data(self.get_name());
         }
     }
 }

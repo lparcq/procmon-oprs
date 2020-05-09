@@ -1,6 +1,7 @@
 use super::widget::{Size, Widget};
 use std::io::{Result, Write};
 use termion::{
+    color,
     cursor::Goto,
     event::{Event, Key},
     style,
@@ -96,7 +97,13 @@ impl MenuBar {
 impl Widget for MenuBar {
     fn write(&self, out: &mut dyn Write, pos: Goto, size: Size) -> Result<()> {
         let (mut remaining_width, _) = size;
-        write!(out, "{}", pos)?;
+        write!(
+            out,
+            "{}{}{}",
+            pos,
+            color::Fg(color::White),
+            color::Bg(color::Black)
+        )?;
         match self.context {
             MenuContext::Root => {
                 self.write_entry(out, Key::Esc, "Quit", None, &mut remaining_width)?;

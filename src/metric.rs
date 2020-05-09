@@ -1,4 +1,3 @@
-use libc::pid_t;
 use std::result;
 use std::str::FromStr;
 use strum::IntoEnumIterator;
@@ -254,18 +253,6 @@ impl MetricNamesParser {
 
 /// List of values collected
 pub type MetricSeries = Vec<u64>;
-
-/// Process metrics inclued the process id and the list of metrics
-pub struct ProcessMetrics {
-    pub pid: pid_t,
-    pub series: MetricSeries,
-}
-
-impl ProcessMetrics {
-    pub fn new(pid: pid_t, series: MetricSeries) -> ProcessMetrics {
-        ProcessMetrics { pid, series }
-    }
-}
 
 #[cfg(test)]
 mod tests {
