@@ -4,7 +4,7 @@ extern crate libc;
 use clap::arg_enum;
 use log::{error, warn};
 use simplelog::{self, SimpleLogger, TermLogger, WriteLogger};
-use std::fs::File;
+use std::fs::{self, File};
 use std::path::PathBuf;
 use structopt::StructOpt;
 
@@ -21,7 +21,7 @@ mod utils;
 #[cfg(test)]
 mod mocks;
 
-use application::OutputType;
+use application::{Application, OutputType};
 use targets::TargetId;
 
 const APP_NAME: &str = "oprs";
@@ -130,10 +130,17 @@ fn configure_logging(dirs: &cfg::Directories, verbosity: u8, target: LoggingTarg
         dirs: &cfg::Directories,
         log_level: simplelog::LevelFilter,
     ) -> anyhow::Result<()> {
+        let log_path = dirs.get_log_file()?;
+        if log_path.exists() {
+            let mut backup_path = log_path.clone();
+            if backup_path.set_extension(".log.0") {
+                fs::rename(log_path.as_path(), backup_path)?;
+            }
+        }
         WriteLogger::init(
             log_level,
             simplelog::Config::default(),
-            File::create(dirs.get_log_file()?)?,
+            File::create(log_path)?,
         )?;
         Ok(())
     }
@@ -192,7 +199,18 @@ fn start(dirs: &cfg::Directories, opt: Opt) -> anyhow::Result<()> {
     if target_ids.is_empty() {
         warn!("no process to monitor, exiting.");
     } else {
-        application::run(&settings, &opt.metrics, &target_ids, opt.output)?;
+        let system_conf = info::SystemConf::new()?;
+        let mut app = Application::new(
+            &settings,
+            &opt.metrics,
+            &target_ids,
+            opt.output,
+            &system_conf,
+        )?;
+        configure_logging(&dirs, opt.verbose + 1, opt.logging_target);
+        if let Err(err) = app.run() {
+            error!("{}", err);
+        }
     }
     Ok(())
 }
@@ -200,12 +218,10 @@ fn start(dirs: &cfg::Directories, opt: Opt) -> anyhow::Result<()> {
 fn main() {
     if let Ok(dirs) = cfg::Directories::new(APP_NAME) {
         let opt = Opt::from_args();
-        configure_logging(&dirs, opt.verbose, opt.logging_target);
-
         if opt.metrics.is_empty() {
             application::list_metrics();
         } else if let Err(err) = start(&dirs, opt) {
-            error!("{}", err);
+            eprintln!("{}", err);
             std::process::exit(1);
         }
     } else {

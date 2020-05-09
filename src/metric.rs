@@ -64,10 +64,15 @@ pub enum MetricId {
     #[strum(serialize = "mem:data", message = "data + stack size")]
     MemData,
     #[strum(
-        serialize = "time:real",
+        serialize = "time:elapsed",
         message = "elapsed time since process started"
     )]
-    TimeReal,
+    TimeElapsed,
+    #[strum(
+        serialize = "time:cpu",
+        message = "elapsed time in kernel or user mode"
+    )]
+    TimeCpu,
     #[strum(serialize = "time:system", message = "elapsed time in kernel mode")]
     TimeSystem,
     #[strum(serialize = "time:user", message = "elapsed time in user mode")]
@@ -92,7 +97,8 @@ impl MetricId {
             MetricId::IoWriteCall => Some("wr:call"),
             MetricId::IoWriteCount => Some("wr:cnt"),
             MetricId::IoWriteStorage => Some("wr:store"),
-            MetricId::TimeReal => Some("tm:real"),
+            MetricId::TimeElapsed => Some("tm:elapsed"),
+            MetricId::TimeCpu => Some("tm:cpu"),
             MetricId::TimeSystem => Some("tm:sys"),
             MetricId::TimeUser => Some("tm:user"),
             MetricId::ThreadCount => Some("thread:cnt"),
@@ -153,7 +159,8 @@ impl MetricNamesParser {
             MetricId::MemVm => format::size,
             MetricId::MemText => format::size,
             MetricId::MemData => format::size,
-            MetricId::TimeReal => format::duration_human,
+            MetricId::TimeElapsed => format::duration_human,
+            MetricId::TimeCpu => format::duration_human,
             MetricId::TimeSystem => format::duration_human,
             MetricId::TimeUser => format::duration_human,
             _ => format::identity,
@@ -165,9 +172,10 @@ impl MetricNamesParser {
             MetricNamesParser::get_human_format(id)
         } else {
             match id {
-                MetricId::TimeReal | MetricId::TimeSystem | MetricId::TimeUser => {
-                    format::duration_seconds
-                }
+                MetricId::TimeElapsed
+                | MetricId::TimeCpu
+                | MetricId::TimeSystem
+                | MetricId::TimeUser => format::duration_seconds,
                 _ => format::identity,
             }
         }
@@ -319,7 +327,7 @@ mod tests {
             "mem:vm/ti",
             "mem:text/m",
             "mem:data/g",
-            "time:real/du",
+            "time:elapsed/du",
             "time:system",
             "time:user",
             "thread:count",

@@ -334,17 +334,17 @@ impl<'a> TargetContainer<'a> {
 
     pub fn push(&mut self, target_id: &TargetId) -> anyhow::Result<()> {
         match target_id {
-            TargetId::System => self.system = Some(SystemTarget::new(self.system_conf)?),
+            TargetId::System => self.system = Some(SystemTarget::new(&self.system_conf)?),
             TargetId::Pid(pid) => self
                 .statics
-                .push(StaticTarget::new(*pid, self.system_conf)?),
+                .push(StaticTarget::new(*pid, &self.system_conf)?),
             TargetId::PidFile(pid_file) => self
                 .dynamics
-                .push(DynamicTarget::new(&pid_file, self.system_conf)),
+                .push(DynamicTarget::new(&pid_file, &self.system_conf)),
             TargetId::ProcessName(name) => self.multis.push(MultiTarget::new(
                 name.as_str(),
                 self.multis.len(),
-                self.system_conf,
+                &self.system_conf,
             )),
         };
         Ok(())

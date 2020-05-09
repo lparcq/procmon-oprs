@@ -20,6 +20,7 @@ impl Directories {
         })
     }
 
+    /// Path of the log file in the runtime directory
     pub fn get_log_file(&self) -> anyhow::Result<PathBuf> {
         let basename = format!("{}.log", self.app_name);
         let path = xdg::BaseDirectories::new()?.place_runtime_file(basename)?;

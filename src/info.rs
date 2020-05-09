@@ -81,7 +81,7 @@ impl<'a> SystemInfo<'a> {
                 MetricId::MemVm => {
                     self.with_meminfo(|mi| mi.mem_total - mi.mem_available.unwrap_or(mi.mem_free))
                 }
-                MetricId::TimeReal => {
+                MetricId::TimeElapsed => {
                     elapsed_seconds_since(self.system_conf.boot_time_seconds) * 1000
                 }
                 _ => 0,
@@ -185,7 +185,10 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
                 }
                 MetricId::MemText => self.with_system_statm(|statm, sc| statm.text * sc.page_size),
                 MetricId::MemData => self.with_system_statm(|statm, sc| statm.data * sc.page_size),
-                MetricId::TimeReal => self.with_system_stat(ProcessInfo::elapsed_seconds) * 1000,
+                MetricId::TimeElapsed => self.with_system_stat(ProcessInfo::elapsed_seconds) * 1000,
+                MetricId::TimeCpu => self
+                    .system_conf
+                    .ticks_to_millis(self.with_stat(|stat| stat.stime + stat.utime)),
                 MetricId::TimeSystem => self
                     .system_conf
                     .ticks_to_millis(self.with_stat(|stat| stat.stime)),
