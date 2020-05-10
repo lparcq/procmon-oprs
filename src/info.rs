@@ -4,7 +4,7 @@ use procfs::process::{Io, Process, Stat, StatM};
 use procfs::Meminfo;
 use std::time::SystemTime;
 
-use crate::metric::MetricId;
+use crate::metrics::MetricId;
 
 // Elapsed time since a start time
 // Since the boot time is in seconds since the Epoch, no need to be more precise than the second.

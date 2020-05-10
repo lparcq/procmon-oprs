@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use crate::cfg;
 use crate::info::SystemConf;
-use crate::metric::{MetricId, MetricNamesParser};
+use crate::metrics::{MetricId, MetricNamesParser};
 use crate::output::{Output, TerminalOutput, TextOutput};
 use crate::targets::TargetId;
 

@@ -5,7 +5,7 @@ use super::Output;
 use crate::collector::{Collector, GridCollector};
 use crate::format::Formatter;
 use crate::info::SystemConf;
-use crate::metric::MetricId;
+use crate::metrics::MetricId;
 use crate::targets::{TargetContainer, TargetId};
 
 const REPEAT_HEADER_EVERY: u16 = 20;

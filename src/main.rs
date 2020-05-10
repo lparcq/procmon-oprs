@@ -8,12 +8,13 @@ use std::fs::{self, File};
 use std::path::PathBuf;
 use structopt::StructOpt;
 
+mod agg;
 mod application;
 mod cfg;
 mod collector;
 mod format;
 mod info;
-mod metric;
+mod metrics;
 mod output;
 mod targets;
 mod utils;
@@ -133,7 +134,7 @@ fn configure_logging(dirs: &cfg::Directories, verbosity: u8, target: LoggingTarg
         let log_path = dirs.get_log_file()?;
         if log_path.exists() {
             let mut backup_path = log_path.clone();
-            if backup_path.set_extension(".log.0") {
+            if backup_path.set_extension("log.0") {
                 fs::rename(log_path.as_path(), backup_path)?;
             }
         }

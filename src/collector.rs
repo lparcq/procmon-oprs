@@ -1,6 +1,6 @@
 use libc::pid_t;
 
-use crate::metric::{MetricId, MetricSeries};
+use crate::metrics::{MetricId, MetricSeries};
 
 /// A line for a process in a monitor
 pub struct ProcessLine {

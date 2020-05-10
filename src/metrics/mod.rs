@@ -1,25 +1,31 @@
+use std::cmp;
+use std::collections::BTreeMap;
 use std::result;
-use std::str::FromStr;
-use strum::IntoEnumIterator;
 use strum_macros::{EnumIter, EnumMessage, EnumString, IntoStaticStr};
 use thiserror::Error;
 
+use self::parser::parse_metric_spec;
+use crate::agg::AggregationSet;
 use crate::format::{self, Formatter};
+
+mod parser;
 
 const SHORT_NAME_MAX_LEN: usize = 10;
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("{0}: unknown metric")]
+    #[error("{0}: duplicate metric")]
+    DuplicateMetric(String),
+    #[error("invalid syntax: {0}")]
+    InvalidSyntax(String),
+    #[error("{0}: unknown metric or pattern")]
     UnknownMetric(String),
-    #[error("{0}: invalid metric pattern")]
-    InvalidMetricPattern(String),
-    #[error("{0}: unknown formatter")]
-    UnknownFormatter(String),
 }
 
 /// Metrics that can be collected for a process
-#[derive(Copy, Clone, Debug, PartialEq, EnumIter, EnumString, EnumMessage, IntoStaticStr)]
+#[derive(
+    Copy, Clone, Debug, PartialEq, Eq, PartialOrd, EnumIter, EnumString, EnumMessage, IntoStaticStr,
+)]
 pub enum MetricId {
     #[strum(serialize = "fault:minor", message = "page faults without disk access")]
     FaultMinor,
@@ -113,9 +119,38 @@ impl MetricId {
     }
 }
 
+/// Ordering for BTreeMap
+impl cmp::Ord for MetricId {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        fn ordinal(id: &MetricId) -> u8 {
+            match id {
+                MetricId::FaultMinor => 0,
+                MetricId::FaultMajor => 1,
+                MetricId::IoReadCall => 2,
+                MetricId::IoReadCount => 3,
+                MetricId::IoReadStorage => 4,
+                MetricId::IoWriteCall => 5,
+                MetricId::IoWriteCount => 6,
+                MetricId::IoWriteStorage => 7,
+                MetricId::MemRss => 8,
+                MetricId::MemVm => 9,
+                MetricId::MemText => 10,
+                MetricId::MemData => 11,
+                MetricId::TimeElapsed => 12,
+                MetricId::TimeCpu => 13,
+                MetricId::TimeSystem => 14,
+                MetricId::TimeUser => 15,
+                MetricId::ThreadCount => 16,
+            }
+        }
+        ordinal(self).cmp(&ordinal(other))
+    }
+}
+
 /// Metric names parser
 pub struct MetricNamesParser {
     metric_ids: Vec<MetricId>,
+    aggregations: BTreeMap<MetricId, AggregationSet>,
     formatters: Vec<Formatter>,
     human_format: bool,
 }
@@ -124,25 +159,9 @@ impl MetricNamesParser {
     pub fn new(human_format: bool) -> MetricNamesParser {
         MetricNamesParser {
             metric_ids: Vec::new(),
+            aggregations: BTreeMap::new(),
             formatters: Vec::new(),
             human_format,
-        }
-    }
-
-    // Convert unit name to a formatter
-    fn get_format(name: &str) -> std::result::Result<Formatter, Error> {
-        match name {
-            "ki" => Ok(format::kibi),
-            "mi" => Ok(format::mebi),
-            "gi" => Ok(format::gibi),
-            "ti" => Ok(format::tebi),
-            "k" => Ok(format::kilo),
-            "m" => Ok(format::mega),
-            "g" => Ok(format::giga),
-            "t" => Ok(format::tera),
-            "sz" => Ok(format::size),
-            "du" => Ok(format::duration_human),
-            _ => Err(Error::UnknownFormatter(name.to_string())),
         }
     }
 
@@ -181,72 +200,29 @@ impl MetricNamesParser {
         }
     }
 
-    /// Expands limited globbing
-    /// Allowed: prefix mem:*, suffix *:call, middle io:*:call
-    fn expand_metric_name(
-        &mut self,
-        name: &str,
-        fmt: Option<Formatter>,
-    ) -> result::Result<(), Error> {
-        let matches: Vec<MetricId> = if name.starts_with("*:") {
-            // match by suffix
-            let suffix = &name[2..];
-            MetricId::iter()
-                .filter(|id| id.to_str().ends_with(suffix))
-                .collect()
-        } else if name.ends_with(":*") {
-            // match by prefix
-            let prefix = &name[..name.len() - 2];
-            MetricId::iter()
-                .filter(|id| id.to_str().starts_with(prefix))
-                .collect()
-        } else {
-            let parts: Vec<&str> = name.split(":*:").collect();
-            if parts.len() != 2 {
-                return Err(Error::InvalidMetricPattern(String::from(name)));
-            }
-            let prefix = parts[0];
-            let suffix = parts[1];
-            MetricId::iter()
-                .filter(|id| {
-                    let name = id.to_str();
-                    name.starts_with(prefix) && name.ends_with(suffix)
-                })
-                .collect()
-        };
-        if matches.is_empty() {
-            Err(Error::UnknownMetric(name.to_string()))
-        } else {
-            matches.iter().for_each(|id| {
-                self.metric_ids.push(*id);
-                self.formatters
-                    .push(fmt.unwrap_or_else(|| self.get_default_formatter(*id)));
-            });
-            Ok(())
-        }
-    }
-
     /// Return a list of ids from name
     pub fn parse_metric_names(&mut self, names: &[String]) -> result::Result<(), Error> {
-        names.iter().try_for_each(|name| {
-            let tokens: Vec<&str> = name.split('/').collect();
-            let fmt = if tokens.len() > 1 {
-                Some(MetricNamesParser::get_format(tokens[1])?)
-            } else {
-                None
-            };
-            match MetricId::from_str(tokens[0]) {
-                Ok(id) => {
-                    self.metric_ids.push(id);
-                    self.formatters
-                        .push(fmt.unwrap_or_else(|| self.get_default_formatter(id)));
+        names
+            .iter()
+            .try_for_each(|name| match parse_metric_spec(name.as_str()) {
+                Ok((metric_ids, aggs, fmt)) => {
+                    if metric_ids.is_empty() {
+                        return Err(Error::UnknownMetric(name.to_string()));
+                    }
+                    for id in metric_ids {
+                        if self.aggregations.contains_key(&id) {
+                            return Err(Error::DuplicateMetric(id.to_str().to_string()));
+                        } else {
+                            self.metric_ids.push(id);
+                            self.aggregations.insert(id, aggs);
+                            self.formatters
+                                .push(fmt.unwrap_or_else(|| self.get_default_formatter(id)));
+                        }
+                    }
+                    Ok(())
                 }
-                Err(_) => {
-                    self.expand_metric_name(tokens[0], fmt)?;
-                }
-            }
-            Ok(())
-        })?;
+                Err(_) => Err(Error::InvalidSyntax(format!("{}: invalid metric", name)))?,
+            })?;
         Ok(())
     }
 
