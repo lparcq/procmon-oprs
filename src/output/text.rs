@@ -1,12 +1,9 @@
-use std::thread::sleep;
+use std::thread;
 use std::time::Duration;
 
 use super::Output;
-use crate::collector::{Collector, GridCollector};
+use crate::collector::Collector;
 use crate::format::Formatter;
-use crate::info::SystemConf;
-use crate::metrics::MetricId;
-use crate::targets::{TargetContainer, TargetId};
 
 const REPEAT_HEADER_EVERY: u16 = 20;
 const RESIZE_IF_COLUMNS_SHRINK: usize = 2;
@@ -155,68 +152,62 @@ impl Table {
 }
 
 /// Print on standard output as a table
-pub struct TextOutput<'a> {
-    targets: TargetContainer<'a>,
-    collector: GridCollector,
-    formatters: Vec<Formatter>,
+pub struct TextOutput {
+    every: Duration,
+    table: Table,
 }
 
-impl<'a> TextOutput<'a> {
-    pub fn new(
-        target_ids: &[TargetId],
-        metric_ids: &[MetricId],
-        formatters: &[Formatter],
-        system_conf: &'a SystemConf,
-    ) -> anyhow::Result<TextOutput<'a>> {
-        let mut targets = TargetContainer::new(system_conf);
-        targets.push_all(target_ids)?;
-        let collector = GridCollector::new(target_ids.len(), metric_ids.to_vec());
-        Ok(TextOutput {
-            targets,
-            collector,
-            formatters: formatters.to_vec(),
-        })
+impl TextOutput {
+    pub fn new(every: Duration) -> TextOutput {
+        TextOutput {
+            every,
+            table: Table::new(),
+        }
     }
 }
 
-impl<'a> Output for TextOutput<'a> {
-    fn run(&mut self, every_ms: Duration, count: Option<u64>) -> anyhow::Result<()> {
-        let mut loop_number: u64 = 0;
-        let metric_ids = self.collector.metric_ids();
-        let mut table = Table::new();
-        for metric_id in metric_ids {
-            table.push_subtitle(metric_id.to_str(), metric_id.to_short_str());
-        }
-        loop {
-            let with_header = self.targets.refresh(); // must print headers again
-            self.targets.collect(&mut self.collector);
-            let lines = self.collector.lines();
-            if lines.is_empty() {
-                eprintln!("no process found")
-            } else {
-                table.clear_titles();
-                table.clear_values();
-                for line in lines {
-                    let name = format!("{} [{}]", line.name, line.pid,);
-                    table.push_title(name);
-                    for (metric_idx, value) in line.metrics.iter().enumerate() {
-                        let fmt = self.formatters.get(metric_idx).unwrap();
-                        table.push_value((*fmt)(*value));
-                    }
-                }
-                table.resize();
-                table.print(with_header);
-            }
-
-            if let Some(count) = count {
-                loop_number += 1;
-                if loop_number >= count {
-                    break;
-                }
-            }
-            sleep(every_ms);
+impl Output for TextOutput {
+    fn open(&mut self, collector: &dyn Collector) -> anyhow::Result<()> {
+        for metric_id in collector.metric_ids() {
+            self.table
+                .push_subtitle(metric_id.to_str(), metric_id.to_short_str());
         }
         Ok(())
+    }
+
+    fn close(&mut self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn render(
+        &mut self,
+        collector: &dyn Collector,
+        formatters: &Vec<Formatter>,
+        targets_updated: bool,
+    ) -> anyhow::Result<()> {
+        let lines = collector.lines();
+        if lines.is_empty() {
+            eprintln!("no process found")
+        } else {
+            self.table.clear_titles();
+            self.table.clear_values();
+            for line in lines {
+                let name = format!("{} [{}]", line.name, line.pid,);
+                self.table.push_title(name);
+                for (metric_idx, value) in line.metrics.iter().enumerate() {
+                    let fmt = formatters.get(metric_idx).unwrap();
+                    self.table.push_value((*fmt)(*value));
+                }
+            }
+            self.table.resize();
+            self.table.print(targets_updated);
+        }
+        Ok(())
+    }
+
+    fn pause(&mut self) -> anyhow::Result<bool> {
+        thread::sleep(self.every);
+        Ok(true)
     }
 }
 

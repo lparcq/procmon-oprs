@@ -147,10 +147,12 @@ impl cmp::Ord for MetricId {
     }
 }
 
+pub type AggregationMap = BTreeMap<MetricId, AggregationSet>;
+
 /// Metric names parser
 pub struct MetricNamesParser {
     metric_ids: Vec<MetricId>,
-    aggregations: BTreeMap<MetricId, AggregationSet>,
+    aggregations: AggregationMap,
     formatters: Vec<Formatter>,
     human_format: bool,
 }
@@ -228,6 +230,10 @@ impl MetricNamesParser {
 
     pub fn get_metric_ids(&self) -> &Vec<MetricId> {
         &self.metric_ids
+    }
+
+    pub fn get_aggregations(&self) -> &AggregationMap {
+        &self.aggregations
     }
 
     pub fn get_formatters(&self) -> &Vec<Formatter> {

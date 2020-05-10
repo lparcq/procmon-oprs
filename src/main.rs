@@ -200,16 +200,10 @@ fn start(dirs: &cfg::Directories, opt: Opt) -> anyhow::Result<()> {
     if target_ids.is_empty() {
         warn!("no process to monitor, exiting.");
     } else {
-        let system_conf = info::SystemConf::new()?;
-        let mut app = Application::new(
-            &settings,
-            &opt.metrics,
-            &target_ids,
-            opt.output,
-            &system_conf,
-        )?;
+        let mut app = Application::new(&settings, &opt.metrics)?;
         configure_logging(&dirs, opt.verbose + 1, opt.logging_target);
-        if let Err(err) = app.run() {
+        let system_conf = info::SystemConf::new()?;
+        if let Err(err) = app.run(opt.output, &target_ids, &system_conf) {
             error!("{}", err);
         }
     }

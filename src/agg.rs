@@ -1,9 +1,10 @@
 // Support for aggregation of metrics
 
+use std::cmp;
 use strum_macros::{EnumIter, EnumString};
 
 /// Possible metric aggregations
-#[derive(Clone, Copy, Debug, EnumIter, EnumString)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, EnumIter, EnumString)]
 pub enum Aggregation {
     #[strum(serialize = "raw")]
     None,
@@ -26,6 +27,13 @@ impl Aggregation {
     }
 }
 
+/// Ordering
+impl cmp::Ord for Aggregation {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        self.mask().cmp(&other.mask())
+    }
+}
+
 /// A set of aggregations
 #[derive(Clone, Copy, Debug)]
 pub struct AggregationSet(u8);
@@ -37,6 +45,11 @@ impl AggregationSet {
 
     pub fn has(&self, variant: Aggregation) -> bool {
         self.0 & variant.mask() != 0
+    }
+
+    /// True if only this variant is set
+    pub fn only(&self, variant: Aggregation) -> bool {
+        self.0 & variant.mask() == self.0
     }
 
     pub fn set(&mut self, variant: Aggregation) {
@@ -61,6 +74,7 @@ mod tests {
             assert!(!aggs.has(variant), "{:?}: should not be set", variant);
             aggs.set(variant);
             assert!(aggs.has(variant), "{:?}: is not set", variant);
+            assert!(aggs.only(variant), "{:?}: is not the only variant", variant);
             Aggregation::iter().for_each(|other| {
                 assert!(
                     other.mask() == variant.mask() || !aggs.has(other),
@@ -78,7 +92,9 @@ mod tests {
     fn test_multiples() {
         let mut aggs = AggregationSet::new();
         aggs.set(Aggregation::Min);
+        assert!(aggs.only(Aggregation::Min));
         aggs.set(Aggregation::Ratio);
+        assert!(!aggs.only(Aggregation::Min));
         assert!(aggs.has(Aggregation::Min));
         assert!(aggs.has(Aggregation::Ratio));
         assert!(!aggs.has(Aggregation::None));

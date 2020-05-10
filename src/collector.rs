@@ -1,8 +1,10 @@
 use libc::pid_t;
 
-use crate::metrics::{MetricId, MetricSeries};
+use crate::metrics::{AggregationMap, MetricId, MetricSeries};
 
 /// A line for a process in a monitor
+///
+/// Hold a series of unsigned integer values
 pub struct ProcessLine {
     pub name: String,
     pub pid: pid_t,
@@ -19,6 +21,11 @@ impl ProcessLine {
     }
 }
 
+/// Group of metrics and aggregated values
+pub struct Group<'a> {
+    line: &'a ProcessLine,
+}
+
 /// Collector
 pub trait Collector {
     fn clear(&mut self);
@@ -28,21 +35,27 @@ pub trait Collector {
 }
 
 /// Collect a grid of metrics by process
-pub struct GridCollector {
+pub struct GridCollector<'a> {
     ids: Vec<MetricId>,
+    aggregations: &'a AggregationMap,
     lines: Vec<ProcessLine>,
 }
 
-impl GridCollector {
-    pub fn new(number_of_targets: usize, metric_ids: Vec<MetricId>) -> GridCollector {
+impl<'a> GridCollector<'a> {
+    pub fn new(
+        number_of_targets: usize,
+        ids: Vec<MetricId>,
+        aggregations: &'a AggregationMap,
+    ) -> GridCollector {
         GridCollector {
-            ids: metric_ids,
+            ids,
+            aggregations,
             lines: Vec::with_capacity(number_of_targets),
         }
     }
 }
 
-impl Collector for GridCollector {
+impl<'a> Collector for GridCollector<'a> {
     /// Clear the lines
     fn clear(&mut self) {
         self.lines = Vec::with_capacity(self.lines.capacity());
