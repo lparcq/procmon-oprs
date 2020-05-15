@@ -1,3 +1,19 @@
+// Oprs -- process monitor for Linux
+// Copyright (C) 2020  Laurent Pelecq
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 use libc::pid_t;
 use procfs::process::Process;
 use std::collections::{BTreeSet, HashMap};
@@ -27,7 +43,7 @@ pub enum TargetId {
 /// Target process
 pub trait Target {
     fn get_name(&self) -> &str;
-    fn collect(&self, collector: &mut dyn Collector);
+    fn collect(&self, collector: &mut Collector);
 }
 
 /// The system itself
@@ -46,12 +62,12 @@ impl<'a> Target for SystemTarget<'a> {
         "system"
     }
 
-    fn collect(&self, collector: &mut dyn Collector) {
+    fn collect(&self, collector: &mut Collector) {
         let mut system = SystemInfo::new(self.system_conf);
         collector.collect(
             self.get_name(),
             0,
-            system.extract_metrics(collector.metric_ids()),
+            system.extract_metrics(collector.metrics()),
         );
     }
 }
@@ -98,13 +114,13 @@ impl<'a> StaticTarget<'a> {
         self.process.as_ref().map(|proc| proc.pid())
     }
 
-    fn collect_with_name(&self, name: &str, collector: &mut dyn Collector) {
+    fn collect_with_name(&self, name: &str, collector: &mut Collector) {
         if let Some(ref process) = self.process {
             let mut proc_info = ProcessInfo::new(process, self.system_conf);
             collector.collect(
                 name,
                 process.pid(),
-                proc_info.extract_metrics(collector.metric_ids()),
+                proc_info.extract_metrics(collector.metrics()),
             )
         }
     }
@@ -123,7 +139,7 @@ impl<'a> Target for StaticTarget<'a> {
         self.name.as_str()
     }
 
-    fn collect(&self, collector: &mut dyn Collector) {
+    fn collect(&self, collector: &mut Collector) {
         self.collect_with_name(self.get_name(), collector);
     }
 }
@@ -176,7 +192,7 @@ impl<'a> Target for DynamicTarget<'a> {
         }
     }
 
-    fn collect(&self, collector: &mut dyn Collector) {
+    fn collect(&self, collector: &mut Collector) {
         if let Some(target) = &self.target {
             target.collect_with_name(self.get_name(), collector);
         }
@@ -235,7 +251,7 @@ impl<'a> Target for MultiTarget<'a> {
         self.name.as_str()
     }
 
-    fn collect(&self, collector: &mut dyn Collector) {
+    fn collect(&self, collector: &mut Collector) {
         for target in self.targets.iter() {
             target.collect(collector);
         }
@@ -316,8 +332,8 @@ impl<'a> TargetContainer<'a> {
         changed
     }
 
-    pub fn collect(&self, collector: &mut dyn Collector) {
-        collector.clear();
+    pub fn collect(&self, collector: &mut Collector) {
+        collector.rewind();
         if let Some(system) = &self.system {
             system.collect(collector);
         }

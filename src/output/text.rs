@@ -1,9 +1,25 @@
+// Oprs -- process monitor for Linux
+// Copyright (C) 2020  Laurent Pelecq
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 use std::thread;
 use std::time::Duration;
 
 use super::Output;
+use crate::agg::Aggregation;
 use crate::collector::Collector;
-use crate::format::Formatter;
 
 const REPEAT_HEADER_EVERY: u16 = 20;
 const RESIZE_IF_COLUMNS_SHRINK: usize = 2;
@@ -56,8 +72,8 @@ impl Table {
         self.values.clear();
     }
 
-    fn push_value(&mut self, value: String) {
-        self.values.push(value);
+    fn push_value(&mut self, value: &str) {
+        self.values.push(value.to_string());
     }
 
     fn horizontal_rule(&self, column_count: usize, column_width: usize, separator: &str) {
@@ -167,11 +183,22 @@ impl TextOutput {
 }
 
 impl Output for TextOutput {
-    fn open(&mut self, collector: &dyn Collector) -> anyhow::Result<()> {
-        for metric_id in collector.metric_ids() {
-            self.table
-                .push_subtitle(metric_id.to_str(), metric_id.to_short_str());
-        }
+    fn open(&mut self, collector: &Collector) -> anyhow::Result<()> {
+        let mut last_id = None;
+        collector.for_each_computed_metric(|id, ag| {
+            if last_id.is_none() || last_id.unwrap() != id {
+                last_id = Some(id);
+                self.table.push_subtitle(id.to_str(), id.to_short_str());
+            } else {
+                let subtitle = match ag {
+                    Aggregation::None => "none", // never used
+                    Aggregation::Min => "min",
+                    Aggregation::Max => "max",
+                    Aggregation::Ratio => "ratio",
+                };
+                self.table.push_subtitle(subtitle, None);
+            }
+        });
         Ok(())
     }
 
@@ -179,26 +206,21 @@ impl Output for TextOutput {
         Ok(())
     }
 
-    fn render(
-        &mut self,
-        collector: &dyn Collector,
-        formatters: &Vec<Formatter>,
-        targets_updated: bool,
-    ) -> anyhow::Result<()> {
-        let lines = collector.lines();
-        if lines.is_empty() {
+    fn render(&mut self, collector: &Collector, targets_updated: bool) -> anyhow::Result<()> {
+        if collector.is_empty() {
             eprintln!("no process found")
         } else {
             self.table.clear_titles();
             self.table.clear_values();
-            for line in lines {
-                let name = format!("{} [{}]", line.name, line.pid,);
+            collector.lines().for_each(|proc| {
+                let name = format!("{} [{}]", proc.get_name(), proc.get_pid(),);
                 self.table.push_title(name);
-                for (metric_idx, value) in line.metrics.iter().enumerate() {
-                    let fmt = formatters.get(metric_idx).unwrap();
-                    self.table.push_value((*fmt)(*value));
-                }
-            }
+                proc.samples().for_each(|sample| {
+                    sample
+                        .strings()
+                        .for_each(|value| self.table.push_value(value))
+                });
+            });
             self.table.resize();
             self.table.print(targets_updated);
         }

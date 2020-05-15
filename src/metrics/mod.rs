@@ -1,5 +1,21 @@
+// Oprs -- process monitor for Linux
+// Copyright (C) 2020  Laurent Pelecq
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 use std::cmp;
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::result;
 use strum_macros::{EnumIter, EnumMessage, EnumString, IntoStaticStr};
 use thiserror::Error;
@@ -122,7 +138,7 @@ impl MetricId {
 /// Ordering for BTreeMap
 impl cmp::Ord for MetricId {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
-        fn ordinal(id: &MetricId) -> u8 {
+        fn ordinal(id: MetricId) -> u8 {
             match id {
                 MetricId::FaultMinor => 0,
                 MetricId::FaultMajor => 1,
@@ -143,28 +159,35 @@ impl cmp::Ord for MetricId {
                 MetricId::ThreadCount => 16,
             }
         }
-        ordinal(self).cmp(&ordinal(other))
+        ordinal(*self).cmp(&ordinal(*other))
     }
 }
 
-pub type AggregationMap = BTreeMap<MetricId, AggregationSet>;
+/// Metric with associated aggregations and a formatter function
+pub struct FormattedMetric {
+    pub id: MetricId,
+    pub aggregations: AggregationSet,
+    pub format: Formatter,
+}
+
+impl FormattedMetric {
+    fn new(id: MetricId, aggregations: AggregationSet, format: Formatter) -> FormattedMetric {
+        FormattedMetric {
+            id,
+            aggregations,
+            format,
+        }
+    }
+}
 
 /// Metric names parser
 pub struct MetricNamesParser {
-    metric_ids: Vec<MetricId>,
-    aggregations: AggregationMap,
-    formatters: Vec<Formatter>,
     human_format: bool,
 }
 
 impl MetricNamesParser {
     pub fn new(human_format: bool) -> MetricNamesParser {
-        MetricNamesParser {
-            metric_ids: Vec::new(),
-            aggregations: BTreeMap::new(),
-            formatters: Vec::new(),
-            human_format,
-        }
+        MetricNamesParser { human_format }
     }
 
     // Return the more readable format for a human
@@ -202,8 +225,10 @@ impl MetricNamesParser {
         }
     }
 
-    /// Return a list of ids from name
-    pub fn parse_metric_names(&mut self, names: &[String]) -> result::Result<(), Error> {
+    /// Return a list of metrics with aggregations and format
+    pub fn parse(&mut self, names: &[String]) -> result::Result<Vec<FormattedMetric>, Error> {
+        let mut metrics = Vec::new();
+        let mut parsed_ids = BTreeSet::new();
         names
             .iter()
             .try_for_each(|name| match parse_metric_spec(name.as_str()) {
@@ -212,37 +237,24 @@ impl MetricNamesParser {
                         return Err(Error::UnknownMetric(name.to_string()));
                     }
                     for id in metric_ids {
-                        if self.aggregations.contains_key(&id) {
+                        if parsed_ids.contains(&id) {
                             return Err(Error::DuplicateMetric(id.to_str().to_string()));
                         } else {
-                            self.metric_ids.push(id);
-                            self.aggregations.insert(id, aggs);
-                            self.formatters
-                                .push(fmt.unwrap_or_else(|| self.get_default_formatter(id)));
+                            parsed_ids.insert(id);
+                            metrics.push(FormattedMetric::new(
+                                id,
+                                aggs,
+                                fmt.unwrap_or_else(|| self.get_default_formatter(id)),
+                            ));
                         }
                     }
                     Ok(())
                 }
-                Err(_) => Err(Error::InvalidSyntax(format!("{}: invalid metric", name)))?,
+                Err(_) => Err(Error::InvalidSyntax(format!("{}: invalid metric", name))),
             })?;
-        Ok(())
-    }
-
-    pub fn get_metric_ids(&self) -> &Vec<MetricId> {
-        &self.metric_ids
-    }
-
-    pub fn get_aggregations(&self) -> &AggregationMap {
-        &self.aggregations
-    }
-
-    pub fn get_formatters(&self) -> &Vec<Formatter> {
-        &self.formatters
+        Ok(metrics)
     }
 }
-
-/// List of values collected
-pub type MetricSeries = Vec<u64>;
 
 #[cfg(test)]
 mod tests {
@@ -316,16 +328,14 @@ mod tests {
         ]);
         // Check few metrics
         let mut parser1 = MetricNamesParser::new(false);
-        parser1.parse_metric_names(&metric_names[0..2]).unwrap();
-        assert_eq!(2, parser1.get_metric_ids().len());
-        assert_eq!(2, parser1.get_formatters().len());
+        let metrics1 = parser1.parse(&metric_names[0..2]).unwrap();
+        assert_eq!(2, metrics1.len());
 
         // Check all metrics
         let mut parser2 = MetricNamesParser::new(false);
         let metric_count = metric_names.len();
-        parser2.parse_metric_names(&metric_names).unwrap();
-        assert_eq!(metric_count, parser2.get_metric_ids().len());
-        assert_eq!(metric_count, parser2.get_formatters().len());
+        let metrics2 = parser2.parse(&metric_names).unwrap();
+        assert_eq!(metric_count, metrics2.len());
     }
 
     #[test]
@@ -333,26 +343,20 @@ mod tests {
         // Check prefix
         let metric_names1 = vec_of_string(&["mem:*"]);
         let mut parser1 = MetricNamesParser::new(false);
-        parser1.parse_metric_names(&metric_names1).unwrap();
-        let metrics1 = parser1.get_metric_ids();
+        let metrics1 = parser1.parse(&metric_names1).unwrap();
         assert_eq!(4, metrics1.len());
-        assert_eq!(4, parser1.get_formatters().len());
 
         // Check suffix
         let metric_names2 = vec_of_string(&["*:storage"]);
         let mut parser2 = MetricNamesParser::new(false);
-        parser2.parse_metric_names(&metric_names2).unwrap();
-        let metrics2 = parser2.get_metric_ids();
+        let metrics2 = parser2.parse(&metric_names2).unwrap();
         assert_eq!(2, metrics2.len());
-        assert_eq!(2, parser2.get_formatters().len());
 
         // Check middle
         let metric_names3 = vec_of_string(&["io:*:count"]);
         let mut parser3 = MetricNamesParser::new(false);
-        parser3.parse_metric_names(&metric_names3).unwrap();
-        let metrics3 = parser3.get_metric_ids();
+        let metrics3 = parser3.parse(&metric_names3).unwrap();
         assert_eq!(2, metrics3.len());
-        assert_eq!(2, parser3.get_formatters().len());
     }
 
     #[test]
@@ -361,7 +365,7 @@ mod tests {
             let metric_names = vec_of_string(&[pattern]);
             let mut parser = MetricNamesParser::new(false);
             assert!(
-                parser.parse_metric_names(&metric_names).is_err(),
+                parser.parse(&metric_names).is_err(),
                 "pattern \"{}\" works unexpectedly",
                 pattern
             );

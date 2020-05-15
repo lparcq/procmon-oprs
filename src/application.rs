@@ -1,3 +1,19 @@
+// Oprs -- process monitor for Linux
+// Copyright (C) 2020  Laurent Pelecq
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 use clap::arg_enum;
 use log::info;
 use std::time;
@@ -5,10 +21,9 @@ use strum::{EnumMessage, IntoEnumIterator};
 use thiserror::Error;
 
 use crate::cfg;
-use crate::collector::GridCollector;
-use crate::format::Formatter;
+use crate::collector::Collector;
 use crate::info::SystemConf;
-use crate::metrics::{AggregationMap, MetricId, MetricNamesParser};
+use crate::metrics::{FormattedMetric, MetricId, MetricNamesParser};
 use crate::output::{Output, TerminalOutput, TextOutput};
 use crate::targets::{TargetContainer, TargetId};
 
@@ -41,9 +56,7 @@ pub fn list_metrics() {
 pub struct Application {
     every: time::Duration,
     count: Option<u64>,
-    metric_ids: Vec<MetricId>,
-    aggregations: AggregationMap,
-    formatters: Vec<Formatter>,
+    metrics: Vec<FormattedMetric>,
 }
 
 impl Application {
@@ -57,14 +70,11 @@ impl Application {
         let count = settings.get_int(cfg::KEY_COUNT).map(|c| c as u64).ok();
         let human_format = settings.get_bool(cfg::KEY_HUMAN_FORMAT).unwrap_or(false);
         let mut metrics_parser = MetricNamesParser::new(human_format);
-        metrics_parser.parse_metric_names(metric_names)?;
 
         Ok(Application {
             every,
             count,
-            metric_ids: metrics_parser.get_metric_ids().to_vec(),
-            aggregations: metrics_parser.get_aggregations().clone(),
-            formatters: metrics_parser.get_formatters().to_vec(),
+            metrics: metrics_parser.parse(metric_names)?,
         })
     }
 
@@ -87,11 +97,7 @@ impl Application {
 
         let mut targets = TargetContainer::new(system_conf);
         targets.push_all(target_ids)?;
-        let mut collector = GridCollector::new(
-            target_ids.len(),
-            self.metric_ids.to_vec(),
-            &self.aggregations,
-        );
+        let mut collector = Collector::new(target_ids.len(), &self.metrics);
 
         output.open(&collector)?;
 
@@ -99,7 +105,7 @@ impl Application {
         loop {
             let targets_updated = targets.refresh();
             targets.collect(&mut collector);
-            output.render(&collector, &self.formatters, targets_updated)?;
+            output.render(&collector, targets_updated)?;
 
             if let Some(count) = self.count {
                 loop_number += 1;

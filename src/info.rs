@@ -1,10 +1,27 @@
+// Oprs -- process monitor for Linux
+// Copyright (C) 2020  Laurent Pelecq
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 // Extract metrics from procfs interface.
 
 use procfs::process::{Io, Process, Stat, StatM};
 use procfs::Meminfo;
+use std::slice::Iter;
 use std::time::SystemTime;
 
-use crate::metrics::MetricId;
+use crate::metrics::{FormattedMetric, MetricId};
 
 // Elapsed time since a start time
 // Since the boot time is in seconds since the Epoch, no need to be more precise than the second.
@@ -75,9 +92,9 @@ impl<'a> SystemInfo<'a> {
         }
     }
 
-    pub fn extract_metrics(&mut self, ids: &[MetricId]) -> Vec<u64> {
-        ids.iter()
-            .map(|id| match id {
+    pub fn extract_metrics(&mut self, metrics: Iter<FormattedMetric>) -> Vec<u64> {
+        metrics
+            .map(|metric| match metric.id {
                 MetricId::MemVm => {
                     self.with_meminfo(|mi| mi.mem_total - mi.mem_available.unwrap_or(mi.mem_free))
                 }
@@ -168,9 +185,9 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
         elapsed_seconds_since(process_start)
     }
 
-    pub fn extract_metrics(&mut self, ids: &[MetricId]) -> Vec<u64> {
-        ids.iter()
-            .map(|id| match id {
+    pub fn extract_metrics(&mut self, metrics: Iter<FormattedMetric>) -> Vec<u64> {
+        metrics
+            .map(|metric| match metric.id {
                 MetricId::FaultMinor => self.with_stat(|stat| stat.minflt),
                 MetricId::FaultMajor => self.with_stat(|stat| stat.majflt),
                 MetricId::IoReadCall => self.with_io(|io| io.rchar),

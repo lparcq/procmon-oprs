@@ -1,3 +1,19 @@
+// Oprs -- process monitor for Linux
+// Copyright (C) 2020  Laurent Pelecq
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 use std::cmp;
 use std::io::{Result, Write};
 use std::iter::{IntoIterator, Iterator};
@@ -38,10 +54,11 @@ impl TableWidget {
 
     pub fn set_vertical_header<I>(&mut self, header: I)
     where
-        I: IntoIterator<Item = String>,
+        I: IntoIterator<Item = &'static str>,
     {
         self.vertical_header.clear();
-        self.vertical_header.extend(header);
+        self.vertical_header
+            .extend(header.into_iter().map(|s| s.to_string()));
         self.vertical_header_width = strings_max_len(self.vertical_header.iter(), 0);
     }
 
@@ -82,11 +99,7 @@ impl TableWidget {
     {
         let column_count = self.columns.len();
         match col_num.cmp(&column_count) {
-            cmp::Ordering::Equal => {
-                let mut column = Vec::new();
-                column.extend(values);
-                self.columns.push(column);
-            }
+            cmp::Ordering::Equal => self.columns.push(values.into_iter().collect()),
             cmp::Ordering::Less => self.columns[col_num] = values.into_iter().collect(),
             _ => panic!("internal error"),
         }

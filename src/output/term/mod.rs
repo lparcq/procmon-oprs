@@ -13,9 +13,8 @@ use self::menu::{Action, MenuBar};
 use self::table::TableWidget;
 use self::widget::Widget;
 use super::Output;
+use crate::agg::Aggregation;
 use crate::collector::Collector;
-use crate::format::Formatter;
-use crate::metrics::MetricId;
 
 mod input;
 mod menu;
@@ -25,7 +24,6 @@ mod widget;
 /// Print on standard output as a table
 pub struct TerminalOutput {
     every: Duration,
-    metric_ids: Vec<MetricId>,
     events: input::EventChannel,
     screen: Box<dyn Write>,
     menu: MenuBar,
@@ -36,7 +34,6 @@ impl TerminalOutput {
     pub fn new(every: Duration) -> anyhow::Result<TerminalOutput> {
         Ok(TerminalOutput {
             every,
-            metric_ids: Vec::new(),
             events: input::EventChannel::new(),
             screen: Box::new(AlternateScreen::from(MouseTerminal::from(
                 io::stdout().into_raw_mode()?,
@@ -52,10 +49,23 @@ impl TerminalOutput {
 }
 
 impl Output for TerminalOutput {
-    fn open(&mut self, collector: &dyn Collector) -> anyhow::Result<()> {
-        self.metric_ids.extend(collector.metric_ids());
-        self.table
-            .set_vertical_header(self.metric_ids.iter().map(|s| s.to_str().to_string()));
+    fn open(&mut self, collector: &Collector) -> anyhow::Result<()> {
+        let mut names = Vec::new();
+        let mut last_id = None;
+        collector.for_each_computed_metric(|id, ag| {
+            if last_id.is_none() || last_id.unwrap() != id {
+                last_id = Some(id);
+                names.push(id.to_str());
+            } else {
+                names.push(match ag {
+                    Aggregation::None => "none", // never used
+                    Aggregation::Min => "min",
+                    Aggregation::Max => "max",
+                    Aggregation::Ratio => "ratio",
+                })
+            }
+        });
+        self.table.set_vertical_header(names);
         Ok(())
     }
 
@@ -65,29 +75,22 @@ impl Output for TerminalOutput {
         Ok(())
     }
 
-    fn render(
-        &mut self,
-        collector: &dyn Collector,
-        formatters: &Vec<Formatter>,
-        _targets_updated: bool,
-    ) -> anyhow::Result<()> {
-        let lines = collector.lines();
-
+    fn render(&mut self, collector: &Collector, _targets_updated: bool) -> anyhow::Result<()> {
         let screen_size = terminal_size()?;
         let (screen_width, screen_height) = screen_size;
         self.table.clear_columns();
         self.table.clear_horizontal_header();
         self.table
-            .append_horizontal_header(lines.iter().map(|line| line.name.to_string()));
+            .append_horizontal_header(collector.lines().map(|line| line.get_name().to_string()));
         self.table
-            .append_horizontal_header(lines.iter().map(|line| format!("{}", line.pid,)));
-        lines.iter().enumerate().for_each(|(col_num, line)| {
+            .append_horizontal_header(collector.lines().map(|line| format!("{}", line.get_pid(),)));
+        collector.lines().enumerate().for_each(|(col_num, proc)| {
             self.table.set_column(
                 col_num,
-                formatters
-                    .iter()
-                    .zip(line.metrics.iter())
-                    .map(|(fmt, value)| fmt(*value)),
+                proc.samples()
+                    .map(|sample| sample.strings())
+                    .flatten()
+                    .map(|s| s.to_string()),
             )
         });
         write!(self.screen, "{}", clear::All)?;
@@ -103,31 +106,24 @@ impl Output for TerminalOutput {
     fn pause(&mut self) -> anyhow::Result<bool> {
         let mut timeout = self.every;
         let stop_watch = Instant::now();
-        loop {
-            match self.events.receive_timeout(timeout)? {
-                Some(evt) => {
-                    match timeout.checked_sub(stop_watch.elapsed()) {
-                        Some(rest) => timeout = rest,
-                        None => timeout = self.every,
-                    }
-                    match self.menu.action(&evt) {
-                        Action::Quit => return Ok(false),
-                        Action::MultiplyTimeout(factor) => {
-                            if let Some(every) = self.every.checked_mul(factor as u32) {
-                                self.every = every;
-                            }
-                        }
-                        Action::DivideTimeout(factor) => {
-                            if let Some(every) = self.every.checked_div(factor as u32) {
-                                self.every = every;
-                            }
-                        }
-                        _ => {}
+        while let Some(evt) = self.events.receive_timeout(timeout)? {
+            match timeout.checked_sub(stop_watch.elapsed()) {
+                Some(rest) => timeout = rest,
+                None => timeout = self.every,
+            }
+            match self.menu.action(&evt) {
+                Action::Quit => return Ok(false),
+                Action::MultiplyTimeout(factor) => {
+                    if let Some(every) = self.every.checked_mul(factor as u32) {
+                        self.every = every;
                     }
                 }
-                None => {
-                    break;
+                Action::DivideTimeout(factor) => {
+                    if let Some(every) = self.every.checked_div(factor as u32) {
+                        self.every = every;
+                    }
                 }
+                _ => {}
             }
         }
         Ok(true)

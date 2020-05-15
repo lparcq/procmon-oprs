@@ -17,7 +17,7 @@ pub enum Aggregation {
 }
 
 impl Aggregation {
-    fn mask(&self) -> u8 {
+    fn mask(self) -> u8 {
         match self {
             Aggregation::None => 0x01,
             Aggregation::Min => 0x02,
@@ -43,21 +43,12 @@ impl AggregationSet {
         AggregationSet(0)
     }
 
-    pub fn has(&self, variant: Aggregation) -> bool {
+    pub fn has(self, variant: Aggregation) -> bool {
         self.0 & variant.mask() != 0
-    }
-
-    /// True if only this variant is set
-    pub fn only(&self, variant: Aggregation) -> bool {
-        self.0 & variant.mask() == self.0
     }
 
     pub fn set(&mut self, variant: Aggregation) {
         self.0 |= variant.mask();
-    }
-
-    pub fn unset(&mut self, variant: Aggregation) {
-        self.0 &= !variant.mask();
     }
 }
 
@@ -74,7 +65,6 @@ mod tests {
             assert!(!aggs.has(variant), "{:?}: should not be set", variant);
             aggs.set(variant);
             assert!(aggs.has(variant), "{:?}: is not set", variant);
-            assert!(aggs.only(variant), "{:?}: is not the only variant", variant);
             Aggregation::iter().for_each(|other| {
                 assert!(
                     other.mask() == variant.mask() || !aggs.has(other),
@@ -83,8 +73,6 @@ mod tests {
                     variant
                 );
             });
-            aggs.unset(variant);
-            assert!(!aggs.has(variant), "{:?}: should not be set", variant);
         }
     }
 
@@ -92,9 +80,7 @@ mod tests {
     fn test_multiples() {
         let mut aggs = AggregationSet::new();
         aggs.set(Aggregation::Min);
-        assert!(aggs.only(Aggregation::Min));
         aggs.set(Aggregation::Ratio);
-        assert!(!aggs.only(Aggregation::Min));
         assert!(aggs.has(Aggregation::Min));
         assert!(aggs.has(Aggregation::Ratio));
         assert!(!aggs.has(Aggregation::None));
