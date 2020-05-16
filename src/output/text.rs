@@ -37,7 +37,7 @@ struct SubTitle {
 }
 
 /// Space between the vertical lines and the text
-const VERTICAL_PADDING: usize = 1;
+const VERTICAL_PADDING: usize = 0;
 
 /// Print an infinite table
 struct Table {
@@ -169,7 +169,13 @@ impl Table {
 
     fn print_values(&self) {
         for value in &self.values {
-            print!("| {:^width$} ", value, width = self.column_width);
+            print!(
+                "|{}{:^width$}{}",
+                self.vertical_padding,
+                value,
+                self.vertical_padding,
+                width = self.column_width
+            );
         }
         println!("|");
     }
@@ -177,11 +183,14 @@ impl Table {
     /// Calculate the column width
     fn resize(&mut self) {
         let subtitle_count = self.subtitles.len();
+        let sep_len = 2 * VERTICAL_PADDING + 1; // padding + vertical line
+        let sep_count = subtitle_count - 1; // number of separator
+        let all_sep_len = sep_len * sep_count;
         let mut column_width = 0;
         for title in &self.titles {
             // minimum column with to display the title
-            let (quotient, remainder) = divide(title.len() + 3, subtitle_count);
-            let min_col_width = quotient - 3 + if remainder > 0 { 1 } else { 0 };
+            let (quotient, remainder) = divide(title.len() - all_sep_len, subtitle_count);
+            let min_col_width = quotient + if remainder > 0 { 1 } else { 0 };
             if min_col_width > column_width {
                 column_width = min_col_width;
             }
@@ -200,7 +209,7 @@ impl Table {
                 column_width = value.len();
             }
         }
-        let title_width = (column_width + 3) * subtitle_count - 3;
+        let title_width = column_width * subtitle_count + all_sep_len;
         if column_width > self.column_width
             || self.column_width - column_width > RESIZE_IF_COLUMNS_SHRINK
         {
