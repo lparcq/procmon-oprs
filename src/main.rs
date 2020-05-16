@@ -68,8 +68,14 @@ t   tera
 sz  the best unit in k, m, g or t.
 du  format duration as hour, minutes, seconds.
 
-Example:
-  oprs --system -n bash -p 1234 -m mem:vm time:real
+Metrics can be also aggregated using +min and/or +max. For example mem:vm+max/gi prints the virtual
+memory size and the peak size. To get only the max, use: mem:vm-raw+max. To get all: mem:vm+min+max.
+
+For some metrics, min or max is meaningless.
+
+Example, to print the virtual memory size, peak memory size and elapsed time of the system together
+with all bash processes and process with pid 1234:
+  oprs --system -n bash -p 1234 -m mem:vm+max time:elapsed
 ";
 
 arg_enum! {

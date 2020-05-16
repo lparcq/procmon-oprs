@@ -1,3 +1,19 @@
+// Oprs -- process monitor for Linux
+// Copyright (C) 2020  Laurent Pelecq
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
 use termion::{
@@ -9,6 +25,8 @@ use termion::{
     terminal_size,
 };
 
+pub use self::charset::{TableChar, TableCharSet};
+
 use self::menu::{Action, MenuBar};
 use self::table::TableWidget;
 use self::widget::Widget;
@@ -16,10 +34,29 @@ use super::Output;
 use crate::agg::Aggregation;
 use crate::collector::Collector;
 
+mod charset;
 mod input;
 mod menu;
 mod table;
 mod widget;
+
+/// Check if charset is unicode
+pub fn is_unicode() -> bool {
+    if let Ok(lang) = std::env::var("LANG") {
+        match env_lang::to_struct(&lang) {
+            Ok(lang) => {
+                if let Some(charset) = lang.charset {
+                    charset.to_lowercase().starts_with("utf")
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    } else {
+        false
+    }
+}
 
 /// Print on standard output as a table
 pub struct TerminalOutput {

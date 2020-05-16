@@ -164,6 +164,7 @@ impl<'a> Collector<'a> {
         self.last_line_pos = 0;
     }
 
+    /// Collect a target metrics
     pub fn collect(&mut self, target_name: &str, pid: pid_t, values: Vec<u64>) {
         let line_pos = self.last_line_pos;
         while let Some(mut line) = self.lines.get_mut(line_pos) {
@@ -187,6 +188,11 @@ impl<'a> Collector<'a> {
             self.lines.insert(line_pos, line);
         }
         self.last_line_pos += 1;
+    }
+
+    /// Called when there is no more targets
+    pub fn finish(&mut self) {
+        self.lines.truncate(self.last_line_pos);
     }
 
     pub fn metrics(&self) -> Iter<FormattedMetric> {

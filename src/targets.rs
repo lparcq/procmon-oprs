@@ -225,13 +225,18 @@ impl<'a> MultiTarget<'a> {
 
     fn refresh(&mut self, current_pids: &[pid_t]) -> bool {
         // Only parse all processes if there are none or if one has died
-        let count = self.targets.len();
         let mut previous_pids = BTreeSet::new();
+        let mut updated = false;
         self.targets.retain(|target| {
             if let Some(pid) = target.get_pid() {
                 previous_pids.insert(pid);
-                target.is_alive()
+                let alive = target.is_alive();
+                if !alive {
+                    updated = true;
+                }
+                alive
             } else {
+                updated = true;
                 false
             }
         });
@@ -239,10 +244,11 @@ impl<'a> MultiTarget<'a> {
             if !previous_pids.contains(pid) {
                 if let Ok(target) = StaticTarget::new(*pid, self.system_conf) {
                     self.targets.push(target);
+                    updated = true;
                 }
             }
         }
-        self.targets.len() != count
+        updated
     }
 }
 
@@ -346,6 +352,7 @@ impl<'a> TargetContainer<'a> {
         self.multis
             .iter()
             .for_each(|target| target.collect(collector));
+        collector.finish();
     }
 
     pub fn push(&mut self, target_id: &TargetId) -> anyhow::Result<()> {

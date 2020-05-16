@@ -17,6 +17,7 @@
 use std::thread;
 use std::time::Duration;
 
+use super::term::{TableChar, TableCharSet};
 use super::Output;
 use crate::agg::Aggregation;
 use crate::collector::Collector;
@@ -29,30 +30,43 @@ fn divide(numerator: usize, denominator: usize) -> (usize, usize) {
     (quotient, numerator - quotient * denominator)
 }
 
+/// A subtitle with a name and a short name
 struct SubTitle {
     name: &'static str,
     short_name: Option<&'static str>,
 }
 
-/// Table
+/// Space between the vertical lines and the text
+const VERTICAL_PADDING: usize = 1;
+
+/// Print an infinite table
 struct Table {
     titles: Vec<String>,
     subtitles: Vec<SubTitle>,
     values: Vec<String>,
+    title_count: usize,
     title_width: usize,
     column_width: usize,
     repeat: u16,
+    charset: TableCharSet,
+    hrule: String,
+    vertical_padding: String,
 }
 
 impl Table {
     fn new() -> Table {
+        let charset = TableCharSet::new();
         Table {
             titles: Vec::new(),
             subtitles: Vec::new(),
             values: Vec::new(),
+            title_count: 0,
             title_width: 0,
             column_width: 0,
             repeat: 0,
+            charset,
+            hrule: String::from(""),
+            vertical_padding: " ".repeat(VERTICAL_PADDING),
         }
     }
 
@@ -76,28 +90,59 @@ impl Table {
         self.values.push(value.to_string());
     }
 
-    fn horizontal_rule(&self, column_count: usize, column_width: usize, separator: &str) {
-        for _ in 0..column_count {
-            print!("{}{:-<width$}", separator, "", width = column_width + 2);
+    fn horizontal_rule(&self, left: char, middle_title: char, middle_subtitle: char, right: char) {
+        let subtitle_count = self.subtitles.len();
+        let column_count = subtitle_count * self.title_count;
+        for index in 0..column_count {
+            let separator = if index == 0 {
+                left
+            } else if index % subtitle_count == 0 {
+                middle_title
+            } else {
+                middle_subtitle
+            };
+            print!("{}{}", separator, self.hrule);
         }
-        println!("{}", separator);
+        println!("{}", right);
     }
 
-    fn print_header(&self) {
+    fn print_header(&mut self) {
+        if self.title_count > 0 {
+            self.print_footer();
+        }
+        self.title_count = self.titles.len();
         // An horizontal rule
-        let title_count = self.titles.len();
-        self.horizontal_rule(title_count, self.title_width, "|");
+        self.horizontal_rule(
+            self.charset.get(TableChar::DownRight),
+            self.charset.get(TableChar::DownHorizontal),
+            self.charset.get(TableChar::Horizontal),
+            self.charset.get(TableChar::DownLeft),
+        );
         // Titles
         for title in &self.titles {
-            print!("| {:^width$} ", title, width = self.title_width);
+            print!(
+                "|{}{:^width$}{}",
+                self.vertical_padding,
+                title,
+                self.vertical_padding,
+                width = self.title_width
+            );
         }
-        println!("|");
-        self.horizontal_rule(title_count, self.title_width, "+");
+        let vline = self.charset.get(TableChar::Vertical);
+        println!("{}", vline);
+        self.horizontal_rule(
+            self.charset.get(TableChar::VerticalRight),
+            self.charset.get(TableChar::VerticalHorizontal),
+            self.charset.get(TableChar::DownHorizontal),
+            self.charset.get(TableChar::VerticalLeft),
+        );
         // Subtitles
-        for _ in 0..title_count {
+        for _ in 0..self.title_count {
             for subtitle in &self.subtitles {
                 print!(
-                    "| {:^width$} ",
+                    "{}{}{:^width$}{}",
+                    vline,
+                    self.vertical_padding,
                     if subtitle.name.len() > self.column_width {
                         subtitle
                             .short_name
@@ -105,11 +150,21 @@ impl Table {
                     } else {
                         subtitle.name
                     },
+                    self.vertical_padding,
                     width = self.column_width
                 );
             }
         }
-        println!("|");
+        println!("{}", vline);
+    }
+
+    fn print_footer(&self) {
+        self.horizontal_rule(
+            self.charset.get(TableChar::UpRight),
+            self.charset.get(TableChar::UpHorizontal),
+            self.charset.get(TableChar::Horizontal),
+            self.charset.get(TableChar::UpLeft),
+        );
     }
 
     fn print_values(&self) {
@@ -153,6 +208,8 @@ impl Table {
             self.title_width = title_width;
             self.repeat = 0;
         }
+        self.hrule = format!("{}", self.charset.get(TableChar::Horizontal))
+            .repeat(column_width + 2 * VERTICAL_PADDING);
     }
 
     fn print(&mut self, with_header: bool) {
