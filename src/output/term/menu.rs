@@ -16,13 +16,12 @@
 
 use std::io::{Result, Write};
 use termion::{
-    color,
     cursor::Goto,
     event::{Event, Key},
     style,
 };
 
-use super::{Size, Widget};
+use super::{ScreenSize, Widget};
 
 macro_rules! write_len {
     ($out:expr, $s:expr, $len:expr) => {{
@@ -39,6 +38,8 @@ pub enum Action {
     Quit,
     MultiplyTimeout(u16),
     DivideTimeout(u16),
+    ScrollUp,
+    ScrollDown,
 }
 
 /// Menu context
@@ -105,6 +106,8 @@ impl MenuBar {
                 Event::Key(Key::Esc) => Action::Quit,
                 Event::Key(Key::PageUp) => Action::MultiplyTimeout(2),
                 Event::Key(Key::PageDown) => Action::DivideTimeout(2),
+                Event::Key(Key::Up) => Action::ScrollUp,
+                Event::Key(Key::Down) => Action::ScrollDown,
                 _ => Action::None,
             },
         }
@@ -112,15 +115,9 @@ impl MenuBar {
 }
 
 impl Widget for MenuBar {
-    fn write(&self, out: &mut dyn Write, pos: Goto, size: Size) -> Result<()> {
+    fn write(&self, out: &mut dyn Write, pos: Goto, size: ScreenSize) -> Result<()> {
         let (mut remaining_width, _) = size;
-        write!(
-            out,
-            "{}{}{}",
-            pos,
-            color::Fg(color::White),
-            color::Bg(color::Black)
-        )?;
+        write!(out, "{}", pos,)?;
         match self.context {
             MenuContext::Root => {
                 self.write_entry(out, Key::Esc, "Quit", None, &mut remaining_width)?;

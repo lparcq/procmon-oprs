@@ -17,10 +17,11 @@
 use std::thread;
 use std::time::Duration;
 
-use super::term::{TableChar, TableCharSet};
-use super::Output;
-use crate::agg::Aggregation;
-use crate::collector::Collector;
+use super::{
+    term::{TableChar, TableCharSet},
+    {Output, PauseStatus},
+};
+use crate::{agg::Aggregation, collector::Collector};
 
 const REPEAT_HEADER_EVERY: u16 = 20;
 const RESIZE_IF_COLUMNS_SHRINK: usize = 2;
@@ -300,9 +301,10 @@ impl Output for TextOutput {
         Ok(())
     }
 
-    fn pause(&mut self) -> anyhow::Result<bool> {
-        thread::sleep(self.every);
-        Ok(true)
+    fn pause(&mut self, remaining: Option<Duration>) -> anyhow::Result<PauseStatus> {
+        let timeout = remaining.unwrap_or(self.every);
+        thread::sleep(timeout);
+        Ok(PauseStatus::TimeOut)
     }
 }
 

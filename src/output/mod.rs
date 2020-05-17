@@ -14,16 +14,24 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::time::Duration;
+
 use crate::collector::Collector;
 
 pub mod term;
 pub mod text;
 
+pub enum PauseStatus {
+    Stop,
+    TimeOut,
+    Remaining(Duration),
+}
+
 pub trait Output {
     fn open(&mut self, collector: &Collector) -> anyhow::Result<()>;
     fn close(&mut self) -> anyhow::Result<()>;
     fn render(&mut self, collector: &Collector, targets_updated: bool) -> anyhow::Result<()>;
-    fn pause(&mut self) -> anyhow::Result<bool>;
+    fn pause(&mut self, remaining: Option<Duration>) -> anyhow::Result<PauseStatus>;
 }
 
 pub use crate::output::term::TerminalOutput;

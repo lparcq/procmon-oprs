@@ -16,7 +16,7 @@
 
 use clap::arg_enum;
 use log::info;
-use std::time;
+use std::time::Duration;
 use strum::{EnumMessage, IntoEnumIterator};
 use thiserror::Error;
 
@@ -24,7 +24,7 @@ use crate::cfg;
 use crate::collector::Collector;
 use crate::info::SystemConf;
 use crate::metrics::{FormattedMetric, MetricId, MetricNamesParser};
-use crate::output::{Output, TerminalOutput, TextOutput};
+use crate::output::{Output, PauseStatus, TerminalOutput, TextOutput};
 use crate::targets::{TargetContainer, TargetId};
 
 arg_enum! {
@@ -54,14 +54,14 @@ pub fn list_metrics() {
 
 /// Application displaying the process metrics
 pub struct Application {
-    every: time::Duration,
+    every: Duration,
     count: Option<u64>,
     metrics: Vec<FormattedMetric>,
 }
 
 impl Application {
     pub fn new(settings: &config::Config, metric_names: &[String]) -> anyhow::Result<Application> {
-        let every = time::Duration::from_millis(
+        let every = Duration::from_millis(
             (settings
                 .get_float(cfg::KEY_EVERY)
                 .map_err(|_| Error::InvalidParameter(cfg::KEY_EVERY))?
@@ -102,9 +102,12 @@ impl Application {
         output.open(&collector)?;
 
         let mut loop_number: u64 = 0;
+        let mut timeout: Option<Duration> = None;
         loop {
             let targets_updated = targets.refresh();
-            targets.collect(&mut collector);
+            if timeout.is_none() {
+                targets.collect(&mut collector);
+            }
             output.render(&collector, targets_updated)?;
 
             if let Some(count) = self.count {
@@ -113,8 +116,10 @@ impl Application {
                     break;
                 }
             }
-            if !output.pause()? {
-                break;
+            match output.pause(timeout)? {
+                PauseStatus::Stop => break,
+                PauseStatus::TimeOut => timeout = None,
+                PauseStatus::Remaining(remaining) => timeout = Some(remaining),
             }
         }
 

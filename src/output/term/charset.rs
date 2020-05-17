@@ -15,8 +15,13 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 /// Characters to draw a table
-const ASCII_TABLE_CHARS_: [&str; 11] = ["-", "|", "+", "+", "+", "+", "+", "+", "-", "-", "+"];
-const UTF8_TABLE_CHARS__: [&str; 11] = ["─", "│", "┌", "┐", "└", "┘", "├", "┤", "┬", "┴", "┼"];
+const ASCII_TABLE_CHARS_: [&str; 15] = [
+    "-", "|", "+", "+", "+", "+", "+", "+", "-", "-", "+", "<", "^", ">", "v",
+];
+
+const UTF8_TABLE_CHARS__: [&str; 15] = [
+    "─", "│", "┌", "┐", "└", "┘", "├", "┤", "┬", "┴", "┼", "←", "↑", "→", "↓",
+];
 
 pub enum TableChar {
     Horizontal,
@@ -30,9 +35,13 @@ pub enum TableChar {
     DownHorizontal,
     UpHorizontal,
     VerticalHorizontal,
+    _ArrowLeft,
+    ArrowUp,
+    _ArrowRight,
+    ArrowDown,
 }
 
-pub struct TableCharSet(&'static [&'static str; 11]);
+pub struct TableCharSet(&'static [&'static str; 15]);
 
 impl TableCharSet {
     pub fn new() -> TableCharSet {
@@ -57,6 +66,10 @@ impl TableCharSet {
             TableChar::DownHorizontal => 8usize,
             TableChar::UpHorizontal => 9usize,
             TableChar::VerticalHorizontal => 10usize,
+            TableChar::_ArrowLeft => 11usize,
+            TableChar::ArrowUp => 12usize,
+            TableChar::_ArrowRight => 13usize,
+            TableChar::ArrowDown => 14usize,
         }]
     }
 
