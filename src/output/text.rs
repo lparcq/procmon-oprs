@@ -55,7 +55,6 @@ struct Table {
 
 impl Table {
     fn new() -> Table {
-        let charset = TableCharSet::new();
         Table {
             titles: Vec::new(),
             subtitles: Vec::new(),
@@ -64,7 +63,7 @@ impl Table {
             title_width: 0,
             column_width: 0,
             repeat: 0,
-            charset,
+            charset: TableCharSet::new(),
             hrule: String::from(""),
             vertical_padding: " ".repeat(VERTICAL_PADDING),
         }
@@ -90,7 +89,13 @@ impl Table {
         self.values.push(value.to_string());
     }
 
-    fn horizontal_rule(&self, left: char, middle_title: char, middle_subtitle: char, right: char) {
+    fn horizontal_rule(
+        &self,
+        left: &'static str,
+        middle_title: &'static str,
+        middle_subtitle: &'static str,
+        right: &'static str,
+    ) {
         let subtitle_count = self.subtitles.len();
         let column_count = subtitle_count * self.title_count;
         for index in 0..column_count {
@@ -217,8 +222,10 @@ impl Table {
             self.title_width = title_width;
             self.repeat = 0;
         }
-        self.hrule = format!("{}", self.charset.get(TableChar::Horizontal))
-            .repeat(column_width + 2 * VERTICAL_PADDING);
+        let (_, hrule) = self
+            .charset
+            .horizontal_line(column_width + 2 * VERTICAL_PADDING);
+        self.hrule = hrule;
     }
 
     fn print(&mut self, with_header: bool) {

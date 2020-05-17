@@ -27,18 +27,21 @@ use termion::{
 
 pub use self::charset::{TableChar, TableCharSet};
 
-use self::menu::{Action, MenuBar};
-use self::table::TableWidget;
-use self::widget::Widget;
+use self::{
+    menu::{Action, MenuBar},
+    sizer::ColumnSizer,
+    table::TableDrawer,
+};
 use super::Output;
-use crate::agg::Aggregation;
-use crate::collector::Collector;
+use crate::{agg::Aggregation, collector::Collector};
 
 mod charset;
 mod input;
 mod menu;
+mod sizer;
 mod table;
-mod widget;
+
+const ELASTICITY: usize = 2;
 
 /// Check if charset is unicode
 pub fn is_unicode() -> bool {
@@ -58,13 +61,21 @@ pub fn is_unicode() -> bool {
     }
 }
 
+pub type Size = (u16, u16);
+
+pub trait Widget {
+    fn write(&self, out: &mut dyn Write, pos: Goto, size: Size) -> io::Result<()>;
+}
+
 /// Print on standard output as a table
 pub struct TerminalOutput {
     every: Duration,
     events: input::EventChannel,
     screen: Box<dyn Write>,
     menu: MenuBar,
-    table: TableWidget,
+    charset: TableCharSet,
+    sizer: ColumnSizer,
+    metric_names: Vec<String>,
 }
 
 impl TerminalOutput {
@@ -76,7 +87,9 @@ impl TerminalOutput {
                 io::stdout().into_raw_mode()?,
             ))),
             menu: MenuBar::new(),
-            table: TableWidget::new(),
+            charset: TableCharSet::new(),
+            sizer: ColumnSizer::new(ELASTICITY),
+            metric_names: Vec::new(),
         })
     }
 
@@ -87,22 +100,25 @@ impl TerminalOutput {
 
 impl Output for TerminalOutput {
     fn open(&mut self, collector: &Collector) -> anyhow::Result<()> {
-        let mut names = Vec::new();
         let mut last_id = None;
         collector.for_each_computed_metric(|id, ag| {
             if last_id.is_none() || last_id.unwrap() != id {
                 last_id = Some(id);
-                names.push(id.to_str());
+                self.metric_names.push(id.to_str().to_string());
             } else {
-                names.push(match ag {
-                    Aggregation::None => "none", // never used
-                    Aggregation::Min => "min",
-                    Aggregation::Max => "max",
-                    Aggregation::Ratio => "ratio",
-                })
+                let name = format!(
+                    "{} ({})",
+                    id.to_str(),
+                    match ag {
+                        Aggregation::None => "none", // never used
+                        Aggregation::Min => "min",
+                        Aggregation::Max => "max",
+                        Aggregation::Ratio => "%",
+                    }
+                );
+                self.metric_names.push(name);
             }
         });
-        self.table.set_vertical_header(names);
         Ok(())
     }
 
@@ -113,26 +129,63 @@ impl Output for TerminalOutput {
     }
 
     fn render(&mut self, collector: &Collector, _targets_updated: bool) -> anyhow::Result<()> {
-        let screen_size = terminal_size()?;
-        let (screen_width, screen_height) = screen_size;
-        self.table.clear_columns();
-        self.table.clear_horizontal_header();
-        self.table
-            .append_horizontal_header(collector.lines().map(|line| line.get_name().to_string()));
-        self.table
-            .append_horizontal_header(collector.lines().map(|line| format!("{}", line.get_pid(),)));
-        collector.lines().enumerate().for_each(|(col_num, proc)| {
-            self.table.set_column(
-                col_num,
+        // Prepare table
+        self.sizer
+            .overwrite(0, ColumnSizer::max_width(self.metric_names.as_slice()));
+        let columns = collector
+            .lines()
+            .map(|proc| {
                 proc.samples()
                     .map(|sample| sample.strings())
                     .flatten()
-                    .map(|s| s.to_string()),
-            )
+                    .map(|s| s.as_str())
+                    .collect::<Vec<&str>>()
+            })
+            .collect::<Vec<Vec<&str>>>();
+        columns.iter().enumerate().for_each(|(col_num, column)| {
+            self.sizer
+                .overwrite(col_num + 1, ColumnSizer::max_width(&column));
         });
-        write!(self.screen, "{}", clear::All)?;
-        self.table
-            .write(&mut self.screen, Goto(1, 1), screen_size)?;
+        collector
+            .lines()
+            .map(|line| line.get_name().len())
+            .enumerate()
+            .for_each(|(index, len)| self.sizer.overwrite_min(index + 1, len));
+        let subtitles = collector
+            .lines()
+            .map(|line| format!("{}", line.get_pid()))
+            .collect::<Vec<String>>();
+        subtitles
+            .iter()
+            .map(|s| s.len())
+            .enumerate()
+            .for_each(|(index, len)| self.sizer.overwrite_min(index + 1, len));
+
+        self.sizer.truncate(columns.len() + 1);
+        let _ = self.sizer.freeze();
+
+        log::debug!("cols {:?}", self.sizer.iter().collect::<Vec<&usize>>());
+        // Draw table
+        let screen_size = terminal_size()?;
+        let table = TableDrawer::new(&self.charset, &self.sizer, screen_size);
+        let screen = &mut self.screen;
+        write!(*screen, "{}", clear::All)?;
+        table.top_line(screen, Goto(1, 1))?;
+        table.write_horizontal_header1(
+            screen,
+            Goto(1, 2),
+            collector.lines().map(|line| line.get_name()),
+        )?;
+        table.write_horizontal_header1(screen, Goto(1, 3), subtitles.iter())?;
+        table.middle_line(screen, Goto(1, 4))?;
+        let pos = Goto(1, 5);
+        table.write_left_column(screen, pos, self.metric_names.iter())?;
+        for (col_num, column) in columns.iter().enumerate() {
+            table.write_middle_column(screen, pos, col_num + 1, column.iter())?;
+        }
+        table.bottom_line(screen, Goto(1, (self.metric_names.len() + 5) as u16))?;
+        // Draw menu
+        let (screen_width, screen_height) = screen_size;
         self.menu
             .write(&mut self.screen, Goto(1, screen_height), (screen_width, 1))?;
         write!(self.screen, "{}", cursor::Hide)?;

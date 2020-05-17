@@ -15,8 +15,8 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 /// Characters to draw a table
-const ASCII_TABLE_CHARS_: [char; 11] = ['-', '|', '+', '+', '+', '+', '+', '+', '-', '-', '+'];
-const UTF8_TABLE_CHARS__: [char; 11] = ['─', '│', '┌', '┐', '└', '┘', '├', '┤', '┬', '┴', '┼'];
+const ASCII_TABLE_CHARS_: [&str; 11] = ["-", "|", "+", "+", "+", "+", "+", "+", "-", "-", "+"];
+const UTF8_TABLE_CHARS__: [&str; 11] = ["─", "│", "┌", "┐", "└", "┘", "├", "┤", "┬", "┴", "┼"];
 
 pub enum TableChar {
     Horizontal,
@@ -32,7 +32,7 @@ pub enum TableChar {
     VerticalHorizontal,
 }
 
-pub struct TableCharSet(&'static [char; 11]);
+pub struct TableCharSet(&'static [&'static str; 11]);
 
 impl TableCharSet {
     pub fn new() -> TableCharSet {
@@ -43,7 +43,7 @@ impl TableCharSet {
         })
     }
 
-    pub fn get(&self, kind: TableChar) -> char {
+    pub fn get(&self, kind: TableChar) -> &'static str {
         let TableCharSet(charset) = self;
         charset[match kind {
             TableChar::Horizontal => 0usize,
@@ -58,5 +58,14 @@ impl TableCharSet {
             TableChar::UpHorizontal => 9usize,
             TableChar::VerticalHorizontal => 10usize,
         }]
+    }
+
+    pub fn repeat(&self, kind: TableChar, count: usize) -> (usize, String) {
+        let unit = self.get(kind);
+        (unit.len(), unit.repeat(count))
+    }
+
+    pub fn horizontal_line(&self, count: usize) -> (usize, String) {
+        self.repeat(TableChar::Horizontal, count)
     }
 }

@@ -14,7 +14,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use super::widget::{Size, Widget};
 use std::io::{Result, Write};
 use termion::{
     color,
@@ -22,6 +21,8 @@ use termion::{
     event::{Event, Key},
     style,
 };
+
+use super::{Size, Widget};
 
 macro_rules! write_len {
     ($out:expr, $s:expr, $len:expr) => {{

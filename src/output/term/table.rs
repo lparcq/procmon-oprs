@@ -14,180 +14,194 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::cmp;
+use std::cmp::max;
 use std::io::{Result, Write};
 use std::iter::{IntoIterator, Iterator};
-use std::slice;
-use termion::{clear, cursor::Goto};
+use termion::cursor::Goto;
 
-use super::widget::{Size, Widget};
-
-fn strings_max_len(iter: slice::Iter<String>, initial: usize) -> usize {
-    iter.fold(initial, |max, s| cmp::max(max, s.len()))
-}
+use super::{
+    charset::{TableChar, TableCharSet},
+    sizer::ColumnSizer,
+    Size,
+};
 
 /// Crosstab widget
 ///
 /// Table with horizontal header and vertical header
-pub struct TableWidget {
-    horizontal_header: Vec<Vec<String>>,
-    horizontal_header_widths: Vec<usize>,
-    vertical_header: Vec<String>,
-    vertical_header_width: usize,
-    columns: Vec<Vec<String>>,
+pub struct TableDrawer<'a, 'b> {
+    charset: &'a TableCharSet,
+    sizer: &'b ColumnSizer,
+    size: Size,
     horizontal_offset: usize,
     vertical_offset: usize,
+    hrule: (usize, String),
+    vline: &'static str,
 }
 
-impl TableWidget {
-    pub fn new() -> TableWidget {
-        TableWidget {
-            horizontal_header: Vec::new(),
-            horizontal_header_widths: Vec::new(),
-            vertical_header: Vec::new(),
-            vertical_header_width: 0,
-            columns: Vec::new(),
+impl<'a, 'b> TableDrawer<'a, 'b> {
+    pub fn new(
+        charset: &'a TableCharSet,
+        sizer: &'b ColumnSizer,
+        size: Size,
+    ) -> TableDrawer<'a, 'b> {
+        let vline: &'static str = charset.get(TableChar::Vertical);
+        let max_col_width = sizer.iter().fold(0, |acc, width| max(acc, *width));
+        dbg!(charset.get(TableChar::Horizontal).len());
+        let hrule = charset.horizontal_line(max_col_width);
+        TableDrawer {
+            sizer,
+            size,
             horizontal_offset: 0,
             vertical_offset: 0,
+            charset,
+            hrule,
+            vline,
         }
     }
 
-    pub fn set_vertical_header<I>(&mut self, header: I)
+    fn skip_columns(&self, pos: Goto, count: usize) -> Goto {
+        let Goto(mut x, y) = pos;
+        for index in 0..count {
+            x += (self.sizer.width_or_zero(index) + 1) as u16;
+        }
+        Goto(x, y)
+    }
+
+    fn horizontal_rule(
+        &self,
+        out: &mut dyn Write,
+        pos: Goto,
+        start_col: usize,
+        left: &'static str,
+        middle: &'static str,
+        right: &'static str,
+    ) -> Result<()> {
+        let pos = self.skip_columns(pos, start_col);
+        write!(out, "{}", pos)?;
+        let (hlen, hrule) = &self.hrule;
+        for index in start_col..self.sizer.len() {
+            let separator = if index == start_col { left } else { middle };
+            let column_width = self.sizer.width_or_zero(index);
+            let hrule_len = column_width * hlen;
+            write!(out, "{}{}", separator, &hrule[0..hrule_len])?;
+        }
+        write!(out, "{}", right)?;
+        Ok(())
+    }
+
+    /// Top line of the table
+    pub fn top_line(&self, out: &mut dyn Write, pos: Goto) -> Result<()> {
+        self.horizontal_rule(
+            out,
+            pos,
+            1,
+            self.charset.get(TableChar::DownRight),
+            self.charset.get(TableChar::DownHorizontal),
+            self.charset.get(TableChar::DownLeft),
+        )
+    }
+
+    /// Line between the header and the body
+    pub fn middle_line(&self, out: &mut dyn Write, pos: Goto) -> Result<()> {
+        self.horizontal_rule(
+            out,
+            pos,
+            0,
+            self.charset.get(TableChar::DownRight),
+            self.charset.get(TableChar::VerticalHorizontal),
+            self.charset.get(TableChar::VerticalLeft),
+        )
+    }
+
+    /// Top line of the table
+    pub fn bottom_line(&self, out: &mut dyn Write, pos: Goto) -> Result<()> {
+        self.horizontal_rule(
+            out,
+            pos,
+            0,
+            self.charset.get(TableChar::UpRight),
+            self.charset.get(TableChar::UpHorizontal),
+            self.charset.get(TableChar::UpLeft),
+        )
+    }
+
+    pub fn write_horizontal_header1<I, S>(
+        &self,
+        out: &mut dyn Write,
+        pos: Goto,
+        row: I,
+    ) -> Result<()>
     where
-        I: IntoIterator<Item = &'static str>,
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
     {
-        self.vertical_header.clear();
-        self.vertical_header
-            .extend(header.into_iter().map(|s| s.to_string()));
-        self.vertical_header_width = strings_max_len(self.vertical_header.iter(), 0);
-    }
-
-    pub fn clear_horizontal_header(&mut self) {
-        self.horizontal_header.clear();
-        self.horizontal_header_widths.clear();
-    }
-
-    pub fn append_horizontal_header<I>(&mut self, header: I)
-    where
-        I: Iterator<Item = String>,
-    {
-        let row = header
-            .enumerate()
-            .map(|(col_num, hdr)| {
-                let hdr_len = hdr.len();
-                if col_num >= self.horizontal_header_widths.len() {
-                    self.horizontal_header_widths.push(hdr_len);
-                } else {
-                    let width = self.horizontal_header_widths[col_num];
-                    if hdr_len > width {
-                        self.horizontal_header_widths[col_num] = hdr_len;
-                    }
-                }
-                hdr
-            })
-            .collect();
-        self.horizontal_header.push(row);
-    }
-
-    pub fn clear_columns(&mut self) {
-        self.columns.clear();
-    }
-
-    pub fn set_column<I>(&mut self, col_num: usize, values: I)
-    where
-        I: IntoIterator<Item = String>,
-    {
-        let column_count = self.columns.len();
-        match col_num.cmp(&column_count) {
-            cmp::Ordering::Equal => self.columns.push(values.into_iter().collect()),
-            cmp::Ordering::Less => self.columns[col_num] = values.into_iter().collect(),
-            _ => panic!("internal error"),
-        }
-    }
-
-    /// Calculate the column width, remove columns beyond the max width and truncate the last column if needed.
-    fn column_widths(&self, max_width: usize) -> Vec<usize> {
-        let mut column_widths: Vec<usize> = self
-            .columns
-            .iter()
-            .enumerate()
-            .skip(self.horizontal_offset)
-            .map(|(col_num, col)| {
-                strings_max_len(col.iter(), self.horizontal_header_widths[col_num])
-            })
-            .collect();
-        // total_width is the width of columns plus one char in between
-        let mut total_width = column_widths.iter().sum::<usize>() + column_widths.len() - 1;
-        while total_width > max_width {
-            if column_widths.is_empty() {
-                total_width = 0;
-            } else {
-                let last_width = *(column_widths.last().unwrap());
-                if total_width - last_width > max_width {
-                    column_widths.pop().unwrap();
-                    if column_widths.is_empty() {
-                        total_width = 0;
-                    } else {
-                        total_width -= last_width + 1;
-                    }
-                } else {
-                    *(column_widths.last_mut().unwrap()) -= total_width - max_width;
-                }
-            }
-        }
-        column_widths
-    }
-}
-
-impl Widget for TableWidget {
-    fn write(&self, out: &mut dyn Write, pos: Goto, size: Size) -> Result<()> {
-        let Goto(x, mut y) = pos;
-        let body_pos_x = x + self.vertical_header_width as u16;
-        let (width, height) = size;
-        let column_widths = self.column_widths(width as usize);
-
-        write!(out, "{}{}{}", pos, clear::CurrentLine, Goto(body_pos_x, y))?;
-
-        for header in &self.horizontal_header {
-            for (width, title) in column_widths
-                .iter()
-                .zip(header.iter())
-                .skip(self.horizontal_offset)
-            {
-                if *width > 0 {
-                    write!(out, " {:^width$}", title, width = *width)?;
-                }
-            }
-            y += 1;
-            write!(out, "{}", Goto(body_pos_x, y))?;
-        }
-        let empty_string = String::from("");
-        for (row_num, title) in self
-            .vertical_header
-            .iter()
-            .enumerate()
-            .skip(self.vertical_offset)
-            .take(cmp::min((height as usize) - 1, self.vertical_header.len()))
-        {
+        let offset = 1;
+        let pos = self.skip_columns(pos, offset);
+        write!(out, "{}", pos)?;
+        for (index, value) in row.into_iter().enumerate() {
+            let width = self.sizer.width_or_zero(index + offset);
             write!(
                 out,
-                "{}{:<width$}",
-                Goto(x, y),
-                title,
-                width = self.vertical_header_width
+                "{}{:^width$}",
+                self.vline,
+                value.as_ref(),
+                width = width
             )?;
-            for (col_num, width) in column_widths.iter().enumerate() {
-                if *width > 0 {
-                    write!(
-                        out,
-                        " {:>width$}",
-                        self.columns
-                            .get(col_num)
-                            .map_or("", |column| column.get(row_num).unwrap_or(&empty_string)),
-                        width = width
-                    )?;
-                }
-            }
+        }
+        write!(out, "{}", self.vline)?;
+        Ok(())
+    }
+
+    pub fn write_left_column<I, S>(&self, out: &mut dyn Write, pos: Goto, column: I) -> Result<()>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let Goto(x, mut y) = pos;
+        let width = self.sizer.width_or_zero(0);
+        for value in column.into_iter() {
+            write!(
+                out,
+                "{}{}{:<width$}",
+                Goto(x, y),
+                self.vline,
+                value.as_ref(),
+                width = width
+            )?;
+            y += 1;
+        }
+        Ok(())
+    }
+
+    pub fn write_middle_column<I, S>(
+        &self,
+        out: &mut dyn Write,
+        pos: Goto,
+        index: usize,
+        column: I,
+    ) -> Result<()>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let pos = self.skip_columns(pos, index);
+        let Goto(x, mut y) = pos;
+        let right = if index + 1 >= self.sizer.len() {
+            self.vline
+        } else {
+            ""
+        };
+        let width = self.sizer.width_or_zero(index);
+        for value in column.into_iter() {
+            write!(
+                out,
+                "{}{}{:>width$}{}",
+                Goto(x, y),
+                self.vline,
+                value.as_ref(),
+                right,
+                width = width
+            )?;
             y += 1;
         }
         Ok(())

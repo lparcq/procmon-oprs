@@ -14,8 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::cmp::{max, min};
-use std::iter::{IntoIterator, Iterator};
+use std::cmp::max;
+use std::iter::Iterator;
 use std::slice::Iter;
 
 /// Compute column widths of a table.
@@ -35,14 +35,6 @@ impl ColumnSizer {
             widths: Vec::new(),
             changed_from: None,
         }
-    }
-
-    /// Return the index of the leftmost column that has changed.
-    /// If the leftmost change is a column removal, the index is the number of columns.
-    pub fn freeze(&mut self) -> Option<usize> {
-        let changed_from = self.changed_from;
-        self.changed_from = None;
-        changed_from
     }
 
     /// Number of columns.
@@ -65,6 +57,20 @@ impl ColumnSizer {
         self.widths.iter()
     }
 
+    /// Return the index of the leftmost column that has changed.
+    /// If the leftmost change is a column removal, the index is the number of columns.
+    pub fn freeze(&mut self) -> Option<usize> {
+        let changed_from = self.changed_from;
+        self.changed_from = None;
+        changed_from
+    }
+
+    fn set_change(&mut self, index: usize) {
+        if self.changed_from.is_none() || index < self.changed_from.unwrap() {
+            self.changed_from = Some(index);
+        }
+    }
+
     /// Replace the width of a given column or insert it.
     pub fn overwrite(&mut self, index: usize, width: usize) {
         while index > self.widths.len() {
@@ -83,43 +89,27 @@ impl ColumnSizer {
             self.widths.push(width);
             changed = true;
         }
-        if changed && (self.changed_from.is_none() || index < self.changed_from.unwrap()) {
-            self.changed_from = Some(index);
+        if changed {
+            self.set_change(index);
         }
     }
 
     /// Set the minimun width of a given column or insert it.
     pub fn overwrite_min(&mut self, index: usize, width: usize) {
-        self.overwrite(index, min(width, self.width_or_zero(index)));
+        self.overwrite(index, max(width, self.width_or_zero(index)));
     }
 
-    /// Append the width of a given column.
-    pub fn push(&mut self, width: usize) {
-        self.overwrite(self.widths.len(), width);
+    /// Truncate the columns
+    pub fn truncate(&mut self, len: usize) {
+        self.widths.truncate(len);
+        self.set_change(self.widths.len());
     }
 
-    /// Remove the width of the last column.
-    pub fn pop(&mut self) {
-        if let Some(_) = self.widths.pop() {
-            self.changed_from = Some(self.widths.len());
-        }
-    }
-
-    /// Replace the width of a given column or insert it by calculating the largest string length.
-    pub fn overwrite_column<'a, I>(&mut self, index: usize, column: I)
+    pub fn max_width<S>(column: &[S]) -> usize
     where
-        I: IntoIterator<Item = &'a str>,
+        S: AsRef<str>,
     {
-        let width = column.into_iter().fold(0, |acc, s| max(acc, s.len()));
-        self.overwrite(index, width);
-    }
-
-    /// Append the width of a given column or insert it by calculating the largest string length.
-    pub fn push_column<'a, I>(&mut self, column: I)
-    where
-        I: IntoIterator<Item = &'a str>,
-    {
-        self.overwrite_column(self.widths.len(), column);
+        column.iter().fold(0, |acc, s| max(acc, s.as_ref().len()))
     }
 }
 
@@ -140,17 +130,17 @@ mod tests {
         let mut csizer = ColumnSizer::new(0);
         assert_eq!(0, csizer.len());
         // add the first column
-        csizer.push_column(COL1.iter().copied());
+        csizer.overwrite(0, ColumnSizer::max_width(&COL1));
         assert_eq!(1, csizer.len());
         assert_eq!(WIDTH1, csizer.width(0).unwrap());
         // add the third column
-        csizer.overwrite_column(2, COL3.iter().copied());
+        csizer.overwrite(2, ColumnSizer::max_width(&COL3));
         assert_eq!(3, csizer.len());
         assert_eq!(0, csizer.width(1).unwrap());
         assert_eq!(WIDTH3, csizer.width_or_zero(2));
         assert_eq!(Some(0), csizer.freeze());
         // add the second column
-        csizer.overwrite_column(1, COL2.iter().copied());
+        csizer.overwrite(1, ColumnSizer::max_width(&COL2));
         assert_eq!(3, csizer.len());
         assert_eq!(WIDTH2, csizer.width_or_zero(1));
         assert_eq!(Some(1), csizer.freeze());
@@ -164,21 +154,21 @@ mod tests {
     #[test]
     fn test_column_sizer_pop() {
         let mut csizer = ColumnSizer::new(0);
-        csizer.push_column(COL1.iter().copied());
-        csizer.push_column(COL2.iter().copied());
-        csizer.push_column(COL3.iter().copied());
+        csizer.overwrite(0, ColumnSizer::max_width(&COL1));
+        csizer.overwrite(1, ColumnSizer::max_width(&COL2));
+        csizer.overwrite(2, ColumnSizer::max_width(&COL3));
         assert_eq!(Some(0), csizer.freeze());
-        csizer.pop();
-        assert_eq!(Some(csizer.len()), csizer.freeze());
+        csizer.truncate(1);
+        assert_eq!(Some(1), csizer.freeze());
     }
 
     #[test]
     fn test_column_sizer_growing() {
         const ELASTICITY: usize = 1;
         let mut csizer = ColumnSizer::new(ELASTICITY);
-        csizer.push(10);
-        csizer.push(7);
-        csizer.push(9);
+        csizer.overwrite(0, 10);
+        csizer.overwrite(1, 7);
+        csizer.overwrite(2, 9);
         assert_eq!(7, csizer.width_or_zero(1));
         assert_eq!(Some(0), csizer.freeze());
         csizer.overwrite(1, 12);
@@ -190,9 +180,9 @@ mod tests {
     fn test_column_sizer_shrinking() {
         const ELASTICITY: usize = 2;
         let mut csizer = ColumnSizer::new(ELASTICITY);
-        csizer.push(10);
-        csizer.push(12);
-        csizer.push(9);
+        csizer.overwrite(0, 10);
+        csizer.overwrite(1, 12);
+        csizer.overwrite(2, 9);
         assert_eq!(12, csizer.width_or_zero(1));
         // No change if column shrink a little bit
         assert_eq!(Some(0), csizer.freeze());
@@ -201,5 +191,17 @@ mod tests {
         // Change if column shrink significantly
         csizer.overwrite(1, 9);
         assert_eq!(9, csizer.width_or_zero(1));
+    }
+
+    #[test]
+    fn test_column_sizer_min() {
+        const ELASTICITY: usize = 0;
+        let mut csizer = ColumnSizer::new(ELASTICITY);
+        csizer.overwrite(0, 10);
+        assert_eq!(10, csizer.width_or_zero(0));
+        csizer.overwrite_min(0, 7);
+        assert_eq!(10, csizer.width_or_zero(0));
+        csizer.overwrite_min(0, 12);
+        assert_eq!(12, csizer.width_or_zero(0));
     }
 }
