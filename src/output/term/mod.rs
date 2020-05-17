@@ -104,37 +104,63 @@ impl TerminalOutput {
         termion::is_tty(&io::stdin())
     }
 
-    fn header_side_symbol(&mut self, y: u16, symbol: &str) -> io::Result<()> {
-        write!(
-            self.screen,
-            "{}{}",
-            Goto(self.sizer.width_or_zero(0) as u16, y),
-            symbol
-        )
+    /// Calculate the number of visible columns without counting the left header.
+    /// Return also the number of columns that could be visible if there were
+    /// scrolled to the left.
+    fn number_of_visible_columns(&self, screen_width: u16) -> (usize, usize) {
+        let mut visible_columns = 0;
+        let (horizontal_offset, _) = self.table_offset;
+        let mut width = self.sizer.width_or_zero(0) + BORDER_WIDTH; // left header
+        let start_index = horizontal_offset + 1;
+        for index in start_index..self.sizer.len() {
+            width += self.sizer.width_or_zero(index) + BORDER_WIDTH;
+            if width >= screen_width as usize {
+                break;
+            }
+            visible_columns += 1;
+        }
+        let mut scrollable_columns = 0;
+        for offset in 0..start_index {
+            width += self.sizer.width_or_zero(start_index - offset) + BORDER_WIDTH;
+            if width >= screen_width as usize {
+                break;
+            }
+            scrollable_columns += 1; // column could be visible
+        }
+        (visible_columns, scrollable_columns)
     }
 
-    fn arrow_up(&mut self) -> io::Result<()> {
-        self.header_side_symbol(2, self.charset.get(TableChar::ArrowUp))
-    }
-
-    fn arrow_down(&mut self) -> io::Result<()> {
-        self.header_side_symbol(3, self.charset.get(TableChar::ArrowDown))
-    }
-
+    /// Scroll table left or up to fill available space.
+    /// Return if the table is scrollable on left, up, down, right
     fn recenter_table(
         &mut self,
-        _screen_width: usize,
+        screen_width: usize,
         screen_height: usize,
         table_height: usize,
-    ) -> bool {
-        let (horizontal_offset, mut vertical_offset) = self.table_offset;
+    ) -> (bool, bool, bool, bool) {
+        let (mut horizontal_offset, mut vertical_offset) = self.table_offset;
         if table_height < screen_height {
             vertical_offset = 0;
         } else if table_height - screen_height <= vertical_offset {
             vertical_offset = table_height - screen_height;
         }
+        let (mut visible_columns, scrollable_columns) =
+            self.number_of_visible_columns(screen_width as u16);
+        if horizontal_offset >= scrollable_columns {
+            horizontal_offset -= scrollable_columns;
+            visible_columns += scrollable_columns;
+        }
         self.table_offset = (horizontal_offset, vertical_offset);
-        vertical_offset > 0
+        let left_scrollable = horizontal_offset > 0;
+        let up_scrollable = vertical_offset > 0;
+        let down_scrollable = table_height - vertical_offset > screen_height;
+        let right_scrollable = (self.sizer.len() - 1) - horizontal_offset > visible_columns;
+        (
+            left_scrollable,
+            up_scrollable,
+            down_scrollable,
+            right_scrollable,
+        )
     }
 
     /// Calculate the columns width
@@ -158,6 +184,7 @@ impl TerminalOutput {
             .for_each(|(index, len)| self.sizer.overwrite_min(index + 1, len));
     }
 
+    /// Write the visible part of the table
     fn write_table<I1, I2, S>(
         &mut self,
         titles: I1,
@@ -165,38 +192,79 @@ impl TerminalOutput {
         columns: &[Vec<S>],
         screen_size: ScreenSize,
         table_height: u16,
-    ) -> io::Result<bool>
+    ) -> io::Result<()>
     where
         I1: IntoIterator<Item = S>,
         I2: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
         let (screen_width, screen_height) = screen_size;
+        let (visible_columns, _) = self.number_of_visible_columns(screen_width);
         let table = TableDrawer::new(
             &self.charset,
             &self.sizer,
             (screen_width, screen_height),
             self.table_offset,
+            visible_columns,
         );
+        let (horizontal_offset, vertical_offset) = self.table_offset;
         let screen = &mut self.screen;
         write!(*screen, "{}", clear::All)?;
         table.top_line(screen, Goto(1, 1))?;
-        table.write_horizontal_header1(screen, Goto(1, 2), titles)?;
-        table.write_horizontal_header1(screen, Goto(1, 3), subtitles)?;
+        table.write_horizontal_header(
+            screen,
+            Goto(1, 2),
+            titles.into_iter().skip(horizontal_offset),
+        )?;
+        table.write_horizontal_header(
+            screen,
+            Goto(1, 3),
+            subtitles.into_iter().skip(horizontal_offset),
+        )?;
         table.middle_line(screen, Goto(1, 4))?;
         let pos = Goto(1, 5);
-        let eos_y = table.write_left_column(screen, pos, self.metric_names.iter())?;
-        for (col_num, column) in columns.iter().enumerate() {
+        table.write_left_column(screen, pos, self.metric_names.iter())?;
+        for (col_num, column) in columns
+            .iter()
+            .skip(horizontal_offset)
+            .take(visible_columns)
+            .enumerate()
+        {
             table.write_middle_column(screen, pos, col_num + 1, column.iter())?;
         }
-        let (_, vertical_offset) = self.table_offset;
         let bottom_y = table_height - (vertical_offset as u16);
         if bottom_y <= screen_height {
             table.bottom_line(screen, Goto(1, bottom_y))?;
         }
-        Ok(eos_y)
+        Ok(())
     }
 
+    /// Write a symbol in a cross in the left top part
+    fn header_cross_symbol(&mut self, dx: u16, dy: u16, symbol: &str) -> io::Result<()> {
+        let x = (self.sizer.width_or_zero(0) as u16) - dx - 1;
+        let y = 3 - dy;
+        write!(self.screen, "{}{}", Goto(x, y), symbol)
+    }
+
+    /// Write arrows according of the part of the table that can be scrolled.
+    fn write_arrows(&mut self, scrollable: (bool, bool, bool, bool)) -> io::Result<()> {
+        let (left, up, down, right) = scrollable;
+        if left {
+            self.header_cross_symbol(2, 1, self.charset.get(TableChar::ArrowLeft))?;
+        }
+        if up {
+            self.header_cross_symbol(1, 2, self.charset.get(TableChar::ArrowUp))?;
+        }
+        if down {
+            self.header_cross_symbol(1, 0, self.charset.get(TableChar::ArrowDown))?;
+        }
+        if right {
+            self.header_cross_symbol(0, 1, self.charset.get(TableChar::ArrowRight))?;
+        }
+        Ok(())
+    }
+
+    /// Execute an interactive action.
     fn react(&mut self, action: Action) -> bool {
         match action {
             Action::Quit => return false,
@@ -210,6 +278,10 @@ impl TerminalOutput {
                     self.every = every;
                 }
             }
+            Action::ScrollRight => {
+                let (horizontal_offset, vertical_offset) = self.table_offset;
+                self.table_offset = (horizontal_offset + 1, vertical_offset);
+            }
             Action::ScrollUp => {
                 let (horizontal_offset, vertical_offset) = self.table_offset;
                 if vertical_offset > 0 {
@@ -219,6 +291,12 @@ impl TerminalOutput {
             Action::ScrollDown => {
                 let (horizontal_offset, vertical_offset) = self.table_offset;
                 self.table_offset = (horizontal_offset, vertical_offset + 1);
+            }
+            Action::ScrollLeft => {
+                let (horizontal_offset, vertical_offset) = self.table_offset;
+                if horizontal_offset > 0 {
+                    self.table_offset = (horizontal_offset - 1, vertical_offset);
+                }
             }
             _ => {}
         }
@@ -250,6 +328,7 @@ impl Output for TerminalOutput {
         Ok(())
     }
 
+    /// Show the cursor on exit.
     fn close(&mut self) -> anyhow::Result<()> {
         write!(self.screen, "{}", cursor::Show)?;
         self.screen.flush()?;
@@ -284,24 +363,19 @@ impl Output for TerminalOutput {
         // Draw table
         let table_height = self.metric_names.len() + HEADER_HEIGHT + 3 * BORDER_WIDTH;
         let (screen_width, screen_height) = terminal_size()?;
-        let vscrolled = self.recenter_table(
+        let scrollable = self.recenter_table(
             screen_width as usize,
             screen_height as usize - MENU_HEIGHT,
             table_height,
         );
-        let eos_y = self.write_table(
+        self.write_table(
             collector.lines().map(|line| line.get_name()),
             subtitles.iter().map(|s| s.as_str()),
             &columns,
             (screen_width, screen_height - (MENU_HEIGHT as u16)),
             table_height as u16,
         )?;
-        if eos_y {
-            self.arrow_down()?;
-        }
-        if vscrolled {
-            self.arrow_up()?;
-        }
+        self.write_arrows(scrollable)?;
         // Draw menu
         self.menu
             .write(&mut self.screen, Goto(1, screen_height), (screen_width, 1))?;
@@ -310,6 +384,7 @@ impl Output for TerminalOutput {
         Ok(())
     }
 
+    /// Wait for a user input or a timeout.
     fn pause(&mut self, remaining: Option<Duration>) -> anyhow::Result<PauseStatus> {
         let timeout = remaining.unwrap_or(self.every);
         let stop_watch = Instant::now();

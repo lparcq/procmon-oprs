@@ -35,9 +35,9 @@ pub enum TableChar {
     DownHorizontal,
     UpHorizontal,
     VerticalHorizontal,
-    _ArrowLeft,
+    ArrowLeft,
     ArrowUp,
-    _ArrowRight,
+    ArrowRight,
     ArrowDown,
 }
 
@@ -66,9 +66,9 @@ impl TableCharSet {
             TableChar::DownHorizontal => 8usize,
             TableChar::UpHorizontal => 9usize,
             TableChar::VerticalHorizontal => 10usize,
-            TableChar::_ArrowLeft => 11usize,
+            TableChar::ArrowLeft => 11usize,
             TableChar::ArrowUp => 12usize,
-            TableChar::_ArrowRight => 13usize,
+            TableChar::ArrowRight => 13usize,
             TableChar::ArrowDown => 14usize,
         }]
     }
