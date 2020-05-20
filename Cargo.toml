@@ -4,6 +4,7 @@ version = "0.3.0"
 authors = ["Laurent Pelecq <lpelecq+oprs@circoise.eu>"]
 description = "A process monitor for Linux"
 readme = "README.md"
+homepage = "https://github.com/lparcq/procmon-oprs"
 keywords = ["proc", "linux", "process", "monitor"]
 license = "GPL-3.0-or-later"
 edition = "2018"
