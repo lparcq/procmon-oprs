@@ -32,6 +32,7 @@ mod format;
 mod info;
 mod metrics;
 mod output;
+mod proc_dir;
 mod targets;
 mod utils;
 
