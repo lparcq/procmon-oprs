@@ -5,7 +5,7 @@ authors = ["Laurent Pelecq <lpelecq+oprs@circoise.eu>"]
 description = "A process monitor for Linux"
 readme = "README.md"
 keywords = ["proc", "linux", "process", "monitor"]
-license = "GPL3"
+license = "GPL-3.0-or-later"
 edition = "2018"
 
 [[bin]]

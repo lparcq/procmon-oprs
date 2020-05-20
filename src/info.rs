@@ -197,9 +197,13 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
                 MetricId::IoWriteCount => self.with_io(|io| io.syscw),
                 MetricId::IoWriteStorage => self.with_io(|io| io.write_bytes),
                 MetricId::MemVm => self.with_stat(|stat| stat.vsize),
-                MetricId::MemRss => {
-                    self.with_stat(|stat| if stat.rss < 0 { 0 } else { stat.rss as u64 })
-                }
+                MetricId::MemRss => self.with_system_stat(|stat, sc| {
+                    if stat.rss < 0 {
+                        0
+                    } else {
+                        (stat.rss as u64) * sc.page_size
+                    }
+                }),
                 MetricId::MemText => self.with_system_statm(|statm, sc| statm.text * sc.page_size),
                 MetricId::MemData => self.with_system_statm(|statm, sc| statm.data * sc.page_size),
                 MetricId::TimeElapsed => self.with_system_stat(ProcessInfo::elapsed_seconds) * 1000,
