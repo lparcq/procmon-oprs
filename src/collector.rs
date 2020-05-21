@@ -45,12 +45,21 @@ impl Sample {
         self.strings.iter()
     }
 
+    fn push_raw(&mut self, value: u64) {
+        assert!(self.values.is_empty());
+        self.values.push(value);
+    }
+
     fn push(&mut self, metric: &FormattedMetric, ag: Aggregation, value: u64) {
         self.values.push(value);
         self.strings.push(match ag {
             Aggregation::Ratio => crate::format::ratio(value),
             _ => (metric.format)(value),
         });
+    }
+
+    fn update_raw(&mut self, value: u64) {
+        self.values[0] = value;
     }
 
     fn update(&mut self, metric: &FormattedMetric, index: usize, ag: Aggregation, value: u64) {
@@ -62,7 +71,8 @@ impl Sample {
                 _ => (),
             }
             *last_value = value;
-            self.strings[index] = match ag {
+            let offset = self.values.len() - self.strings.len();
+            self.strings[index - offset] = match ag {
                 Aggregation::Ratio => crate::format::ratio(value),
                 _ => (metric.format)(value),
             };
@@ -143,13 +153,16 @@ impl Updater {
         let samples = metrics
             .iter()
             .zip(values.iter())
-            .map(|(metric, value)| {
+            .map(|(metric, value_ref)| {
                 let mut sample = Sample::new();
+                if !metric.aggregations.has(Aggregation::None) {
+                    sample.push_raw(*value_ref);
+                }
                 Aggregation::iter()
                     .filter(|ag| metric.aggregations.has(*ag))
                     .for_each(|ag| match ag {
                         Aggregation::None | Aggregation::Min | Aggregation::Max => {
-                            sample.push(metric, ag, *value)
+                            sample.push(metric, ag, *value_ref)
                         }
                         _ => sample.push(metric, ag, 0),
                     });
@@ -162,47 +175,42 @@ impl Updater {
         ProcessSamples::new(target_name, pid, samples)
     }
 
-    /// New value depending on the aggregation type
-    fn compute_value(
+    fn get_history(&self, age: usize, metric_index: usize) -> u64 {
+        self.system_history[self.system_history.len() - age]
+            .get(metric_index)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Percentage of the value on the system total
+    fn compute_ratio(
         &self,
         metric: &FormattedMetric,
         metric_index: usize,
-        ag: Aggregation,
         old_value: u64,
         new_value: u64,
     ) -> u64 {
-        if ag == Aggregation::Ratio {
-            const PERCENT_FACTOR: u64 = 1000;
-            let hlen = self.system_history.len();
-            match metric.id {
-                MetricId::TimeCpu | MetricId::TimeSystem | MetricId::TimeUser => {
-                    if hlen >= 2 {
-                        let system_delta = self.system_history[hlen - 1]
-                            .get(metric_index)
-                            .unwrap_or(&0)
-                            - self.system_history[hlen - 2]
-                                .get(metric_index)
-                                .unwrap_or(&0);
-                        if system_delta > 0 {
-                            let delta = new_value - old_value;
-                            delta * PERCENT_FACTOR / system_delta
-                        } else {
-                            0
-                        }
-                    } else {
-                        0
-                    }
+        const PERCENT_FACTOR: u64 = 1000;
+        let hlen = self.system_history.len();
+        match metric.id {
+            MetricId::TimeCpu | MetricId::TimeSystem | MetricId::TimeUser => {
+                if hlen >= 2 {
+                    let old_system_value = self.get_history(2, metric_index);
+                    let new_system_value = self.get_history(1, metric_index);
+                    let system_delta = new_system_value - old_system_value;
+                    let delta = new_value - old_value;
+                    delta * PERCENT_FACTOR / system_delta
+                } else {
+                    0
                 }
-                _ if hlen >= 1 => match self.system_history[hlen - 1].get(metric_index) {
-                    Some(system_value) if *system_value > 0 => {
-                        new_value * PERCENT_FACTOR / *system_value
-                    }
-                    _ => 0,
-                },
-                _ => panic!("internal error"),
             }
-        } else {
-            new_value
+            _ if hlen >= 1 => match self.system_history[hlen - 1].get(metric_index) {
+                Some(system_value) if *system_value > 0 => {
+                    new_value * PERCENT_FACTOR / *system_value
+                }
+                _ => 0,
+            },
+            _ => panic!("internal error"),
         }
     }
 
@@ -216,12 +224,21 @@ impl Updater {
         let mut metric_index = 0;
         for (metric, sample, value_ref) in izip!(metrics, proc.get_samples_mut(), values) {
             let old_value = sample.get_raw_value();
-            for (ag_index, ag) in Aggregation::iter()
-                .filter(|ag| metric.aggregations.has(*ag))
-                .enumerate()
-            {
-                let value = self.compute_value(metric, metric_index, ag, old_value, *value_ref);
+            let new_value = *value_ref;
+            let mut ag_index = 0;
+            if !metric.aggregations.has(Aggregation::None) {
+                sample.update_raw(new_value);
+                ag_index += 1;
+            }
+            for ag in Aggregation::iter().filter(|ag| metric.aggregations.has(*ag)) {
+                let value = match ag {
+                    Aggregation::Ratio => {
+                        self.compute_ratio(metric, metric_index, old_value, new_value)
+                    }
+                    _ => new_value,
+                };
                 sample.update(&metric, ag_index, ag, value);
+                ag_index += 1;
             }
             metric_index += 1;
         }

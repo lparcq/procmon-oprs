@@ -161,9 +161,9 @@ impl<'a> SystemInfo<'a> {
     pub fn extract_metrics(&mut self, metrics: Iter<FormattedMetric>) -> Vec<u64> {
         metrics
             .map(|metric| match metric.id {
-                MetricId::MemVm => {
-                    self.with_meminfo(|mi| mi.mem_total - mi.mem_available.unwrap_or(mi.mem_free))
-                }
+                MetricId::MemVm => self
+                    .with_meminfo(|mi| mi.mem_total - mi.mem_free + mi.swap_total - mi.swap_free),
+                MetricId::MemRss => self.with_meminfo(|mi| mi.mem_total - mi.mem_free),
                 MetricId::TimeElapsed => {
                     elapsed_seconds_since(self.system_conf.boot_time_seconds) * 1000
                 }

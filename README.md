@@ -23,6 +23,17 @@ file (lvmetad) and a process by name (bash), run:
 
 Without argument, the command prints the available metrics.
 
+By default, the raw figure is printed unless -raw is added: mem:rss-raw+min+max. 
+
+CPU usage
+---------
+
+Unlike other tools, the CPU usage of a process displayed by time:cpu+ratio is the percentage of the
+total CPU time. A process using all cores of a 4-cores system would be at 100%, not 400%.
+
+The CPU usage is (stime + utime) / ((user - guest) + (nice - guest_nice) + system + idle + iowait + irq + softirq)
+where stime and utime comes from /proc/PID/stat and user, … from /proc/stat.
+
 License
 -------
 
