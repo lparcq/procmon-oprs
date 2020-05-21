@@ -18,7 +18,7 @@
 
 use anyhow::Context;
 use libc::pid_t;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{self, BufRead, BufReader, Read};
 use std::path::Path;
 
 #[cfg(not(test))]
@@ -69,6 +69,17 @@ where
     None
 }
 
+/// Read the first line in a file including the separator.
+pub fn read_file_first_line<P>(path: P) -> io::Result<String>
+where
+    P: AsRef<Path>,
+{
+    let file = fs::File::open(path)?;
+    let mut value = String::new();
+    let _ = BufReader::new(file).read_line(&mut value)?;
+    Ok(value)
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -93,5 +104,12 @@ mod tests {
             Some(value) => assert_eq!("/a/b", value),
             None => panic!("no string"),
         }
+    }
+
+    #[test]
+    fn test_read_file_first_line() {
+        let path = PathBuf::from("content:line 1\nline 2\n");
+        let line = super::read_file_first_line(path).unwrap();
+        assert_eq!("line 1\n", line);
     }
 }

@@ -148,9 +148,9 @@ pub fn duration_human(millis: u64) -> String {
     }
 }
 
-// Percentage
+// Percentage multiplied by 1000 (i.e. 1000 = 100%)
 pub fn ratio(value: u64) -> String {
-    format!("{}%", value)
+    format!("{:.1}%", (value as f32) / 10.0)
 }
 
 #[cfg(test)]

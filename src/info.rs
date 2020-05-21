@@ -16,15 +16,21 @@
 
 // Extract metrics from procfs interface.
 
-use procfs::process::{Io, Process, Stat, StatM};
-use procfs::Meminfo;
+use procfs::{
+    process::{Io, Process, Stat, StatM},
+    KernelStats, Meminfo,
+};
+use std::path::PathBuf;
 use std::slice::Iter;
 use std::time::SystemTime;
 
-use crate::metrics::{FormattedMetric, MetricId};
+use crate::{
+    metrics::{FormattedMetric, MetricId},
+    utils::read_file_first_line,
+};
 
-// Elapsed time since a start time
-// Since the boot time is in seconds since the Epoch, no need to be more precise than the second.
+/// Elapsed time since a start time
+/// Since the boot time is in seconds since the Epoch, no need to be more precise than the second.
 fn elapsed_seconds_since(start_time: u64) -> u64 {
     match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
         Ok(duration) => {
@@ -39,6 +45,54 @@ fn elapsed_seconds_since(start_time: u64) -> u64 {
     }
 }
 
+/// System CPU time.  
+/// Replacement for procfs::KernelStats that returns time in number of seconds as f32 instead of ticks.
+struct CpuTime {
+    pub user: u64,
+    pub nice: u64,
+    pub system: u64,
+    pub idle: u64,
+    pub iowait: Option<u64>,
+    pub irq: Option<u64>,
+    pub softirq: Option<u64>,
+    pub steal: Option<u64>,
+    pub guest: Option<u64>,
+    pub guest_nice: Option<u64>,
+}
+
+macro_rules! parse_u64 {
+    ($lexer:expr) => {
+        $lexer.next().map(|s| s.parse::<u64>()).transpose()
+    };
+    ($lexer:expr, $msg:expr) => {
+        $lexer.next().expect($msg).parse::<u64>()
+    };
+}
+
+impl CpuTime {
+    fn new() -> anyhow::Result<CpuTime> {
+        let line = read_file_first_line(PathBuf::from("/proc/stat"))?;
+        CpuTime::parse(line.trim_end())
+    }
+
+    fn parse(line: &str) -> anyhow::Result<CpuTime> {
+        let mut lexer = line.split_whitespace();
+        assert!(lexer.next().expect("cannot parse /proc/stat") == "cpu");
+        Ok(CpuTime {
+            user: parse_u64!(lexer, "cannot parse user time in /proc/stat")?,
+            nice: parse_u64!(lexer, "cannot parse user nice time in /proc/stat")?,
+            system: parse_u64!(lexer, "cannot parse system time in /proc/stat")?,
+            idle: parse_u64!(lexer, "cannot parse idle in /proc/stat")?,
+            iowait: parse_u64!(lexer)?,
+            irq: parse_u64!(lexer)?,
+            softirq: parse_u64!(lexer)?,
+            steal: parse_u64!(lexer)?,
+            guest: parse_u64!(lexer)?,
+            guest_nice: parse_u64!(lexer)?,
+        })
+    }
+}
+
 /// System Configuration
 pub struct SystemConf {
     ticks_per_second: u64,
@@ -49,7 +103,7 @@ pub struct SystemConf {
 impl SystemConf {
     pub fn new() -> anyhow::Result<SystemConf> {
         let ticks_per_second = procfs::ticks_per_second()?;
-        let kstat = procfs::KernelStats::new()?;
+        let kstat = KernelStats::new()?;
         let page_size = procfs::page_size()?;
         Ok(SystemConf {
             ticks_per_second: ticks_per_second as u64,
@@ -68,6 +122,7 @@ impl SystemConf {
 /// System info
 pub struct SystemInfo<'a> {
     system_conf: &'a SystemConf,
+    cputime: Option<CpuTime>,
     meminfo: Option<Meminfo>,
 }
 
@@ -75,8 +130,19 @@ impl<'a> SystemInfo<'a> {
     pub fn new(system_conf: &'a SystemConf) -> SystemInfo<'a> {
         SystemInfo {
             system_conf,
+            cputime: None,
             meminfo: None,
         }
+    }
+
+    fn with_cputime<F>(&mut self, func: F) -> u64
+    where
+        F: Fn(&CpuTime) -> u64,
+    {
+        if self.cputime.is_none() {
+            self.cputime = Some(CpuTime::new().expect("cannot access /proc/stat"));
+        }
+        self.cputime.as_ref().map_or(0, |cputime| func(cputime))
     }
 
     fn with_meminfo<F>(&mut self, func: F) -> u64
@@ -101,6 +167,22 @@ impl<'a> SystemInfo<'a> {
                 MetricId::TimeElapsed => {
                     elapsed_seconds_since(self.system_conf.boot_time_seconds) * 1000
                 }
+                MetricId::TimeCpu => self.system_conf.ticks_to_millis(self.with_cputime(|ct| {
+                    (ct.user - ct.guest.unwrap_or(0))
+                        + (ct.nice - ct.guest_nice.unwrap_or(0))
+                        + ct.system
+                        + ct.idle
+                        + ct.iowait.unwrap_or(0)
+                        + ct.irq.unwrap_or(0)
+                        + ct.softirq.unwrap_or(0)
+                        + ct.steal.unwrap_or(0)
+                })),
+                MetricId::TimeSystem => self
+                    .system_conf
+                    .ticks_to_millis(self.with_cputime(|ct| ct.system)),
+                MetricId::TimeUser => self
+                    .system_conf
+                    .ticks_to_millis(self.with_cputime(|ct| ct.user)),
                 _ => 0,
             })
             .collect()
@@ -219,5 +301,25 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
                 MetricId::ThreadCount => self.with_stat(|stat| stat.num_threads as u64),
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    #[test]
+    fn test_cputime() {
+        let ct =
+            super::CpuTime::parse("cpu  236978 15 97017 6027274 1568 9614 7437 0 0 0").unwrap();
+        assert_eq!(236978, ct.user);
+        assert_eq!(15, ct.nice);
+        assert_eq!(97017, ct.system);
+        assert_eq!(6027274, ct.idle);
+        assert_eq!(Some(1568), ct.iowait);
+        assert_eq!(Some(9614), ct.irq);
+        assert_eq!(Some(7437), ct.softirq);
+        assert_eq!(Some(0), ct.steal);
+        assert_eq!(Some(0), ct.guest);
+        assert_eq!(Some(0), ct.guest_nice);
     }
 }

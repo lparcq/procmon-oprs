@@ -37,8 +37,8 @@ impl Sample {
         }
     }
 
-    pub fn _values(&self) -> Iter<u64> {
-        self.values.iter()
+    fn get_raw_value(&self) -> u64 {
+        self.values[0]
     }
 
     pub fn strings(&self) -> Iter<String> {
@@ -98,31 +98,46 @@ impl ProcessSamples {
         self.samples.iter()
     }
 
+    pub fn samples_as_slice(&self) -> &[Sample] {
+        self.samples.as_slice()
+    }
+
     fn get_samples_mut(&mut self) -> &mut Vec<Sample> {
         &mut self.samples
     }
 }
 
-/// Collect raw samples from target and returns computed values
-pub struct Collector<'a> {
-    metrics: &'a [FormattedMetric],
-    lines: VecDeque<ProcessSamples>,
-    last_line_pos: usize,
+/// Update values
+struct Updater {
+    system_history: VecDeque<Vec<u64>>,
 }
 
-impl<'a> Collector<'a> {
-    pub fn new(number_of_targets: usize, metrics: &'a [FormattedMetric]) -> Collector {
-        Collector {
-            metrics,
-            lines: VecDeque::with_capacity(number_of_targets),
-            last_line_pos: 0,
+impl Updater {
+    fn new() -> Updater {
+        Updater {
+            system_history: VecDeque::with_capacity(2),
         }
     }
 
+    /// Remove old values and push new values
+    fn push(&mut self, samples: &[Sample]) {
+        while self.system_history.len() > 1 {
+            let _ = self.system_history.pop_front();
+        }
+        self.system_history.push_back(
+            samples
+                .iter()
+                .map(|sample| sample.get_raw_value())
+                .collect(),
+        );
+    }
+
+    /// Computed values for a new process
     fn new_computed_values(
-        metrics: &[FormattedMetric],
+        &mut self,
         target_name: &str,
         pid: pid_t,
+        metrics: &[FormattedMetric],
         values: &[u64],
     ) -> ProcessSamples {
         let samples = metrics
@@ -140,22 +155,97 @@ impl<'a> Collector<'a> {
                     });
                 sample
             })
-            .collect();
+            .collect::<Vec<Sample>>();
+        if pid == 0 {
+            self.push(&samples); // new system values
+        }
         ProcessSamples::new(target_name, pid, samples)
     }
 
+    /// New value depending on the aggregation type
+    fn compute_value(
+        &self,
+        metric: &FormattedMetric,
+        metric_index: usize,
+        ag: Aggregation,
+        old_value: u64,
+        new_value: u64,
+    ) -> u64 {
+        if ag == Aggregation::Ratio {
+            const PERCENT_FACTOR: u64 = 1000;
+            let hlen = self.system_history.len();
+            match metric.id {
+                MetricId::TimeCpu | MetricId::TimeSystem | MetricId::TimeUser => {
+                    if hlen >= 2 {
+                        let system_delta = self.system_history[hlen - 1]
+                            .get(metric_index)
+                            .unwrap_or(&0)
+                            - self.system_history[hlen - 2]
+                                .get(metric_index)
+                                .unwrap_or(&0);
+                        if system_delta > 0 {
+                            let delta = new_value - old_value;
+                            delta * PERCENT_FACTOR / system_delta
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    }
+                }
+                _ if hlen >= 1 => match self.system_history[hlen - 1].get(metric_index) {
+                    Some(system_value) if *system_value > 0 => {
+                        new_value * PERCENT_FACTOR / *system_value
+                    }
+                    _ => 0,
+                },
+                _ => panic!("internal error"),
+            }
+        } else {
+            new_value
+        }
+    }
+
+    /// Update values for an existing process
     fn update_computed_values(
+        &mut self,
         metrics: &[FormattedMetric],
         proc: &mut ProcessSamples,
         values: &[u64],
     ) {
-        for (metric, sample, value) in izip!(metrics, proc.get_samples_mut(), values) {
-            Aggregation::iter()
+        let mut metric_index = 0;
+        for (metric, sample, value_ref) in izip!(metrics, proc.get_samples_mut(), values) {
+            let old_value = sample.get_raw_value();
+            for (ag_index, ag) in Aggregation::iter()
                 .filter(|ag| metric.aggregations.has(*ag))
                 .enumerate()
-                .for_each(|(index, ag)| {
-                    sample.update(&metric, index, ag, *value);
-                });
+            {
+                let value = self.compute_value(metric, metric_index, ag, old_value, *value_ref);
+                sample.update(&metric, ag_index, ag, value);
+            }
+            metric_index += 1;
+        }
+        if proc.get_pid() == 0 {
+            self.push(proc.samples_as_slice()); // new system values
+        }
+    }
+}
+
+/// Collect raw samples from target and returns computed values
+pub struct Collector<'a> {
+    metrics: &'a [FormattedMetric],
+    lines: VecDeque<ProcessSamples>,
+    updater: Updater,
+    last_line_pos: usize,
+}
+
+impl<'a> Collector<'a> {
+    pub fn new(number_of_targets: usize, metrics: &'a [FormattedMetric]) -> Collector {
+        Collector {
+            metrics,
+            lines: VecDeque::with_capacity(number_of_targets),
+            updater: Updater::new(),
+            last_line_pos: 0,
         }
     }
 
@@ -169,7 +259,8 @@ impl<'a> Collector<'a> {
         let line_pos = self.last_line_pos;
         while let Some(mut line) = self.lines.get_mut(line_pos) {
             if line.get_pid() == pid {
-                Collector::update_computed_values(self.metrics, &mut line, &values);
+                self.updater
+                    .update_computed_values(self.metrics, &mut line, &values);
                 self.last_line_pos += 1;
                 return;
             }
@@ -181,7 +272,9 @@ impl<'a> Collector<'a> {
                 break;
             }
         }
-        let line = Collector::new_computed_values(self.metrics, target_name, pid, &values);
+        let line = self
+            .updater
+            .new_computed_values(target_name, pid, self.metrics, &values);
         if line_pos >= self.lines.len() {
             self.lines.push_back(line);
         } else {

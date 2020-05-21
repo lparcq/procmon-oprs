@@ -285,6 +285,10 @@ impl<'a> TargetContainer<'a> {
         }
     }
 
+    pub fn has_system(&self) -> bool {
+        self.system.is_some()
+    }
+
     pub fn refresh(&mut self) -> bool {
         let mut changed = false;
         self.statics.iter_mut().for_each(|target| {
@@ -338,7 +342,11 @@ impl<'a> TargetContainer<'a> {
 
     pub fn push(&mut self, target_id: &TargetId) -> anyhow::Result<()> {
         match target_id {
-            TargetId::System => self.system = Some(SystemTarget::new(&self.system_conf)?),
+            TargetId::System => {
+                if self.system.is_none() {
+                    self.system = Some(SystemTarget::new(&self.system_conf)?)
+                }
+            }
             TargetId::Pid(pid) => self
                 .statics
                 .push(StaticTarget::new_existing(*pid, &self.system_conf)?),

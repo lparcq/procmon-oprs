@@ -20,12 +20,15 @@ use std::time::Duration;
 use strum::{EnumMessage, IntoEnumIterator};
 use thiserror::Error;
 
-use crate::cfg;
-use crate::collector::Collector;
-use crate::info::SystemConf;
-use crate::metrics::{FormattedMetric, MetricId, MetricNamesParser};
-use crate::output::{Output, PauseStatus, TerminalOutput, TextOutput};
-use crate::targets::{TargetContainer, TargetId};
+use crate::{
+    agg::Aggregation,
+    cfg,
+    collector::Collector,
+    info::SystemConf,
+    metrics::{FormattedMetric, MetricId, MetricNamesParser},
+    output::{Output, PauseStatus, TerminalOutput, TextOutput},
+    targets::{TargetContainer, TargetId},
+};
 
 arg_enum! {
     #[derive(Debug)]
@@ -97,6 +100,14 @@ impl Application {
 
         let mut targets = TargetContainer::new(system_conf);
         targets.push_all(target_ids)?;
+        if !targets.has_system()
+            && self
+                .metrics
+                .iter()
+                .any(|metric| metric.aggregations.has(Aggregation::Ratio))
+        {
+            targets.push(&TargetId::System)?; // ratio requires system
+        }
         let mut collector = Collector::new(target_ids.len(), &self.metrics);
 
         output.open(&collector)?;
