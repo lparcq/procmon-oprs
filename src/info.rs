@@ -17,9 +17,10 @@
 // Extract metrics from procfs interface.
 
 use procfs::{
-    process::{Io, Process, Stat, StatM},
-    KernelStats, Meminfo,
+    process::{FDTarget, Io, Process, Stat, StatM},
+    KernelStats, Meminfo, ProcResult,
 };
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::slice::Iter;
 use std::time::SystemTime;
@@ -189,6 +190,50 @@ impl<'a> SystemInfo<'a> {
     }
 }
 
+struct FdStats {
+    highest: u32,
+    total: usize,
+    kinds: BTreeMap<MetricId, usize>,
+}
+
+impl FdStats {
+    fn new(process: &Process) -> ProcResult<FdStats> {
+        let mut highest = 0;
+        let mut kinds = BTreeMap::new();
+        kinds.insert(MetricId::FdAnon, 0);
+        kinds.insert(MetricId::FdFile, 0);
+        kinds.insert(MetricId::FdMemFile, 0);
+        kinds.insert(MetricId::FdNet, 0);
+        kinds.insert(MetricId::FdOther, 0);
+        kinds.insert(MetricId::FdPipe, 0);
+        kinds.insert(MetricId::FdSocket, 0);
+
+        let fdinfos = process.fd()?;
+        fdinfos.iter().for_each(|fdinfo| {
+            if fdinfo.fd > highest {
+                highest = fdinfo.fd;
+            }
+            let key = match fdinfo.target {
+                FDTarget::AnonInode(_) => MetricId::FdAnon,
+                FDTarget::MemFD(_) => MetricId::FdMemFile,
+                FDTarget::Net(_) => MetricId::FdNet,
+                FDTarget::Other(_, _) => MetricId::FdOther,
+                FDTarget::Path(_) => MetricId::FdFile,
+                FDTarget::Pipe(_) => MetricId::FdPipe,
+                FDTarget::Socket(_) => MetricId::FdSocket,
+            };
+            if let Some(count_ref) = kinds.get_mut(&key) {
+                *count_ref += 1
+            }
+        });
+        Ok(FdStats {
+            highest,
+            total: fdinfos.len(),
+            kinds,
+        })
+    }
+}
+
 /// Extract metrics for a process
 ///
 /// Duration returned by the kernel are given in ticks. There are typically 100 ticks per
@@ -200,6 +245,7 @@ impl<'a> SystemInfo<'a> {
 pub struct ProcessInfo<'a, 'b> {
     process: &'a Process,
     system_conf: &'b SystemConf,
+    fdstats: Option<FdStats>,
     io: Option<Io>,
     stat: Option<Stat>,
     statm: Option<StatM>,
@@ -210,10 +256,21 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
         ProcessInfo {
             process,
             system_conf,
+            fdstats: None,
             io: None,
             stat: None,
             statm: None,
         }
+    }
+
+    fn with_fdstats<F>(&mut self, func: F) -> u64
+    where
+        F: Fn(&FdStats) -> u64,
+    {
+        if self.fdstats.is_none() {
+            self.fdstats = FdStats::new(&self.process).ok();
+        }
+        self.fdstats.as_ref().map_or(0, |stat| func(stat))
     }
 
     fn with_io<F>(&mut self, func: F) -> u64
@@ -272,6 +329,15 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
             .map(|metric| match metric.id {
                 MetricId::FaultMinor => self.with_stat(|stat| stat.minflt),
                 MetricId::FaultMajor => self.with_stat(|stat| stat.majflt),
+                MetricId::FdAll => self.with_fdstats(|stat| stat.total as u64),
+                MetricId::FdHigh => self.with_fdstats(|stat| stat.highest as u64),
+                MetricId::FdAnon
+                | MetricId::FdFile
+                | MetricId::FdMemFile
+                | MetricId::FdNet
+                | MetricId::FdOther
+                | MetricId::FdPipe
+                | MetricId::FdSocket => self.with_fdstats(|stat| stat.kinds[&metric.id] as u64),
                 MetricId::IoReadCall => self.with_io(|io| io.rchar),
                 MetricId::IoReadCount => self.with_io(|io| io.syscr),
                 MetricId::IoReadStorage => self.with_io(|io| io.read_bytes),

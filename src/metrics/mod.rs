@@ -47,6 +47,30 @@ pub enum MetricId {
     FaultMinor,
     #[strum(serialize = "fault:major", message = "page faults with disk access")]
     FaultMajor,
+    #[strum(serialize = "fd:all", message = "number of file descriptors")]
+    FdAll,
+    #[strum(serialize = "fd:high", message = "highest value of file descriptors")]
+    FdHigh,
+    #[strum(serialize = "fd:file", message = "number of files")]
+    FdFile,
+    #[strum(serialize = "fd:socket", message = "number of sockets")]
+    FdSocket,
+    #[strum(serialize = "fd:net", message = "number of net file descriptors")]
+    FdNet,
+    #[strum(serialize = "fd:pipe", message = "number of pipes")]
+    FdPipe,
+    #[strum(
+        serialize = "fd:anon",
+        message = "number of file decriptors without inode "
+    )]
+    FdAnon,
+    #[strum(serialize = "fd:mfd", message = "number of in-memory file")]
+    FdMemFile,
+    #[strum(
+        serialize = "fd:other",
+        message = "number of file descriptors in no other category"
+    )]
+    FdOther,
     #[strum(
         serialize = "io:read:call",
         message = "number of read operations with system calls such as read(2) and pread(2)"
@@ -142,6 +166,15 @@ impl cmp::Ord for MetricId {
             match id {
                 MetricId::FaultMinor => 0,
                 MetricId::FaultMajor => 1,
+                MetricId::FdAll => 17,
+                MetricId::FdHigh => 18,
+                MetricId::FdAnon => 19,
+                MetricId::FdFile => 20,
+                MetricId::FdMemFile => 21,
+                MetricId::FdNet => 22,
+                MetricId::FdOther => 23,
+                MetricId::FdPipe => 24,
+                MetricId::FdSocket => 25,
                 MetricId::IoReadCall => 2,
                 MetricId::IoReadCount => 3,
                 MetricId::IoReadStorage => 4,
