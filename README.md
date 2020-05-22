@@ -21,7 +21,9 @@ Basic usage
 To get the memory size, elapsed time and page fault of a process by PID (firefox), a process by pid
 file (lvmetad) and a process by name (bash), run:
 
-    oprs --human -p 12813 -f /run/lvmetad.pid -n bash -m mem:vm mem:rss+max time:elapsed fault:major
+    oprs --human -p 786 -f pulseaudio.pid -n dhclient -m mem:vm mem:rss+max time:elapsed fault:major
+
+![Screenshot](doc/screenshot.jpeg)
 
 Without argument, the command prints the available metrics.
 
