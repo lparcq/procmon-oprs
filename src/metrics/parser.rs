@@ -123,7 +123,7 @@ fn parse_formatter(input: &str) -> IResult<&str, Option<Formatter>> {
             "g" => format::giga,
             "t" => format::tera,
             "sz" => format::size,
-            "du" => format::duration_human,
+            "du" => format::human_milliseconds,
             _ => panic!("not reachable"),
         }),
     ))

@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use chrono::Local;
 use std::cmp::max;
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
@@ -34,7 +35,7 @@ use self::{
     table::TableDrawer,
 };
 use super::{Output, PauseStatus};
-use crate::{agg::Aggregation, collector::Collector};
+use crate::{agg::Aggregation, collector::Collector, format::human_duration};
 
 mod charset;
 mod input;
@@ -209,7 +210,6 @@ impl TerminalOutput {
         );
         let (horizontal_offset, vertical_offset) = self.table_offset;
         let screen = &mut self.screen;
-        write!(*screen, "{}", clear::All)?;
         table.top_line(screen, Goto(1, 1))?;
         table.write_horizontal_header(
             screen,
@@ -266,16 +266,22 @@ impl TerminalOutput {
 
     /// Execute an interactive action.
     fn react(&mut self, action: Action) -> bool {
+        const MAX_TIMEOUT_SECS: u64 = 24 * 3_600; // 24 hours
+        const MIN_TIMEOUT_MSECS: u128 = 1;
         match action {
             Action::Quit => return false,
             Action::MultiplyTimeout(factor) => {
-                if let Some(every) = self.every.checked_mul(factor as u32) {
-                    self.every = every;
+                if self.every.as_secs() * 2 < MAX_TIMEOUT_SECS {
+                    if let Some(every) = self.every.checked_mul(factor as u32) {
+                        self.every = every;
+                    }
                 }
             }
             Action::DivideTimeout(factor) => {
-                if let Some(every) = self.every.checked_div(factor as u32) {
-                    self.every = every;
+                if self.every.as_millis() / 2 > MIN_TIMEOUT_MSECS {
+                    if let Some(every) = self.every.checked_div(factor as u32) {
+                        self.every = every;
+                    }
                 }
             }
             Action::ScrollRight => {
@@ -360,6 +366,10 @@ impl Output for TerminalOutput {
         self.sizer.truncate(columns.len() + 1);
         let _ = self.sizer.freeze();
 
+        let now = Local::now().format("%X").to_string();
+        write!(self.screen, "{}{}{}", clear::All, Goto(2, 2), now)?;
+        write!(self.screen, "{}{}", Goto(2, 3), human_duration(self.every))?;
+
         // Draw table
         let table_height = self.metric_names.len() + HEADER_HEIGHT + 3 * BORDER_WIDTH;
         let (screen_width, screen_height) = terminal_size()?;
@@ -386,7 +396,10 @@ impl Output for TerminalOutput {
 
     /// Wait for a user input or a timeout.
     fn pause(&mut self, remaining: Option<Duration>) -> anyhow::Result<PauseStatus> {
-        let timeout = remaining.unwrap_or(self.every);
+        let timeout = match remaining {
+            Some(timeout) if timeout < self.every => timeout,
+            _ => self.every,
+        };
         let stop_watch = Instant::now();
         if let Some(evt) = self.events.receive_timeout(timeout)? {
             let action = self.menu.action(&evt);

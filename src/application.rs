@@ -127,6 +127,10 @@ impl Application {
                     break;
                 }
             }
+            match timeout {
+                Some(interval) => log::debug!("pause {}", interval.as_millis()),
+                None => log::debug!("pause default"),
+            };
             match output.pause(timeout)? {
                 PauseStatus::Stop => break,
                 PauseStatus::TimeOut => timeout = None,

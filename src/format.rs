@@ -14,6 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::time::Duration;
+
 pub type Formatter = fn(u64) -> String;
 
 const KIBI: f64 = 1024.0;
@@ -27,72 +29,72 @@ const MEGA_F: f64 = KILO_F * KILO_F;
 const GIGA_F: f64 = MEGA_F * KILO_F;
 const TERA_F: f64 = GIGA_F * KILO_F;
 
-// Value unchanged
+/// Value unchanged
 pub fn identity(value: u64) -> String {
     format!("{}", value)
 }
 
-// Value in Kibi
+/// Value in Kibi
 pub fn kibi(value: u64) -> String {
     format!("{:.1} Ki", (value as f64) / KIBI)
 }
 
-// Value in Mebi
+/// Value in Mebi
 pub fn mebi(value: u64) -> String {
     format!("{:.1} Mi", (value as f64) / MEBI)
 }
 
-// Value in Gibi
+/// Value in Gibi
 pub fn gibi(value: u64) -> String {
     format!("{:.1} Gi", (value as f64) / GIBI)
 }
 
-// Value in Tebi
+/// Value in Tebi
 pub fn tebi(value: u64) -> String {
     format!("{:.1} Ti", (value as f64) / TEBI)
 }
 
-// Float value in Kilo
+/// Float value in Kilo
 fn kilo_f(value: f64) -> String {
     format!("{:.1} K", value / KILO_F)
 }
 
-// Value in Kilo
+/// Value in Kilo
 pub fn kilo(value: u64) -> String {
     kilo_f(value as f64)
 }
 
-// Float value in Mega
+/// Float value in Mega
 pub fn mega_f(value: f64) -> String {
     format!("{:.1} M", value / MEGA_F)
 }
 
-// Value in Mega
+/// Value in Mega
 pub fn mega(value: u64) -> String {
     mega_f(value as f64)
 }
 
-// Float value in Giga
+/// Float value in Giga
 pub fn giga_f(value: f64) -> String {
     format!("{:.1} G", value / GIGA_F)
 }
 
-// Value in Giga
+/// Value in Giga
 pub fn giga(value: u64) -> String {
     giga_f(value as f64)
 }
 
-// Float value in Tera
+/// Float value in Tera
 pub fn tera_f(value: f64) -> String {
     format!("{:.1} T", value / TERA_F)
 }
 
-// Value in Tera
+/// Value in Tera
 pub fn tera(value: u64) -> String {
     tera_f(value as f64)
 }
 
-// Integer value formatted using the best unit in Kilo, Mega, Giga
+/// Integer value formatted using the best unit in Kilo, Mega, Giga
 pub fn size(value: u64) -> String {
     if value < KILO_U {
         identity(value)
@@ -110,15 +112,15 @@ pub fn size(value: u64) -> String {
     }
 }
 
-// Number of seconds and fraction of milliseconds
-pub fn duration_seconds(millis: u64) -> String {
+/// Number of seconds and fraction of milliseconds
+pub fn seconds(millis: u64) -> String {
     let seconds = millis / 1000;
     let remaining_millis = millis - seconds * 1000;
     format!("{}.{}", seconds, remaining_millis)
 }
 
-// Number of milliseconds formatted in hms.
-pub fn duration_human(millis: u64) -> String {
+/// Number of milliseconds formatted in human readable format (hms).
+pub fn human_milliseconds(millis: u64) -> String {
     if millis < 1000 {
         format!("{}ms", millis)
     } else {
@@ -148,7 +150,13 @@ pub fn duration_human(millis: u64) -> String {
     }
 }
 
-// Percentage multiplied by 1000 (i.e. 1000 = 100%)
+/// Duration in human readable format
+pub fn human_duration(duration: Duration) -> String {
+    let ms = duration.as_secs() * 1000 + duration.subsec_millis() as u64;
+    human_milliseconds(ms)
+}
+
+/// Percentage multiplied by 1000 (i.e. 1000 = 100%)
 pub fn ratio(value: u64) -> String {
     format!("{:.1}%", (value as f32) / 10.0)
 }
@@ -166,33 +174,33 @@ mod tests {
     }
 
     #[test]
-    fn test_duration_seconds() {
-        assert_eq!("59.150", super::duration_seconds(59150));
+    fn test_seconds() {
+        assert_eq!("59.150", super::seconds(59150));
     }
 
     #[test]
-    fn test_duration_human() {
+    fn test_human_milliseconds() {
         let seconds_millis = 1000;
         let minutes_millis = 60 * seconds_millis;
         let hour_millis = 60 * minutes_millis;
-        assert_eq!("59s", super::duration_human(59 * seconds_millis));
-        assert_eq!("59s 150ms", super::duration_human(59150));
-        assert_eq!("1m 15s", super::duration_human(75 * seconds_millis));
+        assert_eq!("59s", super::human_milliseconds(59 * seconds_millis));
+        assert_eq!("59s 150ms", super::human_milliseconds(59150));
+        assert_eq!("1m 15s", super::human_milliseconds(75 * seconds_millis));
         assert_eq!(
             "59m 59s",
-            super::duration_human(59 * minutes_millis + 59 * seconds_millis)
+            super::human_milliseconds(59 * minutes_millis + 59 * seconds_millis)
         );
         assert_eq!(
             "3h 5m 10s",
-            super::duration_human((((3 * 60) + 5) * 60 + 10) * 1000)
+            super::human_milliseconds((((3 * 60) + 5) * 60 + 10) * 1000)
         );
         assert_eq!(
             "3h 5m 10s",
-            super::duration_human(3 * hour_millis + 5 * minutes_millis + 10 * seconds_millis)
+            super::human_milliseconds(3 * hour_millis + 5 * minutes_millis + 10 * seconds_millis)
         );
         assert_eq!(
             "26h 5m",
-            super::duration_human(26 * hour_millis + 5 * minutes_millis + 10 * seconds_millis)
+            super::human_milliseconds(26 * hour_millis + 5 * minutes_millis + 10 * seconds_millis)
         );
     }
 }

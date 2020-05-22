@@ -106,8 +106,8 @@ impl MenuBar {
         match self.context {
             MenuContext::Root => match evt {
                 Event::Key(Key::Esc) => Action::Quit,
-                Event::Key(Key::PageUp) => Action::MultiplyTimeout(2),
-                Event::Key(Key::PageDown) => Action::DivideTimeout(2),
+                Event::Key(Key::PageUp) => Action::DivideTimeout(2),
+                Event::Key(Key::PageDown) => Action::MultiplyTimeout(2),
                 Event::Key(Key::Right) => Action::ScrollRight,
                 Event::Key(Key::Up) => Action::ScrollUp,
                 Event::Key(Key::Down) => Action::ScrollDown,

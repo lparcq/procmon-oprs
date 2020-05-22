@@ -325,7 +325,7 @@ impl MetricNamesParser {
             MetricId::TimeElapsed
             | MetricId::TimeCpu
             | MetricId::TimeSystem
-            | MetricId::TimeUser => format::duration_human,
+            | MetricId::TimeUser => format::human_milliseconds,
             _ => format::identity,
         }
     }
@@ -338,7 +338,7 @@ impl MetricNamesParser {
                 MetricId::TimeElapsed
                 | MetricId::TimeCpu
                 | MetricId::TimeSystem
-                | MetricId::TimeUser => format::duration_seconds,
+                | MetricId::TimeUser => format::seconds,
                 _ => format::identity,
             }
         }
