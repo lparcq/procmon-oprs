@@ -14,8 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::cmp;
-use std::collections::BTreeSet;
+use std::collections::HashSet;
+use std::hash::Hash;
 use std::result;
 use strum_macros::{EnumIter, EnumMessage, EnumString, IntoStaticStr};
 use thiserror::Error;
@@ -40,7 +40,17 @@ pub enum Error {
 
 /// Metrics that can be collected for a process
 #[derive(
-    Copy, Clone, Debug, PartialEq, Eq, PartialOrd, EnumIter, EnumString, EnumMessage, IntoStaticStr,
+    Copy,
+    Clone,
+    Debug,
+    Hash,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    EnumIter,
+    EnumString,
+    EnumMessage,
+    IntoStaticStr,
 )]
 pub enum MetricId {
     #[strum(serialize = "fault:minor", message = "page faults without disk access")]
@@ -101,6 +111,93 @@ pub enum MetricId {
         message = "number of bytes really sent to storage"
     )]
     IoWriteStorage,
+    #[strum(
+        serialize = "map:anon:count",
+        message = "number of anonymous mapped memory region"
+    )]
+    MapAnonCount,
+    #[strum(
+        serialize = "map:anon:size",
+        message = "total size of mapped heap region"
+    )]
+    MapAnonSize,
+    #[strum(serialize = "map:heap:count", message = "number of mapped heap region")]
+    MapHeapCount,
+    #[strum(
+        serialize = "map:heap:size",
+        message = "total size of memory mapped files"
+    )]
+    MapHeapSize,
+    #[strum(
+        serialize = "map:file:count",
+        message = "number of memory mapped files"
+    )]
+    MapFileCount,
+    #[strum(
+        serialize = "map:file:size",
+        message = "total size of mapped main stack"
+    )]
+    MapFileSize,
+    #[strum(
+        serialize = "map:stack:count",
+        message = "number of mapped main stack (always 1)"
+    )]
+    MapStackCount,
+    #[strum(
+        serialize = "map:stack:size",
+        message = "total size of mapped thread stacks"
+    )]
+    MapStackSize,
+    #[strum(
+        serialize = "map:tstack:count",
+        message = "number of mapped thread stacks"
+    )]
+    MapThreadStackCount,
+    #[strum(
+        serialize = "map:tstack:size",
+        message = "total size of mapped vdso region, see: vdso(7"
+    )]
+    MapThreadStackSize,
+    #[strum(
+        serialize = "map:vdso:count",
+        message = "number of mapped vdso region, see: vdso(7)"
+    )]
+    MapVdsoCount,
+    #[strum(
+        serialize = "map:vdso:size",
+        message = "total size of mapped vsyscall region, see: vdso(7"
+    )]
+    MapVdsoSize,
+    #[strum(
+        serialize = "map:vsyscall:count",
+        message = "number of mapped vsyscall region, see: vdso(7)"
+    )]
+    MapVsyscallCount,
+    #[strum(
+        serialize = "map:vsyscall:size",
+        message = "total size of mapped kernel variable, see: vdso(7"
+    )]
+    MapVsyscallSize,
+    #[strum(
+        serialize = "map:vvar:count",
+        message = "number of mapped kernel variable, see: vdso(7)"
+    )]
+    MapVvarCount,
+    #[strum(
+        serialize = "map:vvar:size",
+        message = "total size of other mapped memory region"
+    )]
+    MapVvarSize,
+    #[strum(
+        serialize = "map:other:count",
+        message = "total size of other mapped memory region"
+    )]
+    MapOtherCount,
+    #[strum(
+        serialize = "map:other:size",
+        message = "number of other mapped memory region"
+    )]
+    MapOtherSize,
     #[strum(serialize = "mem:rss", message = "resident set size")]
     MemRss,
     #[strum(serialize = "mem:vm", message = "virtual memory")]
@@ -143,6 +240,24 @@ impl MetricId {
             MetricId::IoWriteCall => Some("wr:call"),
             MetricId::IoWriteCount => Some("wr:cnt"),
             MetricId::IoWriteStorage => Some("wr:store"),
+            MetricId::MapAnonCount => Some("m:anon:cnt"),
+            MetricId::MapHeapCount => Some("m:heap:cnt"),
+            MetricId::MapFileCount => Some("m:file:cnt"),
+            MetricId::MapStackCount => Some("m:stk:cnt"),
+            MetricId::MapThreadStackCount => Some("m:tsck:cnt"),
+            MetricId::MapVdsoCount => Some("m:vdso:cnt"),
+            MetricId::MapVsyscallCount => Some("m:vsc:cnt"),
+            MetricId::MapVvarCount => Some("m:vv:cnt"),
+            MetricId::MapOtherCount => Some("m:oth:cnt"),
+            MetricId::MapAnonSize => Some("m:anon:sz"),
+            MetricId::MapHeapSize => Some("m:heap:sz"),
+            MetricId::MapFileSize => Some("m:file:sz"),
+            MetricId::MapStackSize => Some("m:stk:sz"),
+            MetricId::MapThreadStackSize => Some("m:tstk:sz"),
+            MetricId::MapVdsoSize => Some("m:vdso:sz"),
+            MetricId::MapVsyscallSize => Some("m:vsc:sz"),
+            MetricId::MapVvarSize => Some("m:vv:sz"),
+            MetricId::MapOtherSize => Some("m:oth:sz"),
             MetricId::TimeElapsed => Some("tm:elapsed"),
             MetricId::TimeCpu => Some("tm:cpu"),
             MetricId::TimeSystem => Some("tm:sys"),
@@ -156,43 +271,6 @@ impl MetricId {
                 Some(name)
             }
         }
-    }
-}
-
-/// Ordering for BTreeMap
-impl cmp::Ord for MetricId {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        fn ordinal(id: MetricId) -> u8 {
-            match id {
-                MetricId::FaultMinor => 0,
-                MetricId::FaultMajor => 1,
-                MetricId::FdAll => 17,
-                MetricId::FdHigh => 18,
-                MetricId::FdAnon => 19,
-                MetricId::FdFile => 20,
-                MetricId::FdMemFile => 21,
-                MetricId::FdNet => 22,
-                MetricId::FdOther => 23,
-                MetricId::FdPipe => 24,
-                MetricId::FdSocket => 25,
-                MetricId::IoReadCall => 2,
-                MetricId::IoReadCount => 3,
-                MetricId::IoReadStorage => 4,
-                MetricId::IoWriteCall => 5,
-                MetricId::IoWriteCount => 6,
-                MetricId::IoWriteStorage => 7,
-                MetricId::MemRss => 8,
-                MetricId::MemVm => 9,
-                MetricId::MemText => 10,
-                MetricId::MemData => 11,
-                MetricId::TimeElapsed => 12,
-                MetricId::TimeCpu => 13,
-                MetricId::TimeSystem => 14,
-                MetricId::TimeUser => 15,
-                MetricId::ThreadCount => 16,
-            }
-        }
-        ordinal(*self).cmp(&ordinal(*other))
     }
 }
 
@@ -226,20 +304,28 @@ impl MetricNamesParser {
     // Return the more readable format for a human
     fn get_human_format(id: MetricId) -> Formatter {
         match id {
-            MetricId::IoReadCall => format::size,
-            MetricId::IoReadCount => format::size,
-            MetricId::IoReadStorage => format::size,
-            MetricId::IoWriteCall => format::size,
-            MetricId::IoWriteCount => format::size,
-            MetricId::IoWriteStorage => format::size,
-            MetricId::MemRss => format::size,
-            MetricId::MemVm => format::size,
-            MetricId::MemText => format::size,
-            MetricId::MemData => format::size,
-            MetricId::TimeElapsed => format::duration_human,
-            MetricId::TimeCpu => format::duration_human,
-            MetricId::TimeSystem => format::duration_human,
-            MetricId::TimeUser => format::duration_human,
+            MetricId::IoReadCall
+            | MetricId::IoReadCount
+            | MetricId::IoReadStorage
+            | MetricId::IoWriteCall
+            | MetricId::IoWriteCount
+            | MetricId::IoWriteStorage => format::size,
+            MetricId::MapAnonSize
+            | MetricId::MapHeapSize
+            | MetricId::MapFileSize
+            | MetricId::MapStackSize
+            | MetricId::MapThreadStackSize
+            | MetricId::MapVdsoSize
+            | MetricId::MapVsyscallSize
+            | MetricId::MapVvarSize
+            | MetricId::MapOtherSize => format::size,
+            MetricId::MemRss | MetricId::MemVm | MetricId::MemText | MetricId::MemData => {
+                format::size
+            }
+            MetricId::TimeElapsed
+            | MetricId::TimeCpu
+            | MetricId::TimeSystem
+            | MetricId::TimeUser => format::duration_human,
             _ => format::identity,
         }
     }
@@ -261,7 +347,7 @@ impl MetricNamesParser {
     /// Return a list of metrics with aggregations and format
     pub fn parse(&mut self, names: &[String]) -> result::Result<Vec<FormattedMetric>, Error> {
         let mut metrics = Vec::new();
-        let mut parsed_ids = BTreeSet::new();
+        let mut parsed_ids = HashSet::new();
         names
             .iter()
             .try_for_each(|name| match parse_metric_spec(name.as_str()) {

@@ -17,10 +17,10 @@
 // Extract metrics from procfs interface.
 
 use procfs::{
-    process::{FDTarget, Io, Process, Stat, StatM},
+    process::{FDTarget, Io, MMapPath, Process, Stat, StatM},
     KernelStats, Meminfo, ProcResult,
 };
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::slice::Iter;
 use std::time::SystemTime;
@@ -46,6 +46,28 @@ fn elapsed_seconds_since(start_time: u64) -> u64 {
     }
 }
 
+/// Convert the next token to u64
+///
+/// Unconditionaly with an error message.
+/// ```
+/// let v = &["1"];
+/// let _ = parse_u64!(v.iter(), "cannot parse 1");
+/// ```
+///
+/// Parse into Option<u64> without error:
+/// ```
+/// let v = &["1"];
+/// parse_u64!(v.iter()).expect("cannot parse 1");
+/// ```
+macro_rules! parse_u64 {
+    ($iter:expr) => {
+        $iter.next().map(|s| s.parse::<u64>()).transpose()
+    };
+    ($iter:expr, $msg:expr) => {
+        $iter.next().expect($msg).parse::<u64>()
+    };
+}
+
 /// System CPU time.  
 /// Replacement for procfs::KernelStats that returns time in number of seconds as f32 instead of ticks.
 struct CpuTime {
@@ -59,15 +81,6 @@ struct CpuTime {
     pub steal: Option<u64>,
     pub guest: Option<u64>,
     pub guest_nice: Option<u64>,
-}
-
-macro_rules! parse_u64 {
-    ($lexer:expr) => {
-        $lexer.next().map(|s| s.parse::<u64>()).transpose()
-    };
-    ($lexer:expr, $msg:expr) => {
-        $lexer.next().expect($msg).parse::<u64>()
-    };
 }
 
 impl CpuTime {
@@ -190,16 +203,17 @@ impl<'a> SystemInfo<'a> {
     }
 }
 
+/// Statistics about file descriptors
 struct FdStats {
-    highest: u32,
-    total: usize,
-    kinds: BTreeMap<MetricId, usize>,
+    highest: u32,                    // Highest file descriptor value
+    total: usize,                    // Total number of file descriptors
+    kinds: HashMap<MetricId, usize>, // Number of file descriptors by type
 }
 
 impl FdStats {
     fn new(process: &Process) -> ProcResult<FdStats> {
         let mut highest = 0;
-        let mut kinds = BTreeMap::new();
+        let mut kinds = HashMap::new();
         kinds.insert(MetricId::FdAnon, 0);
         kinds.insert(MetricId::FdFile, 0);
         kinds.insert(MetricId::FdMemFile, 0);
@@ -234,6 +248,91 @@ impl FdStats {
     }
 }
 
+/// Convert MMapPath to a metric for count
+macro_rules! maps_count_key {
+    ($mpath:expr) => {
+        match $mpath {
+            MMapPath::Path(_) => MetricId::MapFileCount,
+            MMapPath::Heap => MetricId::MapHeapCount,
+            MMapPath::Stack => MetricId::MapStackCount,
+            MMapPath::TStack(_) => MetricId::MapThreadStackCount,
+            MMapPath::Vdso => MetricId::MapVdsoCount,
+            MMapPath::Vvar => MetricId::MapVvarCount,
+            MMapPath::Vsyscall => MetricId::MapVsyscallCount,
+            MMapPath::Anonymous => MetricId::MapAnonCount,
+            MMapPath::Other(_) => MetricId::MapOtherCount,
+        }
+    };
+}
+
+/// Convert MMapPath to a metric for size
+macro_rules! maps_size_key {
+    ($mpath:expr) => {
+        match $mpath {
+            MMapPath::Path(_) => MetricId::MapFileSize,
+            MMapPath::Heap => MetricId::MapHeapSize,
+            MMapPath::Stack => MetricId::MapStackSize,
+            MMapPath::TStack(_) => MetricId::MapThreadStackSize,
+            MMapPath::Vdso => MetricId::MapVdsoSize,
+            MMapPath::Vvar => MetricId::MapVvarSize,
+            MMapPath::Vsyscall => MetricId::MapVsyscallSize,
+            MMapPath::Anonymous => MetricId::MapAnonSize,
+            MMapPath::Other(_) => MetricId::MapOtherSize,
+        }
+    };
+}
+
+struct MapsStats {
+    counts: HashMap<MetricId, usize>,
+    sizes: HashMap<MetricId, u64>,
+}
+
+impl MapsStats {
+    fn new(process: &Process) -> ProcResult<MapsStats> {
+        static COUNT_METRICS: [MetricId; 9] = [
+            MetricId::MapAnonCount,
+            MetricId::MapHeapCount,
+            MetricId::MapFileCount,
+            MetricId::MapStackCount,
+            MetricId::MapThreadStackCount,
+            MetricId::MapVdsoCount,
+            MetricId::MapVsyscallCount,
+            MetricId::MapVvarCount,
+            MetricId::MapOtherCount,
+        ];
+        static SIZE_METRICS: [MetricId; 9] = [
+            MetricId::MapAnonSize,
+            MetricId::MapHeapSize,
+            MetricId::MapFileSize,
+            MetricId::MapStackSize,
+            MetricId::MapThreadStackSize,
+            MetricId::MapVdsoSize,
+            MetricId::MapVsyscallSize,
+            MetricId::MapVvarSize,
+            MetricId::MapOtherSize,
+        ];
+        let mut counts = HashMap::new();
+        COUNT_METRICS.iter().for_each(|id| {
+            let _ = counts.insert(*id, 0usize);
+        });
+        let mut sizes = HashMap::new();
+        SIZE_METRICS.iter().for_each(|id| {
+            let _ = sizes.insert(*id, 0u64);
+        });
+        let maps = process.maps()?;
+        maps.iter().for_each(|minfo| {
+            if let Some(count_ref) = counts.get_mut(&maps_count_key!(minfo.pathname)) {
+                *count_ref += 1;
+            }
+            if let Some(size_ref) = sizes.get_mut(&maps_size_key!(minfo.pathname)) {
+                let (start, end) = minfo.address;
+                *size_ref += end - start;
+            }
+        });
+        Ok(MapsStats { counts, sizes })
+    }
+}
+
 /// Extract metrics for a process
 ///
 /// Duration returned by the kernel are given in ticks. There are typically 100 ticks per
@@ -245,7 +344,8 @@ impl FdStats {
 pub struct ProcessInfo<'a, 'b> {
     process: &'a Process,
     system_conf: &'b SystemConf,
-    fdstats: Option<FdStats>,
+    fd_stats: Option<FdStats>,
+    maps_stats: Option<MapsStats>,
     io: Option<Io>,
     stat: Option<Stat>,
     statm: Option<StatM>,
@@ -256,21 +356,22 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
         ProcessInfo {
             process,
             system_conf,
-            fdstats: None,
+            fd_stats: None,
             io: None,
+            maps_stats: None,
             stat: None,
             statm: None,
         }
     }
 
-    fn with_fdstats<F>(&mut self, func: F) -> u64
+    fn with_fd_stats<F>(&mut self, func: F) -> u64
     where
         F: Fn(&FdStats) -> u64,
     {
-        if self.fdstats.is_none() {
-            self.fdstats = FdStats::new(&self.process).ok();
+        if self.fd_stats.is_none() {
+            self.fd_stats = FdStats::new(&self.process).ok();
         }
-        self.fdstats.as_ref().map_or(0, |stat| func(stat))
+        self.fd_stats.as_ref().map_or(0, |stat| func(stat))
     }
 
     fn with_io<F>(&mut self, func: F) -> u64
@@ -281,6 +382,16 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
             self.io = self.process.io().ok();
         }
         self.io.as_ref().map_or(0, |io| func(io))
+    }
+
+    fn with_maps_stats<F>(&mut self, func: F) -> u64
+    where
+        F: Fn(&MapsStats) -> u64,
+    {
+        if self.maps_stats.is_none() {
+            self.maps_stats = MapsStats::new(&self.process).ok();
+        }
+        self.maps_stats.as_ref().map_or(0, |stat| func(stat))
     }
 
     fn with_stat<F>(&mut self, func: F) -> u64
@@ -329,21 +440,41 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
             .map(|metric| match metric.id {
                 MetricId::FaultMinor => self.with_stat(|stat| stat.minflt),
                 MetricId::FaultMajor => self.with_stat(|stat| stat.majflt),
-                MetricId::FdAll => self.with_fdstats(|stat| stat.total as u64),
-                MetricId::FdHigh => self.with_fdstats(|stat| stat.highest as u64),
+                MetricId::FdAll => self.with_fd_stats(|stat| stat.total as u64),
+                MetricId::FdHigh => self.with_fd_stats(|stat| stat.highest as u64),
                 MetricId::FdAnon
                 | MetricId::FdFile
                 | MetricId::FdMemFile
                 | MetricId::FdNet
                 | MetricId::FdOther
                 | MetricId::FdPipe
-                | MetricId::FdSocket => self.with_fdstats(|stat| stat.kinds[&metric.id] as u64),
+                | MetricId::FdSocket => self.with_fd_stats(|stat| stat.kinds[&metric.id] as u64),
                 MetricId::IoReadCall => self.with_io(|io| io.rchar),
                 MetricId::IoReadCount => self.with_io(|io| io.syscr),
                 MetricId::IoReadStorage => self.with_io(|io| io.read_bytes),
                 MetricId::IoWriteCall => self.with_io(|io| io.wchar),
                 MetricId::IoWriteCount => self.with_io(|io| io.syscw),
                 MetricId::IoWriteStorage => self.with_io(|io| io.write_bytes),
+                MetricId::MapAnonCount
+                | MetricId::MapHeapCount
+                | MetricId::MapFileCount
+                | MetricId::MapStackCount
+                | MetricId::MapThreadStackCount
+                | MetricId::MapVdsoCount
+                | MetricId::MapVsyscallCount
+                | MetricId::MapVvarCount
+                | MetricId::MapOtherCount => {
+                    self.with_maps_stats(|stat| stat.counts[&metric.id] as u64)
+                }
+                MetricId::MapAnonSize
+                | MetricId::MapHeapSize
+                | MetricId::MapFileSize
+                | MetricId::MapStackSize
+                | MetricId::MapThreadStackSize
+                | MetricId::MapVdsoSize
+                | MetricId::MapVsyscallSize
+                | MetricId::MapVvarSize
+                | MetricId::MapOtherSize => self.with_maps_stats(|stat| stat.sizes[&metric.id]),
                 MetricId::MemVm => self.with_stat(|stat| stat.vsize),
                 MetricId::MemRss => self.with_system_stat(|stat, sc| {
                     if stat.rss < 0 {
