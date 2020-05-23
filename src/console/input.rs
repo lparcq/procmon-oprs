@@ -18,12 +18,16 @@ use std::io;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
-use termion::event;
 use termion::input::TermRead;
 
-type InputResult = io::Result<event::Event>;
+pub use termion::{
+    event::{Event, Key},
+    is_tty,
+};
 
-type InputOptionalResult = io::Result<Option<event::Event>>;
+type InputResult = io::Result<Event>;
+
+type InputOptionalResult = io::Result<Option<Event>>;
 
 pub struct EventChannel {
     chin: mpsc::Receiver<InputResult>,

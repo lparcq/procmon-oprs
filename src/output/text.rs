@@ -17,11 +17,12 @@
 use std::thread;
 use std::time::Duration;
 
-use super::{
-    term::{TableChar, TableCharSet},
-    {Output, PauseStatus},
+use super::{Output, PauseStatus};
+use crate::{
+    agg::Aggregation,
+    collector::Collector,
+    console::charset::{TableChar, TableCharSet},
 };
-use crate::{agg::Aggregation, collector::Collector};
 
 const REPEAT_HEADER_EVERY: u16 = 20;
 const RESIZE_IF_COLUMNS_SHRINK: usize = 2;

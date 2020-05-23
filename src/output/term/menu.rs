@@ -15,13 +15,9 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use std::io::{Result, Write};
-use termion::{
-    cursor::Goto,
-    event::{Event, Key},
-    style,
-};
 
-use super::{ScreenSize, Widget};
+use super::Widget;
+use crate::console::{Clip, Event, Key, Screen};
 
 macro_rules! write_len {
     ($out:expr, $s:expr, $len:expr) => {{
@@ -63,7 +59,7 @@ impl MenuBar {
 
     fn write_entry(
         &self,
-        out: &mut dyn Write,
+        screen: &mut Screen,
         key: Key,
         name: &str,
         separator: Option<&str>,
@@ -73,31 +69,36 @@ impl MenuBar {
             // Not sure to have space
             return Ok(());
         }
-        write!(out, "{}{}", separator.unwrap_or(""), style::Invert)?;
+
+        if let Some(separator) = separator {
+            write!(screen, "{}", separator)?;
+        }
+        screen.invert()?;
         let mut width = 0;
         match key {
-            Key::Backspace => write_len!(out, "⌫", width)?,
-            Key::Left => write_len!(out, "⇲", width)?,
-            Key::Right => write_len!(out, "⬅", width)?,
-            Key::Up => write_len!(out, "⬆", width)?,
-            Key::Down => write_len!(out, "⬇", width)?,
-            Key::Home => write_len!(out, "⇱", width)?,
-            Key::End => write_len!(out, "⇲", width)?,
-            Key::PageUp => write_len!(out, "PgUp", width)?,
-            Key::PageDown => write_len!(out, "PgDn", width)?,
-            Key::BackTab => write_len!(out, "⇤", width)?,
-            Key::Delete => write_len!(out, "⌧", width)?,
-            Key::Insert => write_len!(out, "Ins", width)?,
-            Key::F(num) => write_len!(out, format!("F{}", num), width)?,
-            Key::Char('\t') => write_len!(out, "⇥", width)?,
-            Key::Char(ch) => write_len!(out, format!("{}", ch), width)?,
-            Key::Alt(ch) => write_len!(out, format!("M-{}", ch), width)?,
-            Key::Ctrl(ch) => write_len!(out, format!("C-{}", ch), width)?,
-            Key::Null => write_len!(out, "\\0", width)?,
-            Key::Esc => write_len!(out, "Esc", width)?,
-            _ => write_len!(out, "?", width)?,
+            Key::Backspace => write_len!(screen, "⌫", width)?,
+            Key::Left => write_len!(screen, "⇲", width)?,
+            Key::Right => write_len!(screen, "⬅", width)?,
+            Key::Up => write_len!(screen, "⬆", width)?,
+            Key::Down => write_len!(screen, "⬇", width)?,
+            Key::Home => write_len!(screen, "⇱", width)?,
+            Key::End => write_len!(screen, "⇲", width)?,
+            Key::PageUp => write_len!(screen, "PgUp", width)?,
+            Key::PageDown => write_len!(screen, "PgDn", width)?,
+            Key::BackTab => write_len!(screen, "⇤", width)?,
+            Key::Delete => write_len!(screen, "⌧", width)?,
+            Key::Insert => write_len!(screen, "Ins", width)?,
+            Key::F(num) => write_len!(screen, format!("F{}", num), width)?,
+            Key::Char('\t') => write_len!(screen, "⇥", width)?,
+            Key::Char(ch) => write_len!(screen, format!("{}", ch), width)?,
+            Key::Alt(ch) => write_len!(screen, format!("M-{}", ch), width)?,
+            Key::Ctrl(ch) => write_len!(screen, format!("C-{}", ch), width)?,
+            Key::Null => write_len!(screen, "\\0", width)?,
+            Key::Esc => write_len!(screen, "Esc", width)?,
+            _ => write_len!(screen, "?", width)?,
         };
-        write!(out, "{} {}", style::Reset, name)?;
+        screen.reset()?;
+        write!(screen, " {}", name)?;
         *remaining_width -= (width + name.len() + 1) as u16;
         Ok(())
     }
@@ -119,15 +120,21 @@ impl MenuBar {
 }
 
 impl Widget for MenuBar {
-    fn write(&self, out: &mut dyn Write, pos: Goto, size: ScreenSize) -> Result<()> {
-        let (mut remaining_width, _) = size;
-        write!(out, "{}", pos,)?;
+    fn write(&self, screen: &mut Screen, clip: &Clip) -> Result<()> {
+        let Clip(x, y, mut remaining_width, _) = *clip;
+        screen.goto(x, y)?;
         match self.context {
             MenuContext::Root => {
-                self.write_entry(out, Key::Esc, "Quit", None, &mut remaining_width)?;
-                self.write_entry(out, Key::PageUp, "Faster", Some(" "), &mut remaining_width)?;
+                self.write_entry(screen, Key::Esc, "Quit", None, &mut remaining_width)?;
                 self.write_entry(
-                    out,
+                    screen,
+                    Key::PageUp,
+                    "Faster",
+                    Some(" "),
+                    &mut remaining_width,
+                )?;
+                self.write_entry(
+                    screen,
                     Key::PageDown,
                     "Slower",
                     Some(" "),

@@ -18,31 +18,29 @@ use chrono::Local;
 use std::cmp::max;
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
-use termion::{
-    clear,
-    cursor::{self, Goto},
-    raw::IntoRawMode,
-    screen::AlternateScreen,
-    terminal_size,
-};
 
 use super::{
-    charset::{TableChar, TableCharSet},
-    input::EventChannel,
     menu::{Action, MenuBar},
     sizer::ColumnSizer,
     table::TableDrawer,
-    Widget,
+    Widget, BORDER_WIDTH, ELASTICITY, HEADER_HEIGHT, MENU_HEIGHT,
 };
-use super::{ScreenSize, BORDER_WIDTH, ELASTICITY, HEADER_HEIGHT, MENU_HEIGHT};
-use crate::output::{Output, PauseStatus};
-use crate::{agg::Aggregation, collector::Collector, format::human_duration};
+use crate::{
+    agg::Aggregation,
+    collector::Collector,
+    console::{
+        charset::{TableChar, TableCharSet},
+        is_tty, Clip, EventChannel, Origin, Screen, Size,
+    },
+    format::human_duration,
+    output::{Output, PauseStatus},
+};
 
 /// Print on standard output as a table
 pub struct TerminalOutput {
     every: Duration,
     events: EventChannel,
-    screen: Box<dyn Write>,
+    screen: Screen,
     charset: TableCharSet,
     menu: MenuBar,
     sizer: ColumnSizer,
@@ -55,7 +53,7 @@ impl TerminalOutput {
         Ok(TerminalOutput {
             every,
             events: EventChannel::new(),
-            screen: Box::new(AlternateScreen::from(io::stdout().into_raw_mode()?)),
+            screen: Screen::new()?,
             charset: TableCharSet::new(),
             menu: MenuBar::new(),
             sizer: ColumnSizer::new(ELASTICITY),
@@ -65,7 +63,7 @@ impl TerminalOutput {
     }
 
     pub fn is_available() -> bool {
-        termion::is_tty(&io::stdin())
+        is_tty(&io::stdin())
     }
 
     /// Calculate the number of visible columns without counting the left header.
@@ -154,7 +152,7 @@ impl TerminalOutput {
         titles: I1,
         subtitles: I2,
         columns: &[Vec<S>],
-        screen_size: ScreenSize,
+        screen_size: Size,
         table_height: u16,
     ) -> io::Result<()>
     where
@@ -162,30 +160,32 @@ impl TerminalOutput {
         I2: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        let (screen_width, screen_height) = screen_size;
+        let Size(screen_width, screen_height) = screen_size;
         let (visible_columns, _) = self.number_of_visible_columns(screen_width);
         let table = TableDrawer::new(
             &self.charset,
             &self.sizer,
-            (screen_width, screen_height),
+            screen_size,
             self.table_offset,
             visible_columns,
         );
         let (horizontal_offset, vertical_offset) = self.table_offset;
         let screen = &mut self.screen;
-        table.top_line(screen, Goto(1, 1))?;
+        table.top_line(screen, Origin(1, 1))?;
         table.write_horizontal_header(
             screen,
-            Goto(1, 2),
+            Origin(1, 2),
             titles.into_iter().skip(horizontal_offset),
+            true,
         )?;
         table.write_horizontal_header(
             screen,
-            Goto(1, 3),
+            Origin(1, 3),
             subtitles.into_iter().skip(horizontal_offset),
+            false,
         )?;
-        table.middle_line(screen, Goto(1, 4))?;
-        let pos = Goto(1, 5);
+        table.middle_line(screen, Origin(1, 4))?;
+        let pos = Origin(1, 5);
         table.write_left_column(screen, pos, self.metric_names.iter())?;
         for (col_num, column) in columns
             .iter()
@@ -197,7 +197,7 @@ impl TerminalOutput {
         }
         let bottom_y = table_height - (vertical_offset as u16);
         if bottom_y <= screen_height {
-            table.bottom_line(screen, Goto(1, bottom_y))?;
+            table.bottom_line(screen, Origin(1, bottom_y))?;
         }
         Ok(())
     }
@@ -206,7 +206,8 @@ impl TerminalOutput {
     fn header_cross_symbol(&mut self, dx: u16, dy: u16, symbol: &str) -> io::Result<()> {
         let x = (self.sizer.width_or_zero(0) as u16) - dx - 1;
         let y = 3 - dy;
-        write!(self.screen, "{}{}", Goto(x, y), symbol)
+        self.screen.goto(x, y)?;
+        write!(self.screen, "{}", symbol)
     }
 
     /// Write arrows according of the part of the table that can be scrolled.
@@ -299,8 +300,7 @@ impl Output for TerminalOutput {
 
     /// Show the cursor on exit.
     fn close(&mut self) -> anyhow::Result<()> {
-        write!(self.screen, "{}", cursor::Show)?;
-        self.screen.flush()?;
+        self.screen.cursor_show()?.flush()?;
         Ok(())
     }
 
@@ -330,12 +330,14 @@ impl Output for TerminalOutput {
         let _ = self.sizer.freeze();
 
         let now = Local::now().format("%X").to_string();
-        write!(self.screen, "{}{}{}", clear::All, Goto(2, 2), now)?;
-        write!(self.screen, "{}{}", Goto(2, 3), human_duration(self.every))?;
+        self.screen.clear_all()?.goto(2, 2)?;
+        write!(self.screen, "{}", now)?;
+        self.screen.goto(2, 3)?;
+        write!(self.screen, "{}", human_duration(self.every))?;
 
         // Draw table
         let table_height = self.metric_names.len() + HEADER_HEIGHT + 3 * BORDER_WIDTH;
-        let (screen_width, screen_height) = terminal_size()?;
+        let Size(screen_width, screen_height) = self.screen.size()?;
         let scrollable = self.recenter_table(
             screen_width as usize,
             screen_height as usize - MENU_HEIGHT,
@@ -345,15 +347,14 @@ impl Output for TerminalOutput {
             collector.lines().map(|line| line.get_name()),
             subtitles.iter().map(|s| s.as_str()),
             &columns,
-            (screen_width, screen_height - (MENU_HEIGHT as u16)),
+            Size(screen_width, screen_height - (MENU_HEIGHT as u16)),
             table_height as u16,
         )?;
         self.write_arrows(scrollable)?;
         // Draw menu
         self.menu
-            .write(&mut self.screen, Goto(1, screen_height), (screen_width, 1))?;
-        write!(self.screen, "{}", cursor::Hide)?;
-        self.screen.flush()?;
+            .write(&mut self.screen, &Clip(1, screen_height, screen_width, 1))?;
+        self.screen.cursor_hide()?.flush()?;
         Ok(())
     }
 

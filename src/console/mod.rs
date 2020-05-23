@@ -14,22 +14,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::io;
+pub use self::input::{is_tty, Event, EventChannel, Key};
+pub use self::output::{Clip, Origin, Screen, Size};
 
-pub use self::output::TerminalOutput;
+pub mod charset;
 
-use crate::console::{Clip, Screen};
-
-mod menu;
+mod input;
 mod output;
-mod sizer;
-mod table;
-
-const ELASTICITY: usize = 2;
-const BORDER_WIDTH: usize = 1;
-const MENU_HEIGHT: usize = 1;
-const HEADER_HEIGHT: usize = 2;
-
-trait Widget {
-    fn write(&self, screen: &mut Screen, clip: &Clip) -> io::Result<()>;
-}

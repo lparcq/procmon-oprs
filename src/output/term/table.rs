@@ -16,12 +16,11 @@
 
 use std::io::{Result, Write};
 use std::iter::{IntoIterator, Iterator};
-use termion::cursor::Goto;
 
-use super::{
+use super::{sizer::ColumnSizer, BORDER_WIDTH};
+use crate::console::{
     charset::{TableChar, TableCharSet},
-    sizer::ColumnSizer,
-    ScreenSize, BORDER_WIDTH,
+    Origin, Screen, Size,
 };
 
 /// Crosstab widget
@@ -30,7 +29,7 @@ use super::{
 pub struct TableDrawer<'a, 'b> {
     charset: &'a TableCharSet,
     sizer: &'b ColumnSizer,
-    screen_size: ScreenSize,
+    screen_size: Size,
     offset: (usize, usize),
     visible_columns: usize,
     hrule: (usize, String),
@@ -41,7 +40,7 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
     pub fn new(
         charset: &'a TableCharSet,
         sizer: &'b ColumnSizer,
-        screen_size: ScreenSize,
+        screen_size: Size,
         offset: (usize, usize),
         visible_columns: usize,
     ) -> TableDrawer<'a, 'b> {
@@ -60,8 +59,8 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
         }
     }
 
-    fn skip_columns(&self, pos: Goto, count: usize) -> Goto {
-        let Goto(mut x, y) = pos;
+    fn skip_columns(&self, x: u16, count: usize) -> u16 {
+        let mut x = x;
         if count > 0 {
             x += (self.sizer.width_or_zero(0) + BORDER_WIDTH) as u16;
             let (horizontal_offset, _) = self.offset;
@@ -71,50 +70,50 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
                 x += (self.sizer.width_or_zero(index) + BORDER_WIDTH) as u16;
             }
         }
-        Goto(x, y)
+        x
     }
 
-    fn write_column_rule(&self, out: &mut dyn Write, index: usize, separator: &str) -> Result<()> {
+    fn write_column_rule(&self, screen: &mut Screen, index: usize, separator: &str) -> Result<()> {
         let (hlen, hrule) = &self.hrule;
         let column_width = self.sizer.width_or_zero(index);
         let hrule_len = column_width * hlen;
-        write!(out, "{}{}", separator, &hrule[0..hrule_len])
+        write!(screen, "{}{}", separator, &hrule[0..hrule_len])
     }
 
     fn horizontal_rule(
         &self,
-        out: &mut dyn Write,
-        pos: Goto,
+        screen: &mut Screen,
+        origin: Origin,
         start_col: usize,
         left: &'static str,
         middle: &'static str,
         right: &'static str,
     ) -> Result<()> {
         let (horizontal_offset, _) = self.offset;
-        write!(out, "{}", pos)?;
         let mut start_col = start_col;
         let mut separator = left;
         if start_col == 0 {
-            write!(out, "{}", pos)?;
-            self.write_column_rule(out, 0, separator)?;
+            screen.origin(origin)?;
+            self.write_column_rule(screen, 0, separator)?;
             start_col = 1;
             separator = middle;
         } else {
-            write!(out, "{}", self.skip_columns(pos, start_col))?;
+            let Origin(x, y) = origin;
+            screen.goto(self.skip_columns(x, start_col), y)?;
         }
         start_col += horizontal_offset;
         let column_count = start_col + self.visible_columns;
         for index in start_col..column_count {
-            self.write_column_rule(out, index, separator)?;
+            self.write_column_rule(screen, index, separator)?;
             separator = middle;
         }
-        write!(out, "{}", right)
+        write!(screen, "{}", right)
     }
 
     /// Top line of the table
-    pub fn top_line(&self, out: &mut dyn Write, pos: Goto) -> Result<()> {
+    pub fn top_line(&self, screen: &mut Screen, pos: Origin) -> Result<()> {
         self.horizontal_rule(
-            out,
+            screen,
             pos,
             1,
             self.charset.get(TableChar::DownRight),
@@ -124,9 +123,9 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
     }
 
     /// Line between the header and the body
-    pub fn middle_line(&self, out: &mut dyn Write, pos: Goto) -> Result<()> {
+    pub fn middle_line(&self, screen: &mut Screen, pos: Origin) -> Result<()> {
         self.horizontal_rule(
-            out,
+            screen,
             pos,
             0,
             self.charset.get(TableChar::DownRight),
@@ -136,9 +135,9 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
     }
 
     /// Top line of the table
-    pub fn bottom_line(&self, out: &mut dyn Write, pos: Goto) -> Result<()> {
+    pub fn bottom_line(&self, screen: &mut Screen, pos: Origin) -> Result<()> {
         self.horizontal_rule(
-            out,
+            screen,
             pos,
             0,
             self.charset.get(TableChar::UpRight),
@@ -149,9 +148,10 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
 
     pub fn write_horizontal_header<I, S>(
         &self,
-        out: &mut dyn Write,
-        pos: Goto,
+        screen: &mut Screen,
+        pos: Origin,
         row: I,
+        bold: bool,
     ) -> Result<()>
     where
         I: IntoIterator<Item = S>,
@@ -159,25 +159,26 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
     {
         let (horizontal_offset, _) = self.offset;
         let offset = horizontal_offset + 1;
-        let pos = self.skip_columns(pos, 1);
-        write!(out, "{}", pos)?;
+        let Origin(x, y) = pos;
+        screen.goto(self.skip_columns(x, 1), y)?;
         for (index, value) in row.into_iter().take(self.visible_columns).enumerate() {
             let width = self.sizer.width_or_zero(index + offset);
-            write!(
-                out,
-                "{}{:^width$}",
-                self.vline,
-                value.as_ref(),
-                width = width
-            )?;
+            write!(screen, "{}", self.vline)?;
+            if bold {
+                screen.bold()?;
+            }
+            write!(screen, "{:^width$}", value.as_ref(), width = width)?;
+            if bold {
+                screen.reset()?;
+            }
         }
-        write!(out, "{}", self.vline)
+        write!(screen, "{}", self.vline)
     }
 
     fn write_column<I, S, F>(
         &self,
-        out: &mut dyn Write,
-        pos: Goto,
+        screen: &mut Screen,
+        pos: Origin,
         index: usize,
         column: I,
         write_value: F,
@@ -185,11 +186,11 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
     where
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
-        F: Fn(&mut dyn Write, &str, usize) -> Result<()>,
+        F: Fn(&mut Screen, &str, usize) -> Result<()>,
     {
         let (horizontal_offset, vertical_offset) = self.offset;
-        let (_, screen_height) = self.screen_size;
-        let Goto(x, mut y) = pos;
+        let Size(_, screen_height) = self.screen_size;
+        let Origin(x, mut y) = pos;
         let right = if index + 1 >= self.visible_columns {
             self.vline
         } else {
@@ -200,29 +201,30 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
             if y > screen_height {
                 break;
             }
-            write!(out, "{}{}", Goto(x, y), self.vline)?;
-            write_value(out, value.as_ref(), width)?;
-            write!(out, "{}", right)?;
+            screen.goto(x, y)?;
+            write!(screen, "{}", self.vline)?;
+            write_value(screen, value.as_ref(), width)?;
+            write!(screen, "{}", right)?;
             y += 1;
         }
         Ok(())
     }
 
-    pub fn write_left_column<I, S>(&self, out: &mut dyn Write, pos: Goto, column: I) -> Result<()>
+    pub fn write_left_column<I, S>(&self, screen: &mut Screen, pos: Origin, column: I) -> Result<()>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        fn write_value(out: &mut dyn Write, value: &str, width: usize) -> Result<()> {
-            write!(out, "{:<width$}", value, width = width)
+        fn write_value(screen: &mut Screen, value: &str, width: usize) -> Result<()> {
+            write!(screen, "{:<width$}", value, width = width)
         }
-        self.write_column(out, pos, 0, column, write_value)
+        self.write_column(screen, pos, 0, column, write_value)
     }
 
     pub fn write_middle_column<I, S>(
         &self,
-        out: &mut dyn Write,
-        pos: Goto,
+        screen: &mut Screen,
+        pos: Origin,
         index: usize,
         column: I,
     ) -> Result<()>
@@ -230,10 +232,10 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        fn write_value(out: &mut dyn Write, value: &str, width: usize) -> Result<()> {
-            write!(out, "{:>width$}", value, width = width)
+        fn write_value(screen: &mut Screen, value: &str, width: usize) -> Result<()> {
+            write!(screen, "{:>width$}", value, width = width)
         }
-        let pos = self.skip_columns(pos, index);
-        self.write_column(out, pos, index, column, write_value)
+        let pos = pos.with_x(self.skip_columns(pos.get_x(), index));
+        self.write_column(screen, pos, index, column, write_value)
     }
 }
