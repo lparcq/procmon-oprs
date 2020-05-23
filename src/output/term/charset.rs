@@ -14,15 +14,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-/// Characters to draw a table
+/// Characters to draw a table in ASCII
 const ASCII_TABLE_CHARS_: [&str; 15] = [
     "-", "|", "+", "+", "+", "+", "+", "+", "-", "-", "+", "<", "^", ">", "v",
 ];
 
+/// Characters to draw a table in UTF8
 const UTF8_TABLE_CHARS__: [&str; 15] = [
     "─", "│", "┌", "┐", "└", "┘", "├", "┤", "┬", "┴", "┼", "←", "↑", "→", "↓",
 ];
 
+/// Character types to draw a table
 pub enum TableChar {
     Horizontal,
     Vertical,
@@ -41,17 +43,37 @@ pub enum TableChar {
     ArrowDown,
 }
 
+/// Check if charset is unicode
+pub fn is_unicode() -> bool {
+    if let Ok(lang) = std::env::var("LANG") {
+        match env_lang::to_struct(&lang) {
+            Ok(lang) => {
+                if let Some(charset) = lang.charset {
+                    charset.to_lowercase().starts_with("utf")
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    } else {
+        false
+    }
+}
+
+/// Characters to draw a table.
 pub struct TableCharSet(&'static [&'static str; 15]);
 
 impl TableCharSet {
     pub fn new() -> TableCharSet {
-        TableCharSet(if super::is_unicode() {
+        TableCharSet(if is_unicode() {
             &UTF8_TABLE_CHARS__
         } else {
             &ASCII_TABLE_CHARS_
         })
     }
 
+    /// Get a specific character to draw a table
     pub fn get(&self, kind: TableChar) -> &'static str {
         let TableCharSet(charset) = self;
         charset[match kind {
@@ -73,11 +95,13 @@ impl TableCharSet {
         }]
     }
 
+    /// Strings made of the same character multiple times.
     pub fn repeat(&self, kind: TableChar, count: usize) -> (usize, String) {
         let unit = self.get(kind);
         (unit.len(), unit.repeat(count))
     }
 
+    /// An horizontal line of a given size.
     pub fn horizontal_line(&self, count: usize) -> (usize, String) {
         self.repeat(TableChar::Horizontal, count)
     }
