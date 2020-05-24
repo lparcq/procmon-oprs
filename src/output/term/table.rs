@@ -169,7 +169,7 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
             }
             write!(screen, "{:^width$}", value.as_ref(), width = width)?;
             if bold {
-                screen.reset()?;
+                screen.style_reset()?;
             }
         }
         write!(screen, "{}", self.vline)
@@ -202,8 +202,15 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
                 break;
             }
             screen.goto(x, y)?;
+            let shade = (y % 2) == 0;
             write!(screen, "{}", self.vline)?;
+            if shade {
+                screen.bg_shade()?;
+            }
             write_value(screen, value.as_ref(), width)?;
+            if shade {
+                screen.bg_reset()?;
+            }
             write!(screen, "{}", right)?;
             y += 1;
         }

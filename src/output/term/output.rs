@@ -49,11 +49,11 @@ pub struct TerminalOutput {
 }
 
 impl TerminalOutput {
-    pub fn new(every: Duration) -> anyhow::Result<TerminalOutput> {
+    pub fn new(every: Duration, screen: Screen) -> anyhow::Result<TerminalOutput> {
         Ok(TerminalOutput {
             every,
             events: EventChannel::new(),
-            screen: Screen::new()?,
+            screen,
             charset: TableCharSet::new(),
             menu: MenuBar::new(),
             sizer: ColumnSizer::new(ELASTICITY),

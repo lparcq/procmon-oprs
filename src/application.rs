@@ -24,6 +24,7 @@ use crate::{
     agg::Aggregation,
     cfg,
     collector::Collector,
+    console::{BuiltinTheme, Screen},
     info::SystemConf,
     metrics::{FormattedMetric, MetricId, MetricNamesParser},
     output::{Output, PauseStatus, TerminalOutput, TextOutput},
@@ -60,6 +61,7 @@ pub struct Application {
     every: Duration,
     count: Option<u64>,
     metrics: Vec<FormattedMetric>,
+    theme: Option<BuiltinTheme>,
 }
 
 impl Application {
@@ -73,11 +75,16 @@ impl Application {
         let count = settings.get_int(cfg::KEY_COUNT).map(|c| c as u64).ok();
         let human_format = settings.get_bool(cfg::KEY_HUMAN_FORMAT).unwrap_or(false);
         let mut metrics_parser = MetricNamesParser::new(human_format);
-
+        let theme = settings.get_str(cfg::KEY_COLOR_THEME)?;
         Ok(Application {
             every,
             count,
             metrics: metrics_parser.parse(metric_names)?,
+            theme: match theme.as_str() {
+                "dark" => Some(BuiltinTheme::Dark),
+                "light" => Some(BuiltinTheme::Light),
+                _ => None,
+            },
         })
     }
 
@@ -93,7 +100,11 @@ impl Application {
             _ => false,
         };
         let mut output: Box<dyn Output> = if use_term {
-            Box::new(TerminalOutput::new(self.every)?)
+            let mut screen = Screen::new()?;
+            if let Some(theme) = &self.theme {
+                screen.set_theme(*theme);
+            }
+            Box::new(TerminalOutput::new(self.every, screen)?)
         } else {
             Box::new(TextOutput::new(self.every))
         };
@@ -127,10 +138,6 @@ impl Application {
                     break;
                 }
             }
-            match timeout {
-                Some(interval) => log::debug!("pause {}", interval.as_millis()),
-                None => log::debug!("pause default"),
-            };
             match output.pause(timeout)? {
                 PauseStatus::Stop => break,
                 PauseStatus::TimeOut => timeout = None,

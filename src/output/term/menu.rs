@@ -97,7 +97,7 @@ impl MenuBar {
             Key::Esc => write_len!(screen, "Esc", width)?,
             _ => write_len!(screen, "?", width)?,
         };
-        screen.reset()?;
+        screen.style_reset()?;
         write!(screen, " {}", name)?;
         *remaining_width -= (width + name.len() + 1) as u16;
         Ok(())
