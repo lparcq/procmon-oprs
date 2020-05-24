@@ -28,15 +28,15 @@ pub struct Origin(pub u16, pub u16);
 
 impl Origin {
     /// Get x
-    pub fn get_x(&self) -> u16 {
+    pub fn get_x(self) -> u16 {
         let Origin(x, _) = self;
-        *x
+        x
     }
 
     /// Replace x in origin
-    pub fn with_x(&self, x: u16) -> Origin {
+    pub fn with_x(self, x: u16) -> Origin {
         let Origin(_, y) = self;
-        Origin(x, *y)
+        Origin(x, y)
     }
 }
 
