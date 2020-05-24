@@ -17,6 +17,7 @@
 use std::path::{Path, PathBuf};
 
 pub const KEY_APP_NAME: &str = "name";
+pub const KEY_COLOR_THEME: &str = "theme";
 pub const KEY_COUNT: &str = "count";
 pub const KEY_EVERY: &str = "every";
 pub const KEY_HUMAN_FORMAT: &str = "human";

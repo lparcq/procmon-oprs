@@ -28,6 +28,7 @@ mod agg;
 mod application;
 mod cfg;
 mod collector;
+mod console;
 mod format;
 mod info;
 mod metrics;
@@ -87,6 +88,15 @@ arg_enum! {
     }
 }
 
+arg_enum! {
+    #[derive(Clone, Copy, Debug)]
+    enum ColorTheme {
+        None,
+        Light,
+        Dark,
+    }
+}
+
 #[derive(StructOpt, Debug)]
 #[structopt(name = APP_NAME, about = HELP_MESSAGE)]
 struct Opt {
@@ -100,6 +110,14 @@ struct Opt {
         default_value = "console"
     )]
     logging_target: LoggingTarget,
+
+    #[structopt(
+        short = "T",
+        long = "theme",
+        help = "color theme (none, light, black)",
+        default_value = "none"
+    )]
+    color_theme: ColorTheme,
 
     #[structopt(short, long, help = "number of loops")]
     count: Option<u64>,
@@ -198,6 +216,14 @@ fn start(dirs: &cfg::Directories, opt: Opt) -> anyhow::Result<()> {
     }
     settings.set(cfg::KEY_APP_NAME, APP_NAME)?;
     settings.set(cfg::KEY_EVERY, opt.every)?;
+    settings.set(
+        cfg::KEY_COLOR_THEME,
+        match opt.color_theme {
+            ColorTheme::None => "none",
+            ColorTheme::Light => "light",
+            ColorTheme::Dark => "dark",
+        },
+    )?;
     cfg::provide(&mut settings, cfg::KEY_HUMAN_FORMAT, opt.human_format)?;
     if let Some(count) = opt.count {
         settings.set(cfg::KEY_COUNT, count as i64)?;
