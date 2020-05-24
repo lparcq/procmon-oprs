@@ -28,6 +28,7 @@ mod agg;
 mod application;
 mod cfg;
 mod collector;
+mod console;
 mod format;
 mod info;
 mod metrics;
