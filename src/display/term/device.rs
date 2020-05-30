@@ -32,12 +32,12 @@ use crate::{
         charset::{TableChar, TableCharSet},
         is_tty, Clip, EventChannel, Origin, Screen, Size,
     },
+    display::{DisplayDevice, PauseStatus},
     format::human_duration,
-    output::{Output, PauseStatus},
 };
 
 /// Print on standard output as a table
-pub struct TerminalOutput {
+pub struct TerminalDevice {
     every: Duration,
     events: EventChannel,
     screen: Screen,
@@ -48,9 +48,9 @@ pub struct TerminalOutput {
     metric_names: Vec<String>,
 }
 
-impl TerminalOutput {
-    pub fn new(every: Duration, screen: Screen) -> anyhow::Result<TerminalOutput> {
-        Ok(TerminalOutput {
+impl TerminalDevice {
+    pub fn new(every: Duration, screen: Screen) -> anyhow::Result<TerminalDevice> {
+        Ok(TerminalDevice {
             every,
             events: EventChannel::new(),
             screen,
@@ -274,7 +274,7 @@ impl TerminalOutput {
     }
 }
 
-impl Output for TerminalOutput {
+impl DisplayDevice for TerminalDevice {
     fn open(&mut self, collector: &Collector) -> anyhow::Result<()> {
         let mut last_id = None;
         collector.for_each_computed_metric(|id, ag| {

@@ -29,10 +29,10 @@ mod application;
 mod cfg;
 mod collector;
 mod console;
+mod display;
 mod format;
 mod info;
 mod metrics;
-mod output;
 mod proc_dir;
 mod targets;
 mod utils;
@@ -40,7 +40,7 @@ mod utils;
 #[cfg(test)]
 mod mocks;
 
-use application::{Application, OutputType};
+use application::{Application, DisplayMode};
 use targets::TargetId;
 
 const APP_NAME: &str = "oprs";
@@ -97,6 +97,8 @@ arg_enum! {
     }
 }
 
+const DEFAULT_DELAY: f64 = 5.0;
+
 #[derive(StructOpt, Debug)]
 #[structopt(name = APP_NAME, about = HELP_MESSAGE)]
 struct Opt {
@@ -117,13 +119,8 @@ struct Opt {
     #[structopt(short, long, help = "number of loops")]
     count: Option<u64>,
 
-    #[structopt(
-        short = "y",
-        long,
-        help = "delay between two samples",
-        default_value = "5"
-    )]
-    every: f64,
+    #[structopt(short = "y", long, help = "delay between two samples (default: 5.0)")]
+    every: Option<f64>,
 
     #[structopt(short = "H", long = "human", help = "use human-readable units")]
     human_format: bool,
@@ -146,8 +143,8 @@ struct Opt {
     #[structopt(short = "m", long = "metric", help = "metric to monitor.")]
     metrics: Vec<String>,
 
-    #[structopt(short, long, possible_values = &OutputType::variants(), case_insensitive = true, default_value = "any")]
-    output: OutputType,
+    #[structopt(short, long, possible_values = &DisplayMode::variants(), case_insensitive = true, default_value = "any")]
+    display_mode: DisplayMode,
 }
 
 //
@@ -206,11 +203,18 @@ fn configure_logging(dirs: &cfg::Directories, verbosity: u8, target: LoggingTarg
 fn start(dirs: &cfg::Directories, opt: Opt) -> anyhow::Result<()> {
     // Configuration
     let mut settings = config::Config::default();
+    settings.set_default(cfg::KEY_EVERY, DEFAULT_DELAY)?;
     if let Ok(config_reader) = cfg::Reader::new(&dirs) {
         config_reader.read_config_file(&mut settings, "settings")?;
     }
     settings.set(cfg::KEY_APP_NAME, APP_NAME)?;
-    settings.set(cfg::KEY_EVERY, opt.every)?;
+    // Override config file with command line
+    if let Some(every) = opt.every {
+        settings.set(cfg::KEY_EVERY, every)?;
+    }
+    if let Some(count) = opt.count {
+        settings.set(cfg::KEY_COUNT, count as i64)?;
+    }
     if let Some(theme) = opt.color_theme {
         settings.set(
             cfg::KEY_COLOR_THEME,
@@ -221,11 +225,10 @@ fn start(dirs: &cfg::Directories, opt: Opt) -> anyhow::Result<()> {
             },
         )?;
     };
+    // Set boolean only if not already configured
     cfg::provide(&mut settings, cfg::KEY_HUMAN_FORMAT, opt.human_format)?;
-    if let Some(count) = opt.count {
-        settings.set(cfg::KEY_COUNT, count as i64)?;
-    }
 
+    // Add targets
     let mut target_ids = Vec::new();
     if opt.system {
         target_ids.push(TargetId::System);
@@ -249,7 +252,8 @@ fn start(dirs: &cfg::Directories, opt: Opt) -> anyhow::Result<()> {
         let mut app = Application::new(&settings, &opt.metrics)?;
         configure_logging(&dirs, opt.verbose + 1, opt.logging_target);
         let system_conf = info::SystemConf::new()?;
-        if let Err(err) = app.run(opt.output, &target_ids, &system_conf) {
+        let display_mode = Application::check_display_mode(opt.display_mode)?;
+        if let Err(err) = app.run(display_mode, &target_ids, &system_conf) {
             error!("{}", err);
         }
     }

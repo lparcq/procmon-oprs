@@ -17,7 +17,7 @@
 use std::thread;
 use std::time::Duration;
 
-use super::{Output, PauseStatus};
+use super::{DisplayDevice, PauseStatus};
 use crate::{
     agg::Aggregation,
     collector::Collector,
@@ -243,21 +243,21 @@ impl Table {
 }
 
 /// Print on standard output as a table
-pub struct TextOutput {
+pub struct TextDevice {
     every: Duration,
     table: Table,
 }
 
-impl TextOutput {
-    pub fn new(every: Duration) -> TextOutput {
-        TextOutput {
+impl TextDevice {
+    pub fn new(every: Duration) -> TextDevice {
+        TextDevice {
             every,
             table: Table::new(),
         }
     }
 }
 
-impl Output for TextOutput {
+impl DisplayDevice for TextDevice {
     fn open(&mut self, collector: &Collector) -> anyhow::Result<()> {
         let mut last_id = None;
         collector.for_each_computed_metric(|id, ag| {

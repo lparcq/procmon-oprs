@@ -16,6 +16,7 @@
 
 use clap::arg_enum;
 use log::info;
+use std::thread;
 use std::time::Duration;
 use strum::{EnumMessage, IntoEnumIterator};
 use thiserror::Error;
@@ -25,15 +26,16 @@ use crate::{
     cfg,
     collector::Collector,
     console::{BuiltinTheme, Screen},
+    display::{DisplayDevice, PauseStatus, TerminalDevice, TextDevice},
     info::SystemConf,
     metrics::{FormattedMetric, MetricId, MetricNamesParser},
-    output::{Output, PauseStatus, TerminalOutput, TextOutput},
     targets::{TargetContainer, TargetId},
 };
 
 arg_enum! {
     #[derive(Debug)]
-    pub enum OutputType {
+    pub enum DisplayMode {
+        None,
         Any,
         Text,
         Term,
@@ -41,9 +43,11 @@ arg_enum! {
 }
 
 #[derive(Error, Debug)]
-enum Error {
+pub enum Error {
     #[error("{0}: invalid parameter value")]
     InvalidParameter(&'static str),
+    #[error("terminal not available")]
+    TerminalNotAvailable,
 }
 
 pub fn list_metrics() {
@@ -88,25 +92,45 @@ impl Application {
         })
     }
 
+    /// Return the best display mode for any and check if mode is available otherwise.
+    pub fn check_display_mode(display_mode: DisplayMode) -> Result<DisplayMode, Error> {
+        match display_mode {
+            DisplayMode::Any => {
+                if TerminalDevice::is_available() {
+                    Ok(DisplayMode::Term)
+                } else {
+                    Ok(DisplayMode::Text)
+                }
+            }
+            DisplayMode::Term => {
+                if TerminalDevice::is_available() {
+                    Ok(DisplayMode::Term)
+                } else {
+                    Err(Error::TerminalNotAvailable)
+                }
+            }
+            _ => Ok(display_mode),
+        }
+    }
+
     pub fn run<'a>(
         &mut self,
-        output_type: OutputType,
+        display_mode: DisplayMode,
         target_ids: &[TargetId],
         system_conf: &'a SystemConf,
     ) -> anyhow::Result<()> {
         info!("starting");
-        let use_term = match output_type {
-            OutputType::Any | OutputType::Term => TerminalOutput::is_available(),
-            _ => false,
-        };
-        let mut output: Box<dyn Output> = if use_term {
-            let mut screen = Screen::new()?;
-            if let Some(theme) = &self.theme {
-                screen.set_theme(*theme);
+        let mut device: Option<Box<dyn DisplayDevice>> = match display_mode {
+            DisplayMode::Any => panic!("internal error: must use check_display_mode first"),
+            DisplayMode::Term => {
+                let mut screen = Screen::new()?;
+                if let Some(theme) = &self.theme {
+                    screen.set_theme(*theme);
+                }
+                Some(Box::new(TerminalDevice::new(self.every, screen)?))
             }
-            Box::new(TerminalOutput::new(self.every, screen)?)
-        } else {
-            Box::new(TextOutput::new(self.every))
+            DisplayMode::Text => Some(Box::new(TextDevice::new(self.every))),
+            DisplayMode::None => None,
         };
 
         let mut targets = TargetContainer::new(system_conf);
@@ -121,7 +145,9 @@ impl Application {
         }
         let mut collector = Collector::new(target_ids.len(), &self.metrics);
 
-        output.open(&collector)?;
+        if let Some(ref mut device) = device {
+            device.open(&collector)?;
+        }
 
         let mut loop_number: u64 = 0;
         let mut timeout: Option<Duration> = None;
@@ -130,7 +156,9 @@ impl Application {
             if timeout.is_none() {
                 targets.collect(&mut collector);
             }
-            output.render(&collector, targets_updated)?;
+            if let Some(ref mut device) = device {
+                device.render(&collector, targets_updated)?;
+            }
 
             if let Some(count) = self.count {
                 loop_number += 1;
@@ -138,14 +166,20 @@ impl Application {
                     break;
                 }
             }
-            match output.pause(timeout)? {
-                PauseStatus::Stop => break,
-                PauseStatus::TimeOut => timeout = None,
-                PauseStatus::Remaining(remaining) => timeout = Some(remaining),
+            if let Some(ref mut device) = device {
+                match device.pause(timeout)? {
+                    PauseStatus::Stop => break,
+                    PauseStatus::TimeOut => timeout = None,
+                    PauseStatus::Remaining(remaining) => timeout = Some(remaining),
+                }
+            } else {
+                thread::sleep(self.every);
             }
         }
 
-        output.close()?;
+        if let Some(ref mut device) = device {
+            device.close()?;
+        }
         info!("stopping");
         Ok(())
     }

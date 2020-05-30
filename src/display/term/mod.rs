@@ -16,12 +16,12 @@
 
 use std::io;
 
-pub use self::output::TerminalOutput;
+pub use self::device::TerminalDevice;
 
 use crate::console::{Clip, Screen};
 
+mod device;
 mod menu;
-mod output;
 mod sizer;
 mod table;
 

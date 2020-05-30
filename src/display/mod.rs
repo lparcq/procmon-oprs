@@ -27,12 +27,12 @@ pub enum PauseStatus {
     Remaining(Duration),
 }
 
-pub trait Output {
+pub trait DisplayDevice {
     fn open(&mut self, collector: &Collector) -> anyhow::Result<()>;
     fn close(&mut self) -> anyhow::Result<()>;
     fn render(&mut self, collector: &Collector, targets_updated: bool) -> anyhow::Result<()>;
     fn pause(&mut self, remaining: Option<Duration>) -> anyhow::Result<PauseStatus>;
 }
 
-pub use crate::output::term::TerminalOutput;
-pub use crate::output::text::TextOutput;
+pub use crate::display::term::TerminalDevice;
+pub use crate::display::text::TextDevice;
