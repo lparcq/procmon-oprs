@@ -1,0 +1,4 @@
+2020-05-31  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
+
+	* Version 0.4.0: Add export to CSV. One file per process.
+

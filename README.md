@@ -38,6 +38,11 @@ total CPU time. A process using all cores of a 4-cores system would be at 100%, 
 The CPU usage is (stime + utime) / ((user - guest) + (nice - guest_nice) + system + idle + iowait + irq + softirq)
 where stime and utime comes from /proc/PID/stat and user, … from /proc/stat.
 
+Export
+------
+
+In CSV export, the first column is the number of seconds since the [Unix Epoch](https://en.wikipedia.org/wiki/Unix_time).
+
 License
 -------
 

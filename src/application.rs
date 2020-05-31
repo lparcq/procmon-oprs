@@ -15,7 +15,10 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use clap::arg_enum;
+use config::ConfigError;
 use log::info;
+use std::path::PathBuf;
+use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
 use strum::{EnumMessage, IntoEnumIterator};
@@ -27,6 +30,7 @@ use crate::{
     collector::Collector,
     console::{BuiltinTheme, Screen},
     display::{DisplayDevice, PauseStatus, TerminalDevice, TextDevice},
+    export::{CsvExporter, Exporter},
     info::SystemConf,
     metrics::{FormattedMetric, MetricId, MetricNamesParser},
     targets::{TargetContainer, TargetId},
@@ -42,12 +46,26 @@ arg_enum! {
     }
 }
 
+arg_enum! {
+    #[derive(Debug)]
+    pub enum ExportType {
+        None,
+        Csv
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum Error {
+    #[error("{0}: invalid configuration entry")]
+    InvalidConfigurationEntry(&'static str),
     #[error("{0}: invalid parameter value")]
     InvalidParameter(&'static str),
     #[error("terminal not available")]
     TerminalNotAvailable,
+    #[error("{0}: unknown display mode")]
+    UnknownDisplayMode(String),
+    #[error("{0}: unknowndisplaymode export type")]
+    UnknownExportType(String),
 }
 
 pub fn list_metrics() {
@@ -65,6 +83,9 @@ pub struct Application {
     every: Duration,
     count: Option<u64>,
     metrics: Vec<FormattedMetric>,
+    display_mode: DisplayMode,
+    export_type: ExportType,
+    export_dir: PathBuf,
     theme: Option<BuiltinTheme>,
 }
 
@@ -79,11 +100,42 @@ impl Application {
         let count = settings.get_int(cfg::KEY_COUNT).map(|c| c as u64).ok();
         let human_format = settings.get_bool(cfg::KEY_HUMAN_FORMAT).unwrap_or(false);
         let mut metrics_parser = MetricNamesParser::new(human_format);
-        let theme = settings.get_str(cfg::KEY_COLOR_THEME)?;
+        let display_mode = Application::get_display_mode(settings)?;
+        let (export_type, export_dir) = match settings.get_table(cfg::KEY_EXPORT) {
+            Ok(settings) => {
+                let export_type = match settings.get(cfg::KEY_EXPORT_TYPE) {
+                    Some(value) => {
+                        let name = value
+                            .clone()
+                            .into_str()
+                            .map_err(|_| Error::InvalidConfigurationEntry(cfg::KEY_EXPORT_TYPE))?;
+                        ExportType::from_str(&name).map_err(|_| Error::UnknownExportType(name))?
+                    }
+                    None => ExportType::None,
+                };
+                let export_dir = PathBuf::from(match settings.get(cfg::KEY_EXPORT_DIR) {
+                    Some(value) => value
+                        .clone()
+                        .into_str()
+                        .map_err(|_| Error::InvalidConfigurationEntry(cfg::KEY_EXPORT_DIR)),
+                    None => Ok(String::from(".")),
+                }?);
+                Ok((export_type, export_dir))
+            }
+            Err(ConfigError::NotFound(_)) => Ok((ExportType::None, PathBuf::from("."))),
+            _ => Err(Error::InvalidConfigurationEntry(cfg::KEY_EXPORT)),
+        }?;
+
+        let theme = settings
+            .get_str(cfg::KEY_COLOR_THEME)
+            .unwrap_or_else(|_| String::from("none"));
         Ok(Application {
             every,
             count,
             metrics: metrics_parser.parse(metric_names)?,
+            display_mode,
+            export_type,
+            export_dir,
             theme: match theme.as_str() {
                 "dark" => Some(BuiltinTheme::Dark),
                 "light" => Some(BuiltinTheme::Light),
@@ -93,7 +145,16 @@ impl Application {
     }
 
     /// Return the best display mode for any and check if mode is available otherwise.
-    pub fn check_display_mode(display_mode: DisplayMode) -> Result<DisplayMode, Error> {
+    fn get_display_mode(settings: &config::Config) -> Result<DisplayMode, Error> {
+        let display_mode = match settings.get_str(cfg::KEY_DISPLAY_MODE) {
+            Ok(value) => {
+                let name = value.as_str();
+                Ok(DisplayMode::from_str(name)
+                    .map_err(|_| Error::UnknownDisplayMode(name.to_string()))?)
+            }
+            Err(ConfigError::NotFound(_)) => Ok(DisplayMode::Any),
+            _ => Err(Error::InvalidConfigurationEntry(cfg::KEY_DISPLAY_MODE))?,
+        }?;
         match display_mode {
             DisplayMode::Any => {
                 if TerminalDevice::is_available() {
@@ -115,12 +176,11 @@ impl Application {
 
     pub fn run<'a>(
         &mut self,
-        display_mode: DisplayMode,
         target_ids: &[TargetId],
         system_conf: &'a SystemConf,
     ) -> anyhow::Result<()> {
         info!("starting");
-        let mut device: Option<Box<dyn DisplayDevice>> = match display_mode {
+        let mut device: Option<Box<dyn DisplayDevice>> = match self.display_mode {
             DisplayMode::Any => panic!("internal error: must use check_display_mode first"),
             DisplayMode::Term => {
                 let mut screen = Screen::new()?;
@@ -131,6 +191,10 @@ impl Application {
             }
             DisplayMode::Text => Some(Box::new(TextDevice::new(self.every))),
             DisplayMode::None => None,
+        };
+        let mut exporter: Option<Box<dyn Exporter>> = match self.export_type {
+            ExportType::Csv => Some(Box::new(CsvExporter::new(self.export_dir.as_path()))),
+            ExportType::None => None,
         };
 
         let mut targets = TargetContainer::new(system_conf);
@@ -148,6 +212,9 @@ impl Application {
         if let Some(ref mut device) = device {
             device.open(&collector)?;
         }
+        if let Some(ref mut exporter) = exporter {
+            exporter.open(&collector)?;
+        }
 
         let mut loop_number: u64 = 0;
         let mut timeout: Option<Duration> = None;
@@ -158,6 +225,9 @@ impl Application {
             }
             if let Some(ref mut device) = device {
                 device.render(&collector, targets_updated)?;
+            }
+            if let Some(ref mut exporter) = exporter {
+                exporter.export(&collector)?;
             }
 
             if let Some(count) = self.count {
@@ -179,6 +249,9 @@ impl Application {
 
         if let Some(ref mut device) = device {
             device.close()?;
+        }
+        if let Some(ref mut exporter) = exporter {
+            exporter.close()?;
         }
         info!("stopping");
         Ok(())

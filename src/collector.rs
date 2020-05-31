@@ -41,6 +41,10 @@ impl Sample {
         self.values[0]
     }
 
+    pub fn values(&self) -> Iter<u64> {
+        self.values.iter()
+    }
+
     pub fn strings(&self) -> Iter<String> {
         self.strings.iter()
     }

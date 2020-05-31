@@ -19,7 +19,11 @@ use std::path::{Path, PathBuf};
 pub const KEY_APP_NAME: &str = "name";
 pub const KEY_COLOR_THEME: &str = "theme";
 pub const KEY_COUNT: &str = "count";
+pub const KEY_DISPLAY_MODE: &str = "display";
 pub const KEY_EVERY: &str = "every";
+pub const KEY_EXPORT: &str = "export";
+pub const KEY_EXPORT_DIR: &str = "dir";
+pub const KEY_EXPORT_TYPE: &str = "type";
 pub const KEY_HUMAN_FORMAT: &str = "human";
 
 const EXTENSIONS: &[&str] = &["toml", "yaml", "json"];
@@ -89,12 +93,4 @@ impl<'a> Reader<'a> {
         }
         Ok(())
     }
-}
-
-/// Set a boolean value if not yet in the config
-pub fn provide(config: &mut config::Config, key: &str, value: bool) -> anyhow::Result<()> {
-    if config.get_bool(key).is_err() {
-        config.set(key, value)?;
-    }
-    Ok(())
 }
