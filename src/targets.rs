@@ -224,7 +224,6 @@ impl<'a> MultiTarget<'a> {
     }
 
     fn refresh(&mut self, current_pids: &[pid_t]) -> bool {
-        // Only parse all processes if there are none or if one has died
         let mut previous_pids = BTreeSet::new();
         let mut updated = false;
         self.targets.retain(|target| {

@@ -112,7 +112,7 @@ struct ExportOpt {
     )]
     etype: Option<ExportType>,
 
-    #[structopt(short = "D", long = "export_dir", help = "export directory.")]
+    #[structopt(short = "D", long = "export-dir", help = "export directory.")]
     dir: Option<String>,
 }
 
