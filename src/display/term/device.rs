@@ -17,7 +17,7 @@
 use chrono::Local;
 use std::cmp::max;
 use std::io::{self, Write};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::{
     menu::{Action, MenuBar},
@@ -27,6 +27,7 @@ use super::{
 };
 use crate::{
     agg::Aggregation,
+    clock::Timer,
     collector::Collector,
     console::{
         charset::{TableChar, TableCharSet},
@@ -229,22 +230,26 @@ impl TerminalDevice {
     }
 
     /// Execute an interactive action.
-    fn react(&mut self, action: Action) -> bool {
+    fn react(&mut self, action: Action, timer: &mut Timer) -> bool {
         const MAX_TIMEOUT_SECS: u64 = 24 * 3_600; // 24 hours
         const MIN_TIMEOUT_MSECS: u128 = 1;
         match action {
             Action::Quit => return false,
             Action::MultiplyTimeout(factor) => {
-                if self.every.as_secs() * 2 < MAX_TIMEOUT_SECS {
-                    if let Some(every) = self.every.checked_mul(factor as u32) {
-                        self.every = every;
+                let delay = timer.get_delay();
+                if delay.as_secs() * (factor as u64) < MAX_TIMEOUT_SECS {
+                    if let Some(delay) = delay.checked_mul(factor as u32) {
+                        timer.set_delay(delay);
+                        self.every = delay;
                     }
                 }
             }
             Action::DivideTimeout(factor) => {
-                if self.every.as_millis() / 2 > MIN_TIMEOUT_MSECS {
-                    if let Some(every) = self.every.checked_div(factor as u32) {
-                        self.every = every;
+                let delay = timer.get_delay();
+                if delay.as_millis() / (factor as u128) > MIN_TIMEOUT_MSECS {
+                    if let Some(delay) = delay.checked_div(factor as u32) {
+                        timer.set_delay(delay);
+                        self.every = delay;
                     }
                 }
             }
@@ -359,21 +364,20 @@ impl DisplayDevice for TerminalDevice {
     }
 
     /// Wait for a user input or a timeout.
-    fn pause(&mut self, remaining: Option<Duration>) -> anyhow::Result<PauseStatus> {
-        let timeout = match remaining {
-            Some(timeout) if timeout < self.every => timeout,
-            _ => self.every,
-        };
-        let stop_watch = Instant::now();
-        if let Some(evt) = self.events.receive_timeout(timeout)? {
-            let action = self.menu.action(&evt);
-            if !self.react(action) {
-                return Ok(PauseStatus::Stop);
+    fn pause(&mut self, timer: &mut Timer) -> anyhow::Result<PauseStatus> {
+        if let Some(timeout) = timer.remaining() {
+            if let Some(evt) = self.events.receive_timeout(timeout)? {
+                let action = self.menu.action(&evt);
+                if !self.react(action, timer) {
+                    Ok(PauseStatus::Quit)
+                } else {
+                    Ok(PauseStatus::Interrupted)
+                }
+            } else {
+                Ok(PauseStatus::TimeOut)
             }
-            if let Some(remaining) = timeout.checked_sub(stop_watch.elapsed()) {
-                return Ok(PauseStatus::Remaining(remaining));
-            }
+        } else {
+            Ok(PauseStatus::TimeOut)
         }
-        Ok(PauseStatus::TimeOut)
     }
 }

@@ -28,6 +28,7 @@ use structopt::StructOpt;
 mod agg;
 mod application;
 mod cfg;
+mod clock;
 mod collector;
 mod console;
 mod display;

@@ -19,7 +19,6 @@ use config::ConfigError;
 use log::info;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::thread;
 use std::time::Duration;
 use strum::{EnumMessage, IntoEnumIterator};
 use thiserror::Error;
@@ -27,6 +26,7 @@ use thiserror::Error;
 use crate::{
     agg::Aggregation,
     cfg,
+    clock::Timer,
     collector::Collector,
     console::{BuiltinTheme, Screen},
     display::{DisplayDevice, PauseStatus, TerminalDevice, TextDevice},
@@ -189,7 +189,7 @@ impl Application {
                 }
                 Some(Box::new(TerminalDevice::new(self.every, screen)?))
             }
-            DisplayMode::Text => Some(Box::new(TextDevice::new(self.every))),
+            DisplayMode::Text => Some(Box::new(TextDevice::new())),
             DisplayMode::None => None,
         };
         let mut exporter: Option<Box<dyn Exporter>> = match self.export_type {
@@ -217,10 +217,11 @@ impl Application {
         }
 
         let mut loop_number: u64 = 0;
-        let mut timeout: Option<Duration> = None;
+        let mut timer = Timer::new(self.every);
         loop {
             let targets_updated = targets.refresh();
-            if timeout.is_none() {
+            if timer.expired() {
+                timer.reset();
                 targets.collect(&mut collector);
             }
             if let Some(ref mut device) = device {
@@ -237,13 +238,11 @@ impl Application {
                 }
             }
             if let Some(ref mut device) = device {
-                match device.pause(timeout)? {
-                    PauseStatus::Stop => break,
-                    PauseStatus::TimeOut => timeout = None,
-                    PauseStatus::Remaining(remaining) => timeout = Some(remaining),
+                if let PauseStatus::Quit = device.pause(&mut timer)? {
+                    break;
                 }
             } else {
-                thread::sleep(self.every);
+                timer.sleep();
             }
         }
 

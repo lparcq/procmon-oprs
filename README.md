@@ -10,7 +10,7 @@ It's based on [procfs](https://crates.io/crates/procfs).
 Features
 --------
 
-* Monitor memory, execution time, input/output, page fault.
+* Monitor memory, execution time, input/output, page fault, file descriptors, mapped memory regions.
 * Optional minimum and maximum.
 * Select processes by PID, PID file or name.
 * Display in plain text or a terminal UI.
@@ -19,7 +19,7 @@ Basic usage
 -----------
 
 To get the memory size, elapsed time and page fault of a process by PID (firefox), a process by pid
-file (lvmetad) and a process by name (bash), run:
+file (pulseaudio) and a process by name (bash), run:
 
     oprs --human -p 6913 -f pulseaudio.pid -n dhclient -m mem:vm mem:rss+max time:elapsed fault:major
 

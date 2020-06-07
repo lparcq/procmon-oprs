@@ -14,14 +14,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::thread;
-use std::time::Duration;
-
-use super::{DisplayDevice, PauseStatus};
+use super::DisplayDevice;
 use crate::{
     agg::Aggregation,
+    clock::Timer,
     collector::Collector,
     console::charset::{TableChar, TableCharSet},
+    display::PauseStatus,
 };
 
 const REPEAT_HEADER_EVERY: u16 = 20;
@@ -244,14 +243,12 @@ impl Table {
 
 /// Print on standard output as a table
 pub struct TextDevice {
-    every: Duration,
     table: Table,
 }
 
 impl TextDevice {
-    pub fn new(every: Duration) -> TextDevice {
+    pub fn new() -> TextDevice {
         TextDevice {
-            every,
             table: Table::new(),
         }
     }
@@ -302,9 +299,8 @@ impl DisplayDevice for TextDevice {
         Ok(())
     }
 
-    fn pause(&mut self, remaining: Option<Duration>) -> anyhow::Result<PauseStatus> {
-        let timeout = remaining.unwrap_or(self.every);
-        thread::sleep(timeout);
+    fn pause(&mut self, timer: &mut Timer) -> anyhow::Result<PauseStatus> {
+        timer.sleep();
         Ok(PauseStatus::TimeOut)
     }
 }
