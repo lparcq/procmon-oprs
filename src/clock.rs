@@ -28,11 +28,12 @@ pub struct Timer {
 }
 
 impl Timer {
-    pub fn new(delay: Duration) -> Timer {
+    /// Create a new timer already expired if second parameter is true.
+    pub fn new(delay: Duration, expired: bool) -> Timer {
         Timer {
             delay,
             stop_watch: Instant::now(),
-            remaining: Some(delay),
+            remaining: if expired { None } else { Some(delay) },
         }
     }
 
@@ -111,14 +112,6 @@ mod tests {
 
     use super::Timer;
 
-    pub fn new_expired(delay: Duration) -> Timer {
-        Timer {
-            delay,
-            stop_watch: Instant::now(),
-            remaining: None,
-        }
-    }
-
     pub fn new_in_the_past(delay: Duration, past_offset: Duration) -> Timer {
         Timer {
             delay,
@@ -130,7 +123,7 @@ mod tests {
     #[test]
     fn create_timer() {
         let delay = Duration::new(1, 0);
-        let mut timer = Timer::new(delay);
+        let mut timer = Timer::new(delay, false);
         let two_ms = Duration::new(0, 2 * 1_000_000);
         sleep(two_ms);
         let remaining = timer.remaining().unwrap();
@@ -144,21 +137,21 @@ mod tests {
         let short_delay = Duration::new(SHORT_DELAY_VALUE, 0);
         let long_delay = Duration::new(LONG_DELAY_VALUE, 0);
         // Set delay on expired timer.
-        let mut timer1 = new_expired(short_delay);
+        let mut timer1 = Timer::new(short_delay, true);
         assert_eq!(timer1.get_delay(), short_delay);
         timer1.set_delay(long_delay);
         assert_eq!(timer1.get_delay(), long_delay);
 
         // Set smaller delay
         // From 120 seconds (remaining > 60) to 60 seconds (remaining <= 60)
-        let mut timer2 = Timer::new(long_delay);
+        let mut timer2 = Timer::new(long_delay, false);
         assert!(timer2.remaining().unwrap().as_secs() > SHORT_DELAY_VALUE);
         timer2.set_delay(short_delay);
         assert!(timer2.remaining().unwrap().as_secs() <= SHORT_DELAY_VALUE);
 
         // Set bigger delay
         // From 60 seconds (remaining <= 60) to 120 seconds (remaining > 60 and <= 120)
-        let mut timer3 = Timer::new(short_delay);
+        let mut timer3 = Timer::new(short_delay, false);
         assert!(timer3.remaining().unwrap().as_secs() <= SHORT_DELAY_VALUE);
         timer3.set_delay(long_delay);
         let secs3 = timer3.remaining().unwrap().as_secs();
@@ -168,9 +161,9 @@ mod tests {
 
     #[test]
     fn expired_timer() {
-        let mut timer1 = Timer::new(Duration::new(60, 0));
+        let mut timer1 = Timer::new(Duration::new(60, 0), false);
         assert!(!timer1.expired());
-        let mut timer2 = new_expired(Duration::new(60, 0));
+        let mut timer2 = Timer::new(Duration::new(60, 0), true);
         assert!(timer2.expired());
     }
 
@@ -179,7 +172,7 @@ mod tests {
         const DELAY_VALUE: u64 = 60;
         let delay = Duration::new(DELAY_VALUE, 0);
         // Non expired timer
-        let mut timer1 = Timer::new(delay);
+        let mut timer1 = Timer::new(delay, false);
         for _ in 0..2 {
             assert!(timer1.remaining().unwrap().as_secs() > DELAY_VALUE / 2); // not expired
         }

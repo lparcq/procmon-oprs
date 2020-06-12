@@ -14,18 +14,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use clap::arg_enum;
-use config::ConfigError;
 use log::info;
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::time::Duration;
 use strum::{EnumMessage, IntoEnumIterator};
 use thiserror::Error;
 
 use crate::{
     agg::Aggregation,
-    cfg,
+    cfg::{self, DisplayMode, ExportType, MetricFormat},
     clock::Timer,
     collector::Collector,
     console::{BuiltinTheme, Screen},
@@ -36,36 +33,10 @@ use crate::{
     targets::{TargetContainer, TargetId},
 };
 
-arg_enum! {
-    #[derive(Debug)]
-    pub enum DisplayMode {
-        None,
-        Any,
-        Text,
-        Term,
-    }
-}
-
-arg_enum! {
-    #[derive(Debug)]
-    pub enum ExportType {
-        None,
-        Csv
-    }
-}
-
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("{0}: invalid configuration entry")]
-    InvalidConfigurationEntry(&'static str),
-    #[error("{0}: invalid parameter value")]
-    InvalidParameter(&'static str),
     #[error("terminal not available")]
     TerminalNotAvailable,
-    #[error("{0}: unknown display mode")]
-    UnknownDisplayMode(String),
-    #[error("{0}: unknowndisplaymode export type")]
-    UnknownExportType(String),
 }
 
 pub fn list_metrics() {
@@ -89,42 +60,36 @@ pub struct Application {
     theme: Option<BuiltinTheme>,
 }
 
+/// Get export type
+
 impl Application {
     pub fn new(settings: &config::Config, metric_names: &[String]) -> anyhow::Result<Application> {
-        let every = Duration::from_millis(
-            (settings
-                .get_float(cfg::KEY_EVERY)
-                .map_err(|_| Error::InvalidParameter(cfg::KEY_EVERY))?
-                * 1000.0) as u64,
-        );
+        let every = cfg::get_every(settings)?;
         let count = settings.get_int(cfg::KEY_COUNT).map(|c| c as u64).ok();
-        let human_format = settings.get_bool(cfg::KEY_HUMAN_FORMAT).unwrap_or(false);
-        let mut metrics_parser = MetricNamesParser::new(human_format);
-        let display_mode = Application::get_display_mode(settings)?;
-        let (export_type, export_dir) = match settings.get_table(cfg::KEY_EXPORT) {
-            Ok(settings) => {
-                let export_type = match settings.get(cfg::KEY_EXPORT_TYPE) {
-                    Some(value) => {
-                        let name = value
-                            .clone()
-                            .into_str()
-                            .map_err(|_| Error::InvalidConfigurationEntry(cfg::KEY_EXPORT_TYPE))?;
-                        ExportType::from_str(&name).map_err(|_| Error::UnknownExportType(name))?
-                    }
-                    None => ExportType::None,
-                };
-                let export_dir = PathBuf::from(match settings.get(cfg::KEY_EXPORT_DIR) {
-                    Some(value) => value
-                        .clone()
-                        .into_str()
-                        .map_err(|_| Error::InvalidConfigurationEntry(cfg::KEY_EXPORT_DIR)),
-                    None => Ok(String::from(".")),
-                }?);
-                Ok((export_type, export_dir))
+        let format = cfg::get_metric_format(&settings)?;
+        let mut metrics_parser = MetricNamesParser::new(match format {
+            MetricFormat::Human => true,
+            _ => false,
+        });
+        let display_mode = match cfg::get_display_mode(settings)? {
+            DisplayMode::Any => {
+                if TerminalDevice::is_available() {
+                    Ok(DisplayMode::Term)
+                } else {
+                    Ok(DisplayMode::Text)
+                }
             }
-            Err(ConfigError::NotFound(_)) => Ok((ExportType::None, PathBuf::from("."))),
-            _ => Err(Error::InvalidConfigurationEntry(cfg::KEY_EXPORT)),
+            DisplayMode::Term => {
+                if TerminalDevice::is_available() {
+                    Ok(DisplayMode::Term)
+                } else {
+                    Err(Error::TerminalNotAvailable)
+                }
+            }
+            display_mode => Ok(display_mode),
         }?;
+
+        let (export_type, export_dir) = cfg::get_export_parameters(&settings)?;
 
         let theme = settings
             .get_str(cfg::KEY_COLOR_THEME)
@@ -144,42 +109,13 @@ impl Application {
         })
     }
 
-    /// Return the best display mode for any and check if mode is available otherwise.
-    fn get_display_mode(settings: &config::Config) -> Result<DisplayMode, Error> {
-        let display_mode = match settings.get_str(cfg::KEY_DISPLAY_MODE) {
-            Ok(value) => {
-                let name = value.as_str();
-                Ok(DisplayMode::from_str(name)
-                    .map_err(|_| Error::UnknownDisplayMode(name.to_string()))?)
-            }
-            Err(ConfigError::NotFound(_)) => Ok(DisplayMode::Any),
-            _ => Err(Error::InvalidConfigurationEntry(cfg::KEY_DISPLAY_MODE))?,
-        }?;
-        match display_mode {
-            DisplayMode::Any => {
-                if TerminalDevice::is_available() {
-                    Ok(DisplayMode::Term)
-                } else {
-                    Ok(DisplayMode::Text)
-                }
-            }
-            DisplayMode::Term => {
-                if TerminalDevice::is_available() {
-                    Ok(DisplayMode::Term)
-                } else {
-                    Err(Error::TerminalNotAvailable)
-                }
-            }
-            _ => Ok(display_mode),
-        }
-    }
-
     pub fn run<'a>(
         &mut self,
         target_ids: &[TargetId],
         system_conf: &'a SystemConf,
     ) -> anyhow::Result<()> {
         info!("starting");
+
         let mut device: Option<Box<dyn DisplayDevice>> = match self.display_mode {
             DisplayMode::Any => panic!("internal error: must use check_display_mode first"),
             DisplayMode::Term => {
@@ -217,7 +153,7 @@ impl Application {
         }
 
         let mut loop_number: u64 = 0;
-        let mut timer = Timer::new(self.every);
+        let mut timer = Timer::new(self.every, true);
         loop {
             let targets_updated = targets.refresh();
             if timer.expired() {

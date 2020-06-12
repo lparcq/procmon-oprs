@@ -43,7 +43,8 @@ mod utils;
 #[cfg(test)]
 mod mocks;
 
-use application::{Application, DisplayMode, ExportType};
+use application::Application;
+use cfg::{DisplayMode, ExportType, MetricFormat};
 use targets::TargetId;
 
 const APP_NAME: &str = "oprs";
@@ -160,8 +161,13 @@ struct Opt {
     #[structopt(flatten)]
     export: ExportOpt,
 
-    #[structopt(short = "H", long = "human", help = "use human-readable units")]
-    human_format: Option<bool>,
+    #[structopt(
+        short = "F",
+        long = "format",
+        possible_values = &MetricFormat::variants(),
+        case_insensitive = true,
+        help = "format to display metrics")]
+    metric_format: Option<MetricFormat>,
 
     #[structopt(short, long, help = "monitor system")]
     system: bool,
@@ -246,6 +252,7 @@ pub enum Error {
 
 fn read_config(mut settings: &mut config::Config, dirs: &cfg::Directories) -> anyhow::Result<()> {
     settings.set_default(cfg::KEY_EVERY, DEFAULT_DELAY)?;
+    settings.set_default(cfg::KEY_METRIC_FORMAT, String::from("raw"))?;
     let mut export_settings = HashMap::new();
     export_settings.insert(String::from(cfg::KEY_EXPORT_DIR), String::from("."));
     export_settings.insert(String::from(cfg::KEY_EXPORT_TYPE), String::from("none"));
@@ -278,8 +285,8 @@ fn start(dirs: &cfg::Directories, opt: Opt) -> anyhow::Result<()> {
             },
         )?;
     };
-    if let Some(human_format) = opt.human_format {
-        settings.set(cfg::KEY_HUMAN_FORMAT, human_format)?;
+    if let Some(format) = opt.metric_format {
+        settings.set(cfg::KEY_METRIC_FORMAT, format!("{}", format))?;
     }
     if let Some(display_mode) = opt.display_mode {
         settings.set(cfg::KEY_DISPLAY_MODE, format!("{}", display_mode))?;

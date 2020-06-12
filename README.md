@@ -21,7 +21,7 @@ Basic usage
 To get the memory size, elapsed time and page fault of a process by PID (firefox), a process by pid
 file (pulseaudio) and a process by name (bash), run:
 
-    oprs --human -p 6913 -f pulseaudio.pid -n dhclient -m mem:vm mem:rss+max time:elapsed fault:major
+    oprs -F human -p 6913 -f pulseaudio.pid -n dhclient -m mem:vm mem:rss+max time:elapsed fault:major
 
 ![Screenshot](doc/screenshot.jpeg)
 
@@ -42,6 +42,21 @@ Export
 ------
 
 In CSV export, the first column is the number of seconds since the [Unix Epoch](https://en.wikipedia.org/wiki/Unix_time).
+
+Configuration
+-------------
+
+Configuration file name is `settings` with extension .yaml, .json or .toml. It's located according to
+the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/).
+
+Example `~/.config/oprs/settings.yaml`:
+
+    display: text
+    format: human
+    theme: light
+    export:
+        dir: /path/to/export/directory
+        type: none
 
 License
 -------
