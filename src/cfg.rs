@@ -37,7 +37,7 @@ arg_enum! {
         None,
         Any,
         Text,
-        Term,
+        Terminal,
     }
 }
 
@@ -191,5 +191,75 @@ pub fn get_export_parameters(settings: &config::Config) -> anyhow::Result<(Expor
         }
         Err(ConfigError::NotFound(_)) => Ok((ExportType::None, PathBuf::from("."))),
         _ => Err(Error::InvalidConfigurationEntry(KEY_EXPORT))?,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use std::collections::HashMap;
+
+    use super::{
+        get_display_mode, get_every, get_export_parameters, get_metric_format, DisplayMode,
+        ExportType, MetricFormat,
+    };
+
+    #[test]
+    fn parameter_every() -> anyhow::Result<()> {
+        let mut settings = config::Config::default();
+        assert!(get_every(&settings).is_err());
+        settings.set(super::KEY_EVERY, 60)?;
+        assert_eq!(60, get_every(&settings)?.as_secs());
+        Ok(())
+    }
+
+    #[test]
+    fn parameter_display_mode() -> anyhow::Result<()> {
+        let mut settings = config::Config::default();
+        match get_display_mode(&settings)? {
+            DisplayMode::Any => (),
+            _ => panic!("expecting DisplayMode::Any"),
+        }
+        settings.set(super::KEY_DISPLAY_MODE, "invalid")?;
+        assert!(get_display_mode(&settings).is_err());
+        settings.set(super::KEY_DISPLAY_MODE, "text")?;
+        match get_display_mode(&settings)? {
+            DisplayMode::Text => Ok(()),
+            _ => panic!("expecting DisplayMode::Text"),
+        }
+    }
+
+    #[test]
+    fn parameter_metric_format() -> anyhow::Result<()> {
+        let mut settings = config::Config::default();
+        assert!(get_metric_format(&settings).is_err());
+        settings.set(super::KEY_METRIC_FORMAT, "invalid")?;
+        assert!(get_metric_format(&settings).is_err());
+        settings.set(super::KEY_METRIC_FORMAT, "human")?;
+        match get_metric_format(&settings)? {
+            MetricFormat::Human => Ok(()),
+            _ => panic!("expecting MetricFormat::Human"),
+        }
+    }
+
+    #[test]
+    fn parameter_export_parameter() -> anyhow::Result<()> {
+        let mut settings = config::Config::default();
+        let (export_type, _) = get_export_parameters(&settings)?;
+        match export_type {
+            ExportType::None => (),
+            _ => panic!("expecting ExportType::None"),
+        }
+        let mut export_settings = HashMap::new();
+        export_settings.insert(String::from(super::KEY_EXPORT_DIR), String::from("/tmp"));
+        export_settings.insert(String::from(super::KEY_EXPORT_TYPE), String::from("csv"));
+        settings.set_default(super::KEY_EXPORT, config::Value::from(export_settings))?;
+        let (export_type, export_dir) = get_export_parameters(&settings)?;
+        match export_type {
+            ExportType::Csv => (),
+            _ => panic!("expecting ExportType::Csv"),
+        }
+        assert_eq!("/tmp", export_dir.to_str().unwrap());
+        Ok(())
     }
 }

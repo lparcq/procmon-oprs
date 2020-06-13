@@ -77,14 +77,14 @@ impl Application {
         let display_mode = match cfg::get_display_mode(settings)? {
             DisplayMode::Any => {
                 if TerminalDevice::is_available() {
-                    Ok(DisplayMode::Term)
+                    Ok(DisplayMode::Terminal)
                 } else {
                     Ok(DisplayMode::Text)
                 }
             }
-            DisplayMode::Term => {
+            DisplayMode::Terminal => {
                 if TerminalDevice::is_available() {
-                    Ok(DisplayMode::Term)
+                    Ok(DisplayMode::Terminal)
                 } else {
                     Err(Error::TerminalNotAvailable)
                 }
@@ -121,7 +121,7 @@ impl Application {
 
         let mut device: Option<Box<dyn DisplayDevice>> = match self.display_mode {
             DisplayMode::Any => panic!("internal error: must use check_display_mode first"),
-            DisplayMode::Term => {
+            DisplayMode::Terminal => {
                 let mut screen = Screen::new()?;
                 if let Some(theme) = &self.theme {
                     screen.set_theme(*theme);
