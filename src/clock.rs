@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use log::debug;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -42,7 +43,12 @@ impl Timer {
         self.delay
     }
 
-    /// Change the delay of the timer. If it hasn't already expired, ajust the remaining time.
+    /// Start time
+    pub fn start_time(&self) -> Instant {
+        self.stop_watch
+    }
+
+    /// change the delay of the timer. If it hasn't already expired, ajust the remaining time.
     pub fn set_delay(&mut self, delay: Duration) {
         if let Some(remaining) = self.remaining {
             self.remaining = if delay >= self.delay {
@@ -100,6 +106,42 @@ impl Timer {
     pub fn sleep(&mut self) {
         while let Some(remaining) = self.remaining() {
             sleep(remaining);
+        }
+    }
+}
+
+/// Report difference between an expected elapsed time and the actual elapsed time
+pub struct DriftMonitor {
+    start_time: Instant,
+    notification_time: Instant,
+    notification_delay: u64,
+    expected_elapsed: Duration,
+}
+
+impl DriftMonitor {
+    /// New monitor with a start time and a delay between two notifications.
+    pub fn new(start_time: Instant, notification_delay: u64) -> DriftMonitor {
+        DriftMonitor {
+            start_time,
+            notification_time: start_time,
+            notification_delay,
+            expected_elapsed: Duration::new(0, 0),
+        }
+    }
+
+    pub fn update(&mut self, delay: Duration) {
+        let now = Instant::now();
+        if let Some(new_elapsed) = self.expected_elapsed.checked_add(delay) {
+            self.expected_elapsed = new_elapsed;
+            if let Some(notification_delay) = now.checked_duration_since(self.notification_time) {
+                if notification_delay.as_secs() >= self.notification_delay {
+                    self.notification_time = now;
+                    if let Some(actual_elapsed) = now.checked_duration_since(self.start_time) {
+                        let drift = actual_elapsed.as_secs_f64() - new_elapsed.as_secs_f64();
+                        debug!("drift {} seconds", drift);
+                    }
+                }
+            }
         }
     }
 }

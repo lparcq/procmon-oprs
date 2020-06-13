@@ -23,7 +23,7 @@ use thiserror::Error;
 use crate::{
     agg::Aggregation,
     cfg::{self, DisplayMode, ExportType, MetricFormat},
-    clock::Timer,
+    clock::{DriftMonitor, Timer},
     collector::Collector,
     console::{BuiltinTheme, Screen},
     display::{DisplayDevice, PauseStatus, TerminalDevice, TextDevice},
@@ -32,6 +32,9 @@ use crate::{
     metrics::{FormattedMetric, MetricId, MetricNamesParser},
     targets::{TargetContainer, TargetId},
 };
+
+/// Delay in seconds between two notifications for time drift
+const DRIFT_NOTIFICATION_DELAY: u64 = 300;
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -154,6 +157,7 @@ impl Application {
 
         let mut loop_number: u64 = 0;
         let mut timer = Timer::new(self.every, true);
+        let mut drift = DriftMonitor::new(timer.start_time(), DRIFT_NOTIFICATION_DELAY);
         loop {
             let targets_updated = targets.refresh();
             if timer.expired() {
@@ -180,6 +184,7 @@ impl Application {
             } else {
                 timer.sleep();
             }
+            drift.update(timer.get_delay());
         }
 
         if let Some(ref mut device) = device {
