@@ -14,14 +14,18 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::time::Duration;
+
 use crate::collector::Collector;
 
 mod csv;
+mod rrd;
 
 pub trait Exporter {
     fn open(&mut self, collector: &Collector) -> anyhow::Result<()>;
     fn close(&mut self) -> anyhow::Result<()>;
-    fn export(&mut self, collector: &Collector) -> anyhow::Result<()>;
+    fn export(&mut self, collector: &Collector, timestamp: &Duration) -> anyhow::Result<()>;
 }
 
 pub use crate::export::csv::CsvExporter;
+pub use crate::export::rrd::RrdExporter;

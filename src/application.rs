@@ -15,19 +15,18 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use log::info;
-use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use strum::{EnumMessage, IntoEnumIterator};
 use thiserror::Error;
 
 use crate::{
     agg::Aggregation,
-    cfg::{self, DisplayMode, ExportType, MetricFormat},
+    cfg::{self, DisplayMode, ExportParameters, ExportType, MetricFormat},
     clock::{DriftMonitor, Timer},
     collector::Collector,
     console::{BuiltinTheme, Screen},
     display::{DisplayDevice, PauseStatus, TerminalDevice, TextDevice},
-    export::{CsvExporter, Exporter},
+    export::{CsvExporter, Exporter, RrdExporter},
     info::SystemConf,
     metrics::{FormattedMetric, MetricId, MetricNamesParser},
     targets::{TargetContainer, TargetId},
@@ -40,6 +39,8 @@ const DRIFT_NOTIFICATION_DELAY: u64 = 300;
 pub enum Error {
     #[error("terminal not available")]
     TerminalNotAvailable,
+    #[error("missing export size")]
+    MissingExportSize,
 }
 
 pub fn list_metrics() {
@@ -58,8 +59,7 @@ pub struct Application {
     count: Option<u64>,
     metrics: Vec<FormattedMetric>,
     display_mode: DisplayMode,
-    export_type: ExportType,
-    export_dir: PathBuf,
+    export_params: ExportParameters,
     theme: Option<BuiltinTheme>,
 }
 
@@ -92,18 +92,17 @@ impl Application {
             display_mode => Ok(display_mode),
         }?;
 
-        let (export_type, export_dir) = cfg::get_export_parameters(&settings)?;
-
+        let export_params = cfg::ExportParameters::get(&settings)?;
         let theme = settings
             .get_str(cfg::KEY_COLOR_THEME)
             .unwrap_or_else(|_| String::from("none"));
+
         Ok(Application {
             every,
             count,
             metrics: metrics_parser.parse(metric_names)?,
             display_mode,
-            export_type,
-            export_dir,
+            export_params,
             theme: match theme.as_str() {
                 "dark" => Some(BuiltinTheme::Dark),
                 "light" => Some(BuiltinTheme::Light),
@@ -131,8 +130,13 @@ impl Application {
             DisplayMode::Text => Some(Box::new(TextDevice::new())),
             DisplayMode::None => None,
         };
-        let mut exporter: Option<Box<dyn Exporter>> = match self.export_type {
-            ExportType::Csv => Some(Box::new(CsvExporter::new(self.export_dir.as_path()))),
+        let mut exporter: Option<Box<dyn Exporter>> = match self.export_params.etype {
+            ExportType::Csv => Some(Box::new(CsvExporter::new(self.export_params.dir.as_path()))),
+            ExportType::Rrd => Some(Box::new(RrdExporter::new(
+                self.export_params.dir.as_path(),
+                self.every,
+                self.export_params.size.ok_or(Error::MissingExportSize)?,
+            )?)),
             ExportType::None => None,
         };
 
@@ -160,15 +164,21 @@ impl Application {
         let mut drift = DriftMonitor::new(timer.start_time(), DRIFT_NOTIFICATION_DELAY);
         loop {
             let targets_updated = targets.refresh();
-            if timer.expired() {
+            let collect_timestamp = if timer.expired() {
                 timer.reset();
+                let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
                 targets.collect(&mut collector);
-            }
+                Some(timestamp)
+            } else {
+                None
+            };
             if let Some(ref mut device) = device {
                 device.render(&collector, targets_updated)?;
             }
-            if let Some(ref mut exporter) = exporter {
-                exporter.export(&collector)?;
+            if let Some(timestamp) = collect_timestamp {
+                if let Some(ref mut exporter) = exporter {
+                    exporter.export(&collector, &timestamp)?;
+                }
             }
 
             if let Some(count) = self.count {

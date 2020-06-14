@@ -29,6 +29,7 @@ pub const KEY_EVERY: &str = "every";
 pub const KEY_EXPORT: &str = "export";
 pub const KEY_EXPORT_DIR: &str = "dir";
 pub const KEY_EXPORT_TYPE: &str = "type";
+pub const KEY_EXPORT_SIZE: &str = "size";
 pub const KEY_METRIC_FORMAT: &str = "format";
 
 arg_enum! {
@@ -45,7 +46,8 @@ arg_enum! {
     #[derive(Debug)]
     pub enum ExportType {
         None,
-        Csv
+        Csv,
+        Rrd
     }
 }
 
@@ -171,26 +173,43 @@ pub fn get_metric_format(settings: &config::Config) -> anyhow::Result<MetricForm
     Ok(format)
 }
 
-/// Get export parameter: type and directory
-pub fn get_export_parameters(settings: &config::Config) -> anyhow::Result<(ExportType, PathBuf)> {
-    match settings.get_table(KEY_EXPORT) {
-        Ok(settings) => {
-            let export_type = match settings.get(KEY_EXPORT_TYPE) {
-                Some(value) => {
-                    let name = value.clone().into_str()?;
-                    ExportType::from_str(&name)
-                        .map_err(|_| Error::UnknownExportType(name.to_string()))?
-                }
-                None => ExportType::None,
-            };
-            let export_dir = PathBuf::from(match settings.get(KEY_EXPORT_DIR) {
-                Some(value) => value.clone().into_str()?,
-                None => String::from("."),
-            });
-            Ok((export_type, export_dir))
+/// Export parameters
+pub struct ExportParameters {
+    pub etype: ExportType,
+    pub dir: PathBuf,
+    pub size: Option<usize>,
+}
+
+impl ExportParameters {
+    /// Get export parameter: type and directory
+    pub fn get(settings: &config::Config) -> anyhow::Result<ExportParameters> {
+        match settings.get_table(KEY_EXPORT) {
+            Ok(settings) => {
+                let etype = match settings.get(KEY_EXPORT_TYPE) {
+                    Some(value) => {
+                        let name = value.clone().into_str()?;
+                        ExportType::from_str(&name)
+                            .map_err(|_| Error::UnknownExportType(name.to_string()))?
+                    }
+                    None => ExportType::None,
+                };
+                let dir = PathBuf::from(match settings.get(KEY_EXPORT_DIR) {
+                    Some(value) => value.clone().into_str()?,
+                    None => String::from("."),
+                });
+                let size = match settings.get(KEY_EXPORT_SIZE) {
+                    Some(size) => Some(size.clone().into_int()? as usize),
+                    None => None,
+                };
+                Ok(ExportParameters { etype, dir, size })
+            }
+            Err(ConfigError::NotFound(_)) => Ok(ExportParameters {
+                etype: ExportType::None,
+                dir: PathBuf::from("."),
+                size: None,
+            }),
+            _ => Err(Error::InvalidConfigurationEntry(KEY_EXPORT))?,
         }
-        Err(ConfigError::NotFound(_)) => Ok((ExportType::None, PathBuf::from("."))),
-        _ => Err(Error::InvalidConfigurationEntry(KEY_EXPORT))?,
     }
 }
 
@@ -200,8 +219,8 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{
-        get_display_mode, get_every, get_export_parameters, get_metric_format, DisplayMode,
-        ExportType, MetricFormat,
+        get_display_mode, get_every, get_metric_format, DisplayMode, ExportParameters, ExportType,
+        MetricFormat,
     };
 
     #[test]
@@ -244,22 +263,26 @@ mod tests {
 
     #[test]
     fn parameter_export_parameter() -> anyhow::Result<()> {
+        // empty settings
         let mut settings = config::Config::default();
-        let (export_type, _) = get_export_parameters(&settings)?;
-        match export_type {
+        let params = ExportParameters::get(&settings)?;
+        match params.etype {
             ExportType::None => (),
             _ => panic!("expecting ExportType::None"),
         }
+
+        // filled settings
         let mut export_settings = HashMap::new();
         export_settings.insert(String::from(super::KEY_EXPORT_DIR), String::from("/tmp"));
         export_settings.insert(String::from(super::KEY_EXPORT_TYPE), String::from("csv"));
         settings.set_default(super::KEY_EXPORT, config::Value::from(export_settings))?;
-        let (export_type, export_dir) = get_export_parameters(&settings)?;
-        match export_type {
+        let params = ExportParameters::get(&settings)?;
+        match params.etype {
             ExportType::Csv => (),
             _ => panic!("expecting ExportType::Csv"),
         }
-        assert_eq!("/tmp", export_dir.to_str().unwrap());
+        assert_eq!("/tmp", params.dir.to_str().unwrap());
+        assert!(params.size.is_none());
         Ok(())
     }
 }

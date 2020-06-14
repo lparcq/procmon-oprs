@@ -20,7 +20,7 @@ use std::fmt::Display;
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::Duration;
 
 use crate::{agg::Aggregation, collector::Collector};
 
@@ -115,9 +115,7 @@ impl Exporter for CsvExporter {
         Ok(())
     }
 
-    fn export(&mut self, collector: &Collector) -> anyhow::Result<()> {
-        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
-
+    fn export(&mut self, collector: &Collector, timestamp: &Duration) -> anyhow::Result<()> {
         let mut pids: HashSet<pid_t> = self.files.keys().map(|pid| *pid).collect();
         for proc in collector.lines() {
             let pid = proc.get_pid();
@@ -127,7 +125,7 @@ impl Exporter for CsvExporter {
             let samples = proc.samples().map(|sample| sample.values()).flatten();
             if let Some(ref mut file) = self.files.get_mut(&pid) {
                 // Necessarily true
-                write!(file, "{:.3}", now.as_secs_f64())?;
+                write!(file, "{:.3}", timestamp.as_secs_f64())?;
                 CsvExporter::write_line_rest(file, samples, self.separator)?;
             }
         }

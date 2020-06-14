@@ -82,6 +82,10 @@ For some metrics, min or max is meaningless.
 Example, to print the virtual memory size, peak memory size and elapsed time of the system together
 with all bash processes and process with pid 1234:
   oprs --system -n bash -p 1234 -m mem:vm+max time:elapsed
+
+Export options:
+- csv: comma-separated values, one file per process in the export directory.
+- rrd: Round Robin Database.
 ";
 
 arg_enum! {
