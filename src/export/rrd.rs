@@ -14,9 +14,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use anyhow::anyhow;
 use libc::pid_t;
 use std::collections::HashMap;
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Duration;
@@ -26,6 +27,10 @@ use thiserror::Error;
 pub enum Error {
     #[error("rrd: interval too large")]
     IntervalTooLarge,
+    #[error("rrd: no standard input for rrdtool subprocess")]
+    RrdToolNoStdin,
+    #[error("rrd: no standard output for rrdtool subprocess")]
+    RrdToolNoStdout,
     #[error("rrdtool: premature end of stream")]
     RrdToolEndOfStream,
     #[error("rrdtool: {0}")]
@@ -115,7 +120,7 @@ pub struct RrdExporter {
 }
 
 impl RrdExporter {
-    pub fn new<P>(dir: P, interval: Duration, size: usize) -> io::Result<RrdExporter>
+    pub fn new<P>(dir: P, interval: Duration, size: usize) -> anyhow::Result<RrdExporter>
     where
         P: AsRef<Path>,
     {
@@ -126,24 +131,22 @@ impl RrdExporter {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()?;
-        let child_out = tool
-            .stdout
-            .take()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "rrdtool: no standard input"))?;
-        let child_in = tool
-            .stdin
-            .take()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "rrdtool: no standard output"))?;
-        Ok(RrdExporter {
-            interval,
-            size,
-            tool,
-            child_in,
-            child_out: BufReader::new(child_out),
-            ds: Vec::new(),
-            skip: Vec::new(),
-            pids: HashMap::new(),
-        })
+        let child_out = tool.stdout.take().ok_or(Error::RrdToolNoStdout)?;
+        let child_in = tool.stdin.take().ok_or(Error::RrdToolNoStdin)?;
+        if interval.as_secs() == 0 || interval.subsec_nanos() != 0 {
+            Err(anyhow!("rrd: interval must be a whole number of seconds"))
+        } else {
+            Ok(RrdExporter {
+                interval,
+                size,
+                tool,
+                child_in,
+                child_out: BufReader::new(child_out),
+                ds: Vec::new(),
+                skip: Vec::new(),
+                pids: HashMap::new(),
+            })
+        }
     }
 
     fn filename(pid: pid_t, name: &str) -> String {

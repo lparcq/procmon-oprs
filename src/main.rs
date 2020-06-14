@@ -108,7 +108,7 @@ arg_enum! {
 const DEFAULT_DELAY: f64 = 5.0;
 
 #[derive(StructOpt, Debug)]
-struct ExportOpt {
+struct ExportOptions {
     #[structopt(
         short = "X",
         long = "export",
@@ -120,6 +120,13 @@ struct ExportOpt {
 
     #[structopt(short = "D", long = "export-dir", help = "export directory.")]
     dir: Option<String>,
+
+    #[structopt(
+        short = "S",
+        long = "export-size",
+        help = "export size (for rrd, the number of rows)."
+    )]
+    size: Option<usize>,
 }
 
 #[derive(StructOpt, Debug)]
@@ -163,7 +170,7 @@ struct Opt {
     display_mode: Option<DisplayMode>,
 
     #[structopt(flatten)]
-    export: ExportOpt,
+    export: ExportOptions,
 
     #[structopt(
         short = "F",
@@ -176,7 +183,7 @@ struct Opt {
     #[structopt(short, long, help = "monitor system")]
     system: bool,
 
-    #[structopt(short = "S", long = "self", help = "monitor the command itself")]
+    #[structopt(long = "self", help = "monitor the command itself")]
     myself: bool,
 
     #[structopt(short = "p", long = "pid", help = "process id")]
@@ -245,6 +252,37 @@ fn configure_logging(dirs: &cfg::Directories, verbosity: u8, target: LoggingTarg
 // Main
 //
 
+/// Set an export parameter from command line if found
+macro_rules! override_export_parameter {
+    // If the parameter is mandatory, the last argument is an error message.
+    ($key_name:ident, $value:expr, $params:ident, $defaults:expr, $errmsg:expr) => {
+        $params.insert(
+            String::from(cfg::$key_name),
+            match &$value {
+                Some(ref value) => value.to_string(),
+                None => $defaults
+                    .get(cfg::$key_name)
+                    .expect($errmsg)
+                    .clone()
+                    .into_str()?,
+            },
+        );
+    };
+    // If the parameter is optional, it can be omitted.
+    ($key_name:ident, $value:expr, $params:ident, $defaults:expr) => {
+        match &$value {
+            Some(ref value) => {
+                $params.insert(String::from(cfg::$key_name), value.to_string());
+            }
+            None => {
+                if let Some(value) = $defaults.get(cfg::$key_name) {
+                    $params.insert(String::from(cfg::$key_name), value.to_string());
+                }
+            }
+        };
+    };
+}
+
 /// Wrapper for anyhow to convert String to anyhow::Error
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -266,6 +304,35 @@ fn read_config(mut settings: &mut config::Config, dirs: &cfg::Directories) -> an
     }
     settings.set(cfg::KEY_APP_NAME, APP_NAME)?;
     Ok(())
+}
+
+fn merge_export_parameters(
+    settings: &config::Config,
+    options: &ExportOptions,
+) -> anyhow::Result<HashMap<String, String>> {
+    let default_export_settings = settings.get_table(cfg::KEY_EXPORT)?;
+    let mut export_settings = HashMap::new();
+    override_export_parameter!(
+        KEY_EXPORT_TYPE,
+        options.etype,
+        export_settings,
+        default_export_settings,
+        "internal error: export type not set as default"
+    );
+    override_export_parameter!(
+        KEY_EXPORT_DIR,
+        options.dir,
+        export_settings,
+        default_export_settings,
+        "internal error: export directory not set as default"
+    );
+    override_export_parameter!(
+        KEY_EXPORT_SIZE,
+        options.size.map(|val| format!("{}", val)),
+        export_settings,
+        default_export_settings
+    );
+    Ok(export_settings)
 }
 
 fn start(dirs: &cfg::Directories, opt: Opt) -> anyhow::Result<()> {
@@ -296,30 +363,7 @@ fn start(dirs: &cfg::Directories, opt: Opt) -> anyhow::Result<()> {
         settings.set(cfg::KEY_DISPLAY_MODE, format!("{}", display_mode))?;
     }
 
-    let default_export_settings = settings.get_table(cfg::KEY_EXPORT)?;
-    let mut export_settings = HashMap::new();
-    export_settings.insert(
-        String::from(cfg::KEY_EXPORT_TYPE),
-        match opt.export.etype {
-            Some(export_type) => format!("{}", export_type),
-            None => default_export_settings
-                .get(cfg::KEY_EXPORT_TYPE)
-                .expect("internal error: should have been set as default")
-                .clone()
-                .into_str()?,
-        },
-    );
-    export_settings.insert(
-        String::from(cfg::KEY_EXPORT_DIR),
-        match opt.export.dir {
-            Some(export_dir) => export_dir,
-            None => default_export_settings
-                .get(cfg::KEY_EXPORT_DIR)
-                .expect("internal error: should have been set as default")
-                .clone()
-                .into_str()?,
-        },
-    );
+    let export_settings = merge_export_parameters(&settings, &opt.export)?;
     settings.set(cfg::KEY_EXPORT, config::Value::from(export_settings))?;
 
     // Add targets
