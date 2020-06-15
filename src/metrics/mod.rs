@@ -87,10 +87,10 @@ pub enum MetricId {
     )]
     IoReadCall,
     #[strum(
-        serialize = "io:read:count",
+        serialize = "io:read:total",
         message = "number of bytes read from storage or page cache"
     )]
-    IoReadCount,
+    IoReadTotal,
     #[strum(
         serialize = "io:read:storage",
         message = "number of bytes really fetched from storage"
@@ -102,10 +102,10 @@ pub enum MetricId {
     )]
     IoWriteCall,
     #[strum(
-        serialize = "io:write:count",
+        serialize = "io:write:total",
         message = "number of bytes written to storage or page cache"
     )]
-    IoWriteCount,
+    IoWriteTotal,
     #[strum(
         serialize = "io:write:storage",
         message = "number of bytes really sent to storage"
@@ -235,10 +235,10 @@ impl MetricId {
             MetricId::FaultMinor => Some("flt:min"),
             MetricId::FaultMajor => Some("flt:maj"),
             MetricId::IoReadCall => Some("rd:call"),
-            MetricId::IoReadCount => Some("rd:cnt"),
+            MetricId::IoReadTotal => Some("rd:total"),
             MetricId::IoReadStorage => Some("rd:store"),
             MetricId::IoWriteCall => Some("wr:call"),
-            MetricId::IoWriteCount => Some("wr:cnt"),
+            MetricId::IoWriteTotal => Some("wr:total"),
             MetricId::IoWriteStorage => Some("wr:store"),
             MetricId::MapAnonCount => Some("m:anon:cnt"),
             MetricId::MapHeapCount => Some("m:heap:cnt"),
@@ -305,10 +305,10 @@ impl MetricNamesParser {
     fn get_human_format(id: MetricId) -> Formatter {
         match id {
             MetricId::IoReadCall
-            | MetricId::IoReadCount
+            | MetricId::IoReadTotal
             | MetricId::IoReadStorage
             | MetricId::IoWriteCall
-            | MetricId::IoWriteCount
+            | MetricId::IoWriteTotal
             | MetricId::IoWriteStorage => format::size,
             MetricId::MapAnonSize
             | MetricId::MapHeapSize
@@ -431,10 +431,10 @@ mod tests {
             "fault:minor",
             "fault:major/k",
             "io:read:call",
-            "io:read:count/sz",
+            "io:read:total/sz",
             "io:read:storage",
             "io:write:call",
-            "io:write:count",
+            "io:write:total",
             "io:write:storage",
             "mem:rss/mi",
             "mem:vm/ti",
@@ -472,7 +472,7 @@ mod tests {
         assert_eq!(2, metrics2.len());
 
         // Check middle
-        let metric_names3 = vec_of_string(&["io:*:count"]);
+        let metric_names3 = vec_of_string(&["io:*:total"]);
         let mut parser3 = MetricNamesParser::new(false);
         let metrics3 = parser3.parse(&metric_names3).unwrap();
         assert_eq!(2, metrics3.len());

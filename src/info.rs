@@ -450,10 +450,10 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
                 | MetricId::FdPipe
                 | MetricId::FdSocket => self.with_fd_stats(|stat| stat.kinds[&metric.id] as u64),
                 MetricId::IoReadCall => self.with_io(|io| io.rchar),
-                MetricId::IoReadCount => self.with_io(|io| io.syscr),
+                MetricId::IoReadTotal => self.with_io(|io| io.syscr),
                 MetricId::IoReadStorage => self.with_io(|io| io.read_bytes),
                 MetricId::IoWriteCall => self.with_io(|io| io.wchar),
-                MetricId::IoWriteCount => self.with_io(|io| io.syscw),
+                MetricId::IoWriteTotal => self.with_io(|io| io.syscw),
                 MetricId::IoWriteStorage => self.with_io(|io| io.write_bytes),
                 MetricId::MapAnonCount
                 | MetricId::MapHeapCount

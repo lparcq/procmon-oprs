@@ -62,10 +62,10 @@ fn data_source_type(id: MetricId) -> DataSourceType {
         | MetricId::FdMemFile
         | MetricId::FdOther => DataSourceType::Gauge,
         MetricId::IoReadCall
-        | MetricId::IoReadCount
+        | MetricId::IoReadTotal
         | MetricId::IoReadStorage
         | MetricId::IoWriteCall
-        | MetricId::IoWriteCount
+        | MetricId::IoWriteTotal
         | MetricId::IoWriteStorage => DataSourceType::Counter,
         MetricId::MapAnonSize
         | MetricId::MapAnonCount
