@@ -185,9 +185,12 @@ impl Exporter for RrdExporter {
 
     fn close(&mut self) -> anyhow::Result<()> {
         if let Some(stdin) = self.tool.stdin.as_mut() {
+            info!("stopping rrdtool");
             stdin.write_all(b"quit\n")?;
         }
+        info!("waiting for rrdtool to stop");
         self.tool.wait()?;
+        info!("rrdtool stopped");
         Ok(())
     }
 
@@ -222,7 +225,7 @@ impl Exporter for RrdExporter {
                     write!(self.child_in, ":{}", sample.values().next().unwrap())?;
                 }
             }
-            write!(self.child_in, "update {} {}", filename, timestamp.as_secs())?;
+            write!(self.child_in, "\n")?;
             self.read_answer()?;
         }
         Ok(())

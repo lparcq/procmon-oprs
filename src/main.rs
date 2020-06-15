@@ -37,6 +37,7 @@ mod format;
 mod info;
 mod metrics;
 mod proc_dir;
+mod sighdr;
 mod targets;
 mod utils;
 

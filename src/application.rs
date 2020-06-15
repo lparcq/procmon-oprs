@@ -29,6 +29,7 @@ use crate::{
     export::{CsvExporter, Exporter, RrdExporter},
     info::SystemConf,
     metrics::{FormattedMetric, MetricId, MetricNamesParser},
+    sighdr::SignalHandler,
     targets::{TargetContainer, TargetId},
 };
 
@@ -159,10 +160,11 @@ impl Application {
             exporter.open(&collector)?;
         }
 
+        let sighdr = SignalHandler::new()?;
         let mut loop_number: u64 = 0;
         let mut timer = Timer::new(self.every, true);
         let mut drift = DriftMonitor::new(timer.start_time(), DRIFT_NOTIFICATION_DELAY);
-        loop {
+        while !sighdr.caught() {
             let targets_updated = targets.refresh();
             let collect_timestamp = if timer.expired() {
                 timer.reset();
