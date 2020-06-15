@@ -43,6 +43,8 @@ Export
 
 In CSV export, the first column is the number of seconds since the [Unix Epoch](https://en.wikipedia.org/wiki/Unix_time).
 
+[RRDtool](https://oss.oetiker.ch/rrdtool/) creates one file per process. Only raw values are written in the database.
+
 Configuration
 -------------
 

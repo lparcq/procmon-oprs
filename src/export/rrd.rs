@@ -214,7 +214,7 @@ impl Exporter for RrdExporter {
                 for ds in &self.ds {
                     write!(self.child_in, " {}", ds)?;
                 }
-                write!(self.child_in, " RRA:AVERAGE:0.5:1:{}\n", self.size)?;
+                writeln!(self.child_in, " RRA:AVERAGE:0.5:1:{}", self.size)?;
                 self.read_answer()?;
                 self.pids.insert(pid, filename);
             }

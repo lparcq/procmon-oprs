@@ -1,3 +1,7 @@
+2020-06-15  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
+
+	* Version 0.5.0: Export to Round Robin Database.
+
 2020-06-12  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
 
 	* Version 0.4.2: Change option for the metric format.

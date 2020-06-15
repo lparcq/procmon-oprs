@@ -55,7 +55,7 @@ impl CsvExporter {
         for value in row.into_iter() {
             write!(out, "{}{}", separator, value)?;
         }
-        write!(out, "\n")?;
+        writeln!(out)?;
         Ok(())
     }
 
