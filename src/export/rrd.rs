@@ -16,6 +16,7 @@
 
 use anyhow::anyhow;
 use libc::pid_t;
+use log::info;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
@@ -169,10 +170,12 @@ impl Exporter for RrdExporter {
             };
             if let Aggregation::None = agg {
                 self.skip.push(false);
-                self.ds.push(format!(
+                let ds = format!(
                     "DS:{}:{}:{}:0.5:1:{}",
                     ds_name, ds_type, heart_beat, self.size,
-                ));
+                );
+                info!("rrd define {}", ds);
+                self.ds.push(ds);
             } else {
                 self.skip.push(true);
             }
@@ -196,17 +199,19 @@ impl Exporter for RrdExporter {
                 let start_time = timestamp
                     .checked_sub(self.interval)
                     .ok_or_else(|| Error::IntervalTooLarge)?;
+                let step = self.interval.as_secs();
+                info!("rrd create {} step={}", filename, step);
                 write!(
                     self.child_in,
                     "create {} --start={} --step={}",
                     filename,
                     start_time.as_secs(),
-                    self.interval.as_secs()
+                    step
                 )?;
                 for ds in &self.ds {
                     write!(self.child_in, " {}", ds)?;
                 }
-                write!(self.child_in, "RRA:AVERAGE:0.5:1:{}\n", self.size)?;
+                write!(self.child_in, " RRA:AVERAGE:0.5:1:{}\n", self.size)?;
                 self.read_answer()?;
                 self.pids.insert(pid, filename);
             }
