@@ -17,13 +17,13 @@
 #[cfg(unix)]
 extern crate libc;
 
-use clap::arg_enum;
+use argh::FromArgs;
 use log::{error, warn};
 use simplelog::{self, SimpleLogger, TermLogger, WriteLogger};
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::path::PathBuf;
-use structopt::StructOpt;
+use strum_macros::EnumString;
 
 mod agg;
 mod application;
@@ -55,7 +55,7 @@ const APP_NAME: &str = "oprs";
 //
 
 const HELP_MESSAGE: &str = "
-O(bserve)P(rocess)R(e)s(ourses) displays selected metrics for the system or individual processes.
+O(bserve)P(rocess)R(e)s(ourses) displays metrics of individual processes.
 
 Without argument, prints the list of available metrics.
 
@@ -89,84 +89,94 @@ Export options:
 - rrd: Round Robin Database.
 ";
 
-arg_enum! {
-    #[derive(Clone, Copy, Debug)]
-    enum LoggingTarget {
-        Console,
-        File,
-    }
+#[derive(Clone, Copy, Debug, EnumString)]
+enum LoggingTarget {
+    #[strum(serialize = "console")]
+    Console,
+    #[strum(serialize = "file")]
+    File,
 }
 
-arg_enum! {
-    #[derive(Clone, Copy, Debug)]
-    enum ColorTheme {
-        None,
-        Light,
-        Dark,
-    }
+#[derive(Clone, Copy, Debug, EnumString)]
+enum ColorTheme {
+    #[strum(serialize = "none")]
+    None,
+    #[strum(serialize = "light")]
+    Light,
+    #[strum(serialize = "dark")]
+    Dark,
 }
 
 const DEFAULT_DELAY: f64 = 5.0;
 
-#[derive(StructOpt, Debug)]
+#[derive(FromArgs, PartialEq, Debug)]
+/// Export options
 struct ExportOptions {
-    #[structopt(
-        short = "X",
-        long = "export",
-        possible_values = &ExportType::variants(),
-        case_insensitive = true,
-        help = "export type"
+    #[argh(
+        option,
+        short = 'X',
+        from_str_fn(ExportType::from_str),
+        description = "export type"
     )]
-    etype: Option<ExportType>,
+    export_type: Option<ExportType>,
 
-    #[structopt(short = "D", long = "export-dir", help = "export directory.")]
-    dir: Option<String>,
+    #[argh(option, short = 'D', description = "export directory")]
+    export_dir: Option<String>,
 
-    #[structopt(
-        short = "S",
-        long = "export-size",
-        help = "export size (for rrd, the number of rows)."
+    #[argh(
+        option,
+        short = 'D',
+        description = "export size (for rrd, the number of rows)."
     )]
-    size: Option<usize>,
+    export_size: Option<usize>,
 }
 
-#[derive(StructOpt, Debug)]
-#[structopt(name = APP_NAME, about = HELP_MESSAGE)]
+/// Output subcommand
+#[argh(subcommand)]
+enum SubCommandOutput {
+    Export(ExportOptions),
+}
+
+#[derive(FromArgs, PartialEq, Debug)]
+/// Displays metrics of individual processes
 struct Opt {
-    #[structopt(short, long, parse(from_occurrences), help = "activate verbose mode")]
-    verbose: u8,
+    #[argh(switch, short = 'v', description = "verbose mode")]
+    verbose: bool,
 
-    #[structopt(
-        short = "L",
-        long = "logging",
-        possible_values = &LoggingTarget::variants(),
-        case_insensitive = true,
-        default_value = "Console",
-        help = "logging target",
+    #[argh(switch, description = "debug mode")]
+    debug: bool,
+
+    #[argh(
+        option,
+        short = 'L',
+        from_str_fn(LoggingTarget::from_str),
+        description = "logging target"
     )]
-    logging_target: LoggingTarget,
+    logging: LoggingTarget,
 
-    #[structopt(
-        short = "T",
-        long = "theme",
-        possible_values = &ColorTheme::variants(),
-        case_insensitive = true,
-        help = "color theme"
+    #[argh(
+        option,
+        short = 'T',
+        from_str_fn(ColorTheme::from_str),
+        description = "color theme"
     )]
     color_theme: Option<ColorTheme>,
 
-    #[structopt(short, long, help = "number of loops")]
+    #[argh(option, short = 'c', description = "number of loops")]
     count: Option<u64>,
 
-    #[structopt(short = "y", long, help = "delay between two samples (default: 5.0)")]
+    #[argh(
+        option,
+        short = 'y',
+        description = "delay between two samples (default: 5.0)"
+    )]
     every: Option<f64>,
 
-    #[structopt(
-        short,
-        long = "display",
-        possible_values = &DisplayMode::variants(),
-        case_insensitive = true,
-        help = "display mode, if unset uses terminal in priority"
+    #[argh(
+        option,
+        short = 'd',
+        from_str_fn(DisplayMode::from_str),
+        description = "display mode, if unset uses terminal in priority"
     )]
     display_mode: Option<DisplayMode>,
 
@@ -198,6 +208,9 @@ struct Opt {
 
     #[structopt(short = "m", long = "metric", help = "metric to monitor.")]
     metrics: Vec<String>,
+
+    #[argh(subcommand)]
+    output: SubCommandOutput,
 }
 
 //

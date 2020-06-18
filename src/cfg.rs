@@ -14,12 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use clap::arg_enum;
 use config::ConfigError;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
-use thiserror::Error;
+use strum_macros::EnumString;
 
 pub const KEY_APP_NAME: &str = "name";
 pub const KEY_COLOR_THEME: &str = "theme";
@@ -32,34 +31,37 @@ pub const KEY_EXPORT_TYPE: &str = "type";
 pub const KEY_EXPORT_SIZE: &str = "size";
 pub const KEY_METRIC_FORMAT: &str = "format";
 
-arg_enum! {
-    #[derive(Debug)]
-    pub enum DisplayMode {
-        None,
-        Any,
-        Text,
-        Terminal,
-    }
+#[derive(Debug, EnumString, PartialEq)]
+pub enum DisplayMode {
+    #[strum(serialize = "none")]
+    None,
+    #[strum(serialize = "any")]
+    Any,
+    #[strum(serialize = "text")]
+    Text,
+    #[strum(serialize = "term")]
+    Terminal,
 }
 
-arg_enum! {
-    #[derive(Debug)]
-    pub enum ExportType {
-        None,
-        Csv,
-        Rrd
-    }
+#[derive(Debug, EnumString, PartialEq)]
+pub enum ExportType {
+    #[strum(serialize = "none")]
+    None,
+    #[strum(serialize = "csv")]
+    Csv,
+    #[strum(serialize = "rrd")]
+    Rrd,
 }
 
-arg_enum! {
-    #[derive(Clone, Copy, Debug)]
-    pub enum MetricFormat {
-        Raw,
-        Human,
-    }
+#[derive(Clone, Copy, Debug, EnumString, PartialEq)]
+pub enum MetricFormat {
+    #[strum(serialize = "raw")]
+    Raw,
+    #[strum(serialize = "human")]
+    Human,
 }
 
-#[derive(Error, Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("{0}: invalid configuration entry")]
     InvalidConfigurationEntry(&'static str),

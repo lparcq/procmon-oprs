@@ -19,14 +19,13 @@ use procfs::process::Process;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::result;
-use thiserror::Error;
 
 use crate::collector::Collector;
 use crate::info::{ProcessInfo, SystemConf, SystemInfo};
 use crate::proc_dir::{PidFinder, ProcessDir};
 use crate::utils::*;
 
-#[derive(Error, Debug)]
+#[derive(thiserror::Error, Debug)]
 enum Error {
     #[error("{0}: invalid process id")]
     InvalidProcessId(pid_t),

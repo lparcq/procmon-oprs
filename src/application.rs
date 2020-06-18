@@ -17,7 +17,6 @@
 use log::info;
 use std::time::{Duration, SystemTime};
 use strum::{EnumMessage, IntoEnumIterator};
-use thiserror::Error;
 
 use crate::{
     agg::Aggregation,
@@ -36,7 +35,7 @@ use crate::{
 /// Delay in seconds between two notifications for time drift
 const DRIFT_NOTIFICATION_DELAY: u64 = 300;
 
-#[derive(Error, Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("terminal not available")]
     TerminalNotAvailable,

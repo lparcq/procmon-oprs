@@ -18,7 +18,6 @@ use std::collections::HashSet;
 use std::hash::Hash;
 use std::result;
 use strum_macros::{EnumIter, EnumMessage, EnumString, IntoStaticStr};
-use thiserror::Error;
 
 use self::parser::parse_metric_spec;
 use crate::agg::AggregationSet;
@@ -28,7 +27,7 @@ mod parser;
 
 const SHORT_NAME_MAX_LEN: usize = 10;
 
-#[derive(Error, Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("{0}: duplicate metric")]
     DuplicateMetric(String),
