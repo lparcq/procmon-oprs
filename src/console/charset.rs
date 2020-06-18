@@ -46,16 +46,7 @@ pub enum TableChar {
 /// Check if charset is unicode
 pub fn is_unicode() -> bool {
     if let Ok(lang) = std::env::var("LANG") {
-        match env_lang::to_struct(&lang) {
-            Ok(lang) => {
-                if let Some(charset) = lang.charset {
-                    charset.to_lowercase().starts_with("utf")
-                } else {
-                    false
-                }
-            }
-            _ => false,
-        }
+        lang.to_lowercase().contains(".utf")
     } else {
         false
     }
