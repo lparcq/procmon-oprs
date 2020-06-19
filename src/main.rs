@@ -23,7 +23,7 @@ use simplelog::{self, SimpleLogger, TermLogger, WriteLogger};
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::path::PathBuf;
-use strum_macros::EnumString;
+use strum_macros::{EnumString, IntoStaticStr};
 
 mod agg;
 mod application;
@@ -54,42 +54,7 @@ const APP_NAME: &str = "oprs";
 // Options
 //
 
-const HELP_MESSAGE: &str = "
-O(bserve)P(rocess)R(e)s(ourses) displays metrics of individual processes.
-
-Without argument, prints the list of available metrics.
-
-Limited patterns are allowed for metrics: by prefix mem:*, suffix *:call, both io:*:count.
-
-A metric may be followed by a unit. For example: mem:vm/gi
-
-Available units:
-ki  kibi
-mi  mebi
-gi  gibi
-ti  tebi
-k   kilo
-m   mega
-g   giga
-t   tera
-sz  the best unit in k, m, g or t.
-du  format duration as hour, minutes, seconds.
-
-Metrics can be also aggregated using +min and/or +max. For example mem:vm+max/gi prints the virtual
-memory size and the peak size. To get only the max, use: mem:vm-raw+max. To get all: mem:vm+min+max.
-
-For some metrics, min or max is meaningless.
-
-Example, to print the virtual memory size, peak memory size and elapsed time of the system together
-with all bash processes and process with pid 1234:
-  oprs --system -n bash -p 1234 -m mem:vm+max time:elapsed
-
-Export options:
-- csv: comma-separated values, one file per process in the export directory.
-- rrd: Round Robin Database.
-";
-
-#[derive(Clone, Copy, Debug, EnumString)]
+#[derive(Clone, Copy, Debug, PartialEq, EnumString, IntoStaticStr)]
 enum LoggingTarget {
     #[strum(serialize = "console")]
     Console,
@@ -97,7 +62,7 @@ enum LoggingTarget {
     File,
 }
 
-#[derive(Clone, Copy, Debug, EnumString)]
+#[derive(Clone, Copy, Debug, PartialEq, EnumString)]
 enum ColorTheme {
     #[strum(serialize = "none")]
     None,
@@ -110,35 +75,7 @@ enum ColorTheme {
 const DEFAULT_DELAY: f64 = 5.0;
 
 #[derive(FromArgs, PartialEq, Debug)]
-/// Export options
-struct ExportOptions {
-    #[argh(
-        option,
-        short = 'X',
-        from_str_fn(ExportType::from_str),
-        description = "export type"
-    )]
-    export_type: Option<ExportType>,
-
-    #[argh(option, short = 'D', description = "export directory")]
-    export_dir: Option<String>,
-
-    #[argh(
-        option,
-        short = 'D',
-        description = "export size (for rrd, the number of rows)."
-    )]
-    export_size: Option<usize>,
-}
-
-/// Output subcommand
-#[argh(subcommand)]
-enum SubCommandOutput {
-    Export(ExportOptions),
-}
-
-#[derive(FromArgs, PartialEq, Debug)]
-/// Displays metrics of individual processes
+/// Display procfs metrics of processes
 struct Opt {
     #[argh(switch, short = 'v', description = "verbose mode")]
     verbose: bool,
@@ -152,7 +89,7 @@ struct Opt {
         from_str_fn(LoggingTarget::from_str),
         description = "logging target"
     )]
-    logging: LoggingTarget,
+    logging: Option<LoggingTarget>,
 
     #[argh(
         option,
@@ -178,46 +115,58 @@ struct Opt {
         from_str_fn(DisplayMode::from_str),
         description = "display mode, if unset uses terminal in priority"
     )]
-    display_mode: Option<DisplayMode>,
+    display: Option<DisplayMode>,
 
-    #[structopt(flatten)]
-    export: ExportOptions,
+    #[argh(
+        option,
+        short = 'X',
+        from_str_fn(ExportType::from_str),
+        description = "export type"
+    )]
+    export_type: Option<ExportType>,
 
-    #[structopt(
-        short = "F",
-        long = "format",
-        possible_values = &MetricFormat::variants(),
-        case_insensitive = true,
-        help = "format to display metrics")]
-    metric_format: Option<MetricFormat>,
+    #[argh(option, short = 'D', description = "export directory")]
+    export_dir: Option<String>,
 
-    #[structopt(short, long, help = "monitor system")]
+    #[argh(
+        option,
+        short = 'S',
+        description = "export size (for rrd, the number of rows)."
+    )]
+    export_size: Option<usize>,
+
+    #[argh(
+        option,
+        short = 'F',
+        from_str_fn(MetricFormat::from_str),
+        description = "format to display metrics"
+    )]
+    format: Option<MetricFormat>,
+
+    #[argh(switch, short = 's', description = "monitor system")]
     system: bool,
 
-    #[structopt(long = "self", help = "monitor the command itself")]
+    #[argh(switch, description = "monitor the command itself")]
     myself: bool,
 
-    #[structopt(short = "p", long = "pid", help = "process id")]
-    pids: Vec<i32>,
+    #[argh(option, short = 'p', description = "process id")]
+    pid: Vec<i32>,
 
-    #[structopt(short = "f", long = "file", help = "process id file")]
-    files: Vec<String>,
+    #[argh(option, short = 'f', description = "process id file")]
+    file: Vec<String>,
 
-    #[structopt(short = "n", long = "name", help = "process name")]
-    names: Vec<String>,
+    #[argh(option, short = 'n', description = "process name")]
+    name: Vec<String>,
 
-    #[structopt(short = "m", long = "metric", help = "metric to monitor.")]
-    metrics: Vec<String>,
-
-    #[argh(subcommand)]
-    output: SubCommandOutput,
+    #[argh(positional, description = "metric to monitor")]
+    metric: Vec<String>,
 }
 
 //
 // Logging
 //
 
-fn configure_logging(dirs: &cfg::Directories, verbosity: u8, target: LoggingTarget) {
+fn configure_logging(dirs: &cfg::Directories, verbose: bool, debug: bool, target: LoggingTarget) {
     fn configure_console_logging(log_level: simplelog::LevelFilter) -> anyhow::Result<()> {
         TermLogger::init(
             log_level,
@@ -244,13 +193,12 @@ fn configure_logging(dirs: &cfg::Directories, verbosity: u8, target: LoggingTarg
         )?;
         Ok(())
     }
-    let log_level = match verbosity {
-        0 => simplelog::LevelFilter::Off,
-        1 => simplelog::LevelFilter::Error,
-        2 => simplelog::LevelFilter::Warn,
-        3 => simplelog::LevelFilter::Info,
-        4 => simplelog::LevelFilter::Debug,
-        _ => simplelog::LevelFilter::Trace,
+    let log_level = if debug {
+        simplelog::LevelFilter::Debug
+    } else if verbose {
+        simplelog::LevelFilter::Info
+    } else {
+        simplelog::LevelFilter::Warn
     };
     match target {
         LoggingTarget::Console => configure_console_logging(log_level),
@@ -273,7 +221,7 @@ macro_rules! override_export_parameter {
         $params.insert(
             String::from(cfg::$key_name),
             match &$value {
-                Some(ref value) => value.to_string(),
+                Some(ref value) => value.as_str().to_string(),
                 None => $defaults
                     .get(cfg::$key_name)
                     .expect($errmsg)
@@ -322,27 +270,27 @@ fn read_config(mut settings: &mut config::Config, dirs: &cfg::Directories) -> an
 
 fn merge_export_parameters(
     settings: &config::Config,
-    options: &ExportOptions,
+    options: &Opt,
 ) -> anyhow::Result<HashMap<String, String>> {
     let default_export_settings = settings.get_table(cfg::KEY_EXPORT)?;
     let mut export_settings = HashMap::new();
     override_export_parameter!(
         KEY_EXPORT_TYPE,
-        options.etype,
+        options.export_type,
         export_settings,
         default_export_settings,
         "internal error: export type not set as default"
     );
     override_export_parameter!(
         KEY_EXPORT_DIR,
-        options.dir,
+        options.export_dir,
         export_settings,
         default_export_settings,
         "internal error: export directory not set as default"
     );
     override_export_parameter!(
         KEY_EXPORT_SIZE,
-        options.size.map(|val| format!("{}", val)),
+        options.export_size.map(|val| format!("{}", val)),
         export_settings,
         default_export_settings
     );
@@ -370,14 +318,14 @@ fn start(dirs: &cfg::Directories, opt: Opt) -> anyhow::Result<()> {
             },
         )?;
     };
-    if let Some(format) = opt.metric_format {
-        settings.set(cfg::KEY_METRIC_FORMAT, format!("{}", format))?;
+    if let Some(format) = opt.format {
+        settings.set(cfg::KEY_METRIC_FORMAT, format.as_str())?;
     }
-    if let Some(display_mode) = opt.display_mode {
-        settings.set(cfg::KEY_DISPLAY_MODE, format!("{}", display_mode))?;
+    if let Some(display_mode) = opt.display {
+        settings.set(cfg::KEY_DISPLAY_MODE, display_mode.as_str())?;
     }
 
-    let export_settings = merge_export_parameters(&settings, &opt.export)?;
+    let export_settings = merge_export_parameters(&settings, &opt)?;
     settings.set(cfg::KEY_EXPORT, config::Value::from(export_settings))?;
 
     // Add targets
@@ -388,21 +336,26 @@ fn start(dirs: &cfg::Directories, opt: Opt) -> anyhow::Result<()> {
     if opt.myself {
         target_ids.push(TargetId::Pid(std::process::id() as libc::pid_t));
     }
-    for pid in opt.pids {
+    for pid in opt.pid {
         target_ids.push(TargetId::Pid(pid));
     }
-    for pid_file in opt.files {
+    for pid_file in opt.file {
         let path = PathBuf::from(pid_file.as_str());
         target_ids.push(TargetId::PidFile(path));
     }
-    for name in opt.names {
+    for name in opt.name {
         target_ids.push(TargetId::ProcessName(name));
     }
     if target_ids.is_empty() {
         warn!("no process to monitor, exiting.");
     } else {
-        let mut app = Application::new(&settings, &opt.metrics)?;
-        configure_logging(&dirs, opt.verbose + 1, opt.logging_target);
+        let mut app = Application::new(&settings, &opt.metric)?;
+        configure_logging(
+            &dirs,
+            opt.verbose,
+            opt.debug,
+            opt.logging.unwrap_or(LoggingTarget::Console),
+        );
         let system_conf = info::SystemConf::new()?;
         if let Err(err) = app.run(&target_ids, &system_conf) {
             error!("{}", err);
@@ -413,8 +366,8 @@ fn start(dirs: &cfg::Directories, opt: Opt) -> anyhow::Result<()> {
 
 fn main() {
     if let Ok(dirs) = cfg::Directories::new(APP_NAME) {
-        let opt = Opt::from_args();
-        if opt.metrics.is_empty() {
+        let opt: Opt = argh::from_env();
+        if opt.metric.is_empty() {
             application::list_metrics();
         } else if let Err(err) = start(&dirs, opt) {
             eprintln!("{}", err);

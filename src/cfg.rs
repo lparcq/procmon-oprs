@@ -18,7 +18,7 @@ use config::ConfigError;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
-use strum_macros::EnumString;
+use strum_macros::{EnumString, IntoStaticStr};
 
 pub const KEY_APP_NAME: &str = "name";
 pub const KEY_COLOR_THEME: &str = "theme";
@@ -31,7 +31,7 @@ pub const KEY_EXPORT_TYPE: &str = "type";
 pub const KEY_EXPORT_SIZE: &str = "size";
 pub const KEY_METRIC_FORMAT: &str = "format";
 
-#[derive(Debug, EnumString, PartialEq)]
+#[derive(Clone, Copy, Debug, EnumString, IntoStaticStr, PartialEq)]
 pub enum DisplayMode {
     #[strum(serialize = "none")]
     None,
@@ -43,7 +43,13 @@ pub enum DisplayMode {
     Terminal,
 }
 
-#[derive(Debug, EnumString, PartialEq)]
+impl DisplayMode {
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
+}
+
+#[derive(Clone, Copy, Debug, EnumString, IntoStaticStr, PartialEq)]
 pub enum ExportType {
     #[strum(serialize = "none")]
     None,
@@ -53,12 +59,24 @@ pub enum ExportType {
     Rrd,
 }
 
-#[derive(Clone, Copy, Debug, EnumString, PartialEq)]
+impl ExportType {
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
+}
+
+#[derive(Clone, Copy, Debug, EnumString, IntoStaticStr, PartialEq)]
 pub enum MetricFormat {
     #[strum(serialize = "raw")]
     Raw,
     #[strum(serialize = "human")]
     Human,
+}
+
+impl MetricFormat {
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
 }
 
 #[derive(thiserror::Error, Debug)]

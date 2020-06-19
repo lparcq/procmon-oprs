@@ -1,3 +1,8 @@
+2020-06-19  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
+
+	* Version 0.6.0: replace clap with argh to save compile time and size.
+	Option -m has been removed. Metrics are positional arguments.
+
 2020-06-15  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
 
 	* Version 0.5.0: Export to Round Robin Database.

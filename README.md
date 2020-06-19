@@ -15,19 +15,49 @@ Features
 * Select processes by PID, PID file or name.
 * Display in plain text or a terminal UI.
 
-Basic usage
------------
+Example
+-------
 
 To get the memory size, elapsed time and page fault of a process by PID (firefox), a process by pid
 file (pulseaudio) and a process by name (bash), run:
 
-    oprs -F human -p 6913 -f pulseaudio.pid -n dhclient -m mem:vm mem:rss+max time:elapsed fault:major
+    oprs -F human -p 6913 -f pulseaudio.pid -n dhclient mem:vm mem:rss+max time:elapsed fault:major
 
 ![Screenshot](doc/screenshot.jpeg)
 
 Without argument, the command prints the available metrics.
 
 By default, the raw figure is printed unless -raw is added: mem:rss-raw+min+max. 
+
+Usage
+-----
+
+Without argument, the command prints the list of available metrics.
+
+Limited patterns are allowed for metrics: by prefix mem:*, suffix *:call, both io:*:count.
+
+A metric may be followed by a unit. For example: mem:vm/gi
+
+Available units:
+- ki  kibi
+- mi  mebi
+- gi  gibi
+- ti  tebi
+- k   kilo
+- m   mega
+- g   giga
+- t   tera
+- sz  the best unit in k, m, g or t.
+- du  format duration as hour, minutes, seconds.
+
+Metrics can be also aggregated using +min and/or +max. For example mem:vm+max/gi prints the virtual
+memory size and the peak size. To get only the max, use: mem:vm-raw+max. To get all: mem:vm+min+max.
+
+For some metrics, min or max is meaningless.
+
+Export options:
+- csv: comma-separated values, one file per process in the export directory.
+- rrd: Round Robin Database.
 
 CPU usage
 ---------
