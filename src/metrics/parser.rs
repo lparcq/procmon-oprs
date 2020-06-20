@@ -63,14 +63,14 @@ fn expand_metric_name(metric_ids: &mut Vec<MetricId>, name: &str) {
     }
 }
 
-fn alpha_or_colon(input: &str) -> IResult<&str, &str> {
+/// parse a metric name or pattern
+fn parse_metric_pattern(input: &str) -> IResult<&str, &str> {
     take_while(|c| c == ':' || c == '*' || (c >= 'a' && c <= 'z'))(input)
 }
 
 /// Parse metric name such as abc:def
 fn parse_metric(input: &str) -> IResult<&str, Vec<MetricId>> {
-    //let (input, name) = is_not("/-+")(input)?;
-    let (input, name) = alpha_or_colon(input)?;
+    let (input, name) = parse_metric_pattern(input)?;
     let mut metric_ids = Vec::new();
     match MetricId::from_str(name) {
         Ok(id) => metric_ids.push(id),
@@ -79,6 +79,7 @@ fn parse_metric(input: &str) -> IResult<&str, Vec<MetricId>> {
     Ok((input, metric_ids))
 }
 
+/// Parse aggregations: optional -raw followed by optional +min, ...
 fn parse_aggregations(input: &str) -> IResult<&str, AggregationSet> {
     let mut agg = AggregationSet::new();
     let (input, res) = opt(preceded(char('-'), tag("raw")))(input)?;
@@ -95,6 +96,7 @@ fn parse_aggregations(input: &str) -> IResult<&str, AggregationSet> {
     Ok((input, agg))
 }
 
+/// Parse format specification /unit (ex: /ki)
 fn parse_formatter(input: &str) -> IResult<&str, Option<Formatter>> {
     let (input, res) = opt(preceded(
         char('/'),
@@ -129,6 +131,7 @@ fn parse_formatter(input: &str) -> IResult<&str, Option<Formatter>> {
     ))
 }
 
+/// Parse metric specification with possibly garbage at the end
 fn parse_metric_spec_partial(
     input: &str,
 ) -> IResult<&str, (Vec<MetricId>, AggregationSet, Option<Formatter>)> {
@@ -138,6 +141,7 @@ fn parse_metric_spec_partial(
     Ok((input, (metric_ids, aggs, fmt)))
 }
 
+/// Parse metric specification name[-raw][+modifier]*[/unit]
 pub fn parse_metric_spec(
     input: &str,
 ) -> result::Result<(Vec<MetricId>, AggregationSet, Option<Formatter>), ()> {
