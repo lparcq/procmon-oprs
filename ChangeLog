@@ -1,3 +1,8 @@
+2020-06-21  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
+
+	* Version 0.7.0: Use light-ini instead of config to reduce size.
+	Command line options have changed.
+
 2020-06-19  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
 
 	* Version 0.6.0: Replace clap with argh to save compile time and size.
