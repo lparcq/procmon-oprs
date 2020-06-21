@@ -78,17 +78,29 @@ In CSV export, the first column is the number of seconds since the [Unix Epoch](
 Configuration
 -------------
 
-Configuration file name is `settings` with extension .yaml, .json or .toml. It's located according to
+Configuration file name is `settings.ini`. It's located according to
 the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/).
 
-Example `~/.config/oprs/settings.yaml`:
+Example `~/.config/oprs/settings.ini`:
 
-    display: text
-    format: human
-    theme: light
-    export:
-        dir: /path/to/export/directory
-        type: none
+    [display]
+    mode = term
+    every = 10
+    format = human
+    theme = light
+
+    [export]
+    kind = rrd
+    dir = /tmp
+    size = 100
+
+    [logging]
+    file = /var/log/oprs.log
+    level = info
+
+    [targets]
+    system = yes
+    myself = yes
 
 License
 -------

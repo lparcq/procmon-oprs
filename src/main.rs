@@ -71,7 +71,7 @@ struct Opt {
         option,
         short = 'T',
         from_str_fn(BuiltinTheme::from_str),
-        description = "color theme"
+        description = "color theme (light, dark)"
     )]
     color_theme: Option<BuiltinTheme>,
 
@@ -89,7 +89,7 @@ struct Opt {
         option,
         short = 'd',
         from_str_fn(DisplayMode::from_str),
-        description = "display mode, if unset uses terminal in priority"
+        description = "display mode, if unset uses terminal in priority (none, any, text, term)"
     )]
     display: Option<DisplayMode>,
 
@@ -97,7 +97,7 @@ struct Opt {
         option,
         short = 'X',
         from_str_fn(ExportType::from_str),
-        description = "export type"
+        description = "export type (none, csv, rrd)"
     )]
     export_type: Option<ExportType>,
 
@@ -115,7 +115,7 @@ struct Opt {
         option,
         short = 'F',
         from_str_fn(MetricFormat::from_str),
-        description = "format to display metrics"
+        description = "format to display metrics (raw, human)"
     )]
     format: Option<MetricFormat>,
 
