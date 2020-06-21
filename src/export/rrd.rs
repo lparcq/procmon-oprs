@@ -242,7 +242,7 @@ mod test {
     fn parse_rrdtool_answer() -> anyhow::Result<()> {
         let mut bufok = io::Cursor::new(Vec::<u8>::new());
         write!(bufok, "OK u:0,01 s:0,02 r:8,05\n")?;
-        bufok.seek(io::SeekFrom::Start(0)).unwrap();
+        bufok.seek(io::SeekFrom::Start(0))?;
         read_rrdtool_answer(&mut bufok)?;
 
         let mut buferr = io::Cursor::new(Vec::<u8>::new());
@@ -250,7 +250,7 @@ mod test {
             buferr,
             "ERROR: you must define at least one Round Robin Archive\n"
         )?;
-        buferr.seek(io::SeekFrom::Start(0)).unwrap();
+        buferr.seek(io::SeekFrom::Start(0))?;
         match read_rrdtool_answer(&mut buferr) {
             Ok(()) => panic!("rrdtool error not correctly parsed"),
             Err(err) => {

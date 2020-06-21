@@ -1,7 +1,7 @@
 [package]
 name = "procmon-oprs"
-version = "0.6.0"
-authors = ["Laurent Pelecq <lpelecq+oprs@circoise.eu>"]
+version = "0.7.0"
+authors = ["Laurent Pelecq <lpelecq+rust@circoise.eu>"]
 description = "A process monitor for Linux"
 readme = "README.md"
 homepage = "https://github.com/lparcq/procmon-oprs"
@@ -18,20 +18,20 @@ path = "src/main.rs"
 anyhow = "1"
 argh = "0.1"
 chrono = "0.4"
-config = "0"
 console = "0"
 ctrlc = { version = "3.0", features = ["termination"] }
 itertools = "0.9"
 libc = "0.2"
+light-ini = "0.1"
 log = "0"
 nom = "5"
 procfs = "0.7"
 simplelog = "0.7"
 strum = "0.18"
 strum_macros = "0.18"
+termion = "1.5"
 thiserror = "1.0"
 xdg = "2"
-termion = "1.5"
 
 [profile.release]
 lto = true

@@ -20,7 +20,7 @@ use strum::{EnumMessage, IntoEnumIterator};
 
 use crate::{
     agg::Aggregation,
-    cfg::{self, DisplayMode, ExportParameters, ExportType, MetricFormat},
+    cfg::{DisplayMode, ExportSettings, ExportType, MetricFormat, Settings},
     clock::{DriftMonitor, Timer},
     collector::Collector,
     console::{BuiltinTheme, Screen},
@@ -54,27 +54,25 @@ pub fn list_metrics() {
 }
 
 /// Application displaying the process metrics
-pub struct Application {
+pub struct Application<'s> {
+    display_mode: DisplayMode,
     every: Duration,
     count: Option<u64>,
     metrics: Vec<FormattedMetric>,
-    display_mode: DisplayMode,
-    export_params: ExportParameters,
+    export_params: &'s ExportSettings,
     theme: Option<BuiltinTheme>,
 }
 
 /// Get export type
 
-impl Application {
-    pub fn new(settings: &config::Config, metric_names: &[String]) -> anyhow::Result<Application> {
-        let every = cfg::get_every(settings)?;
-        let count = settings.get_int(cfg::KEY_COUNT).map(|c| c as u64).ok();
-        let format = cfg::get_metric_format(&settings)?;
-        let mut metrics_parser = MetricNamesParser::new(match format {
+impl<'s> Application<'s> {
+    pub fn new(settings: &'s Settings, metric_names: &[String]) -> anyhow::Result<Application<'s>> {
+        let every = Duration::from_millis((settings.display.every * 1000.0) as u64);
+        let mut metrics_parser = MetricNamesParser::new(match settings.display.format {
             MetricFormat::Human => true,
             _ => false,
         });
-        let display_mode = match cfg::get_display_mode(settings)? {
+        let display_mode = match settings.display.mode {
             DisplayMode::Any => {
                 if TerminalDevice::is_available() {
                     Ok(DisplayMode::Terminal)
@@ -92,22 +90,13 @@ impl Application {
             display_mode => Ok(display_mode),
         }?;
 
-        let export_params = cfg::ExportParameters::get(&settings)?;
-        let theme = settings
-            .get_str(cfg::KEY_COLOR_THEME)
-            .unwrap_or_else(|_| String::from("none"));
-
         Ok(Application {
-            every,
-            count,
-            metrics: metrics_parser.parse(metric_names)?,
             display_mode,
-            export_params,
-            theme: match theme.as_str() {
-                "dark" => Some(BuiltinTheme::Dark),
-                "light" => Some(BuiltinTheme::Light),
-                _ => None,
-            },
+            every,
+            count: settings.display.count,
+            metrics: metrics_parser.parse(metric_names)?,
+            export_params: &settings.export,
+            theme: settings.display.theme,
         })
     }
 
@@ -130,7 +119,7 @@ impl Application {
             DisplayMode::Text => Some(Box::new(TextDevice::new())),
             DisplayMode::None => None,
         };
-        let mut exporter: Option<Box<dyn Exporter>> = match self.export_params.etype {
+        let mut exporter: Option<Box<dyn Exporter>> = match self.export_params.kind {
             ExportType::Csv => Some(Box::new(CsvExporter::new(self.export_params.dir.as_path()))),
             ExportType::Rrd => Some(Box::new(RrdExporter::new(
                 self.export_params.dir.as_path(),

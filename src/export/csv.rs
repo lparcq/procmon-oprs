@@ -147,7 +147,7 @@ mod test {
     fn write_csv_line<D: Display>(values: &[D]) -> io::Result<String> {
         let mut buf = io::Cursor::new(Vec::<u8>::new());
         CsvExporter::write_line(&mut buf, values.iter(), ",")?;
-        buf.seek(io::SeekFrom::Start(0)).unwrap();
+        buf.seek(io::SeekFrom::Start(0))?;
         let mut line = String::new();
         buf.read_line(&mut line)?;
         Ok(line)

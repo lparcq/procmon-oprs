@@ -14,22 +14,27 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use config::ConfigError;
-use std::path::{Path, PathBuf};
+use light_ini::{IniHandler, IniParser};
+use std::path::PathBuf;
 use std::str::FromStr;
-use std::time::Duration;
 use strum_macros::{EnumString, IntoStaticStr};
 
-pub const KEY_APP_NAME: &str = "name";
-pub const KEY_COLOR_THEME: &str = "theme";
-pub const KEY_COUNT: &str = "count";
-pub const KEY_DISPLAY_MODE: &str = "display";
-pub const KEY_EVERY: &str = "every";
-pub const KEY_EXPORT: &str = "export";
-pub const KEY_EXPORT_DIR: &str = "dir";
-pub const KEY_EXPORT_TYPE: &str = "type";
-pub const KEY_EXPORT_SIZE: &str = "size";
-pub const KEY_METRIC_FORMAT: &str = "format";
+pub use crate::console::BuiltinTheme;
+
+pub const DEFAULT_DELAY: f64 = 5.0;
+pub const LOG_FILE_NAME: &str = "settings";
+
+#[derive(Clone, Copy, Debug, PartialEq, EnumString, IntoStaticStr)]
+pub enum LoggingLevel {
+    #[strum(serialize = "error")]
+    Error,
+    #[strum(serialize = "warning")]
+    Warning,
+    #[strum(serialize = "info")]
+    Info,
+    #[strum(serialize = "debug")]
+    Debug,
+}
 
 #[derive(Clone, Copy, Debug, EnumString, IntoStaticStr, PartialEq)]
 pub enum DisplayMode {
@@ -80,11 +85,13 @@ impl MetricFormat {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum Error {
-    #[error("{0}: invalid configuration entry")]
-    InvalidConfigurationEntry(&'static str),
+pub enum ConfigError {
+    #[error("{0}: invalid section")]
+    InvalidSection(String),
+    #[error("{0}: invalid parameter name")]
+    InvalidOption(String),
     #[error("{0}: invalid parameter value")]
-    InvalidParameter(&'static str),
+    InvalidParameter(String),
     #[error("{0}: unknown display mode")]
     UnknownDisplayMode(String),
     #[error("{0}: unknown export type")]
@@ -93,216 +100,291 @@ pub enum Error {
     UnknownMetricFormat(String),
 }
 
-const EXTENSIONS: &[&str] = &["toml", "yaml", "json"];
+/// Parameters for display
+pub struct DisplaySettings {
+    pub mode: DisplayMode,
+    pub every: f64,
+    pub count: Option<u64>,
+    pub format: MetricFormat,
+    pub theme: Option<BuiltinTheme>,
+}
 
+impl DisplaySettings {
+    fn new() -> DisplaySettings {
+        DisplaySettings {
+            mode: DisplayMode::Any,
+            every: DEFAULT_DELAY,
+            count: None,
+            format: MetricFormat::Raw,
+            theme: None,
+        }
+    }
+}
+
+/// Parameters for export
+pub struct ExportSettings {
+    pub kind: ExportType,
+    pub dir: PathBuf,
+    pub size: Option<usize>,
+}
+
+impl ExportSettings {
+    fn new() -> ExportSettings {
+        ExportSettings {
+            kind: ExportType::None,
+            dir: PathBuf::from("."),
+            size: None,
+        }
+    }
+}
+
+/// Parameters for logging
+pub struct LoggingSettings {
+    pub file: Option<PathBuf>,
+    pub level: LoggingLevel,
+}
+
+impl LoggingSettings {
+    fn new() -> LoggingSettings {
+        LoggingSettings {
+            file: None,
+            level: LoggingLevel::Warning,
+        }
+    }
+}
+
+/// Parameters for special targets
+pub struct TargetSettings {
+    pub system: bool,
+    pub myself: bool,
+}
+
+impl TargetSettings {
+    fn new() -> TargetSettings {
+        TargetSettings {
+            system: false,
+            myself: false,
+        }
+    }
+}
+
+/// Parameters for the application
+pub struct Settings {
+    pub display: DisplaySettings,
+    pub export: ExportSettings,
+    pub logging: LoggingSettings,
+    pub targets: TargetSettings,
+}
+
+impl Settings {
+    fn new() -> Settings {
+        Settings {
+            display: DisplaySettings::new(),
+            export: ExportSettings::new(),
+            logging: LoggingSettings::new(),
+            targets: TargetSettings::new(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, EnumString)]
+enum ConfigSection {
+    #[strum(serialize = "display")]
+    Display,
+    #[strum(serialize = "export")]
+    Export,
+    #[strum(serialize = "logging")]
+    Logging,
+    #[strum(serialize = "targets")]
+    Targets,
+}
+
+/// Configuration handler
+struct ConfigHandler<'a> {
+    section: Option<ConfigSection>,
+    settings: &'a mut Settings,
+}
+
+impl<'a> ConfigHandler<'a> {
+    fn new(settings: &'a mut Settings) -> ConfigHandler<'a> {
+        ConfigHandler {
+            section: None,
+            settings,
+        }
+    }
+
+    fn parse_bool(key: &str, value: &str) -> Result<bool, ConfigError> {
+        match value {
+            "yes" | "true" => Ok(true),
+            "no" | "false" => Ok(false),
+            _ => Err(ConfigError::InvalidParameter(key.to_string())),
+        }
+    }
+}
+
+macro_rules! from_param {
+    ($key:expr, $res:expr) => {
+        $res.map_err(|_| ConfigError::InvalidParameter($key.to_string()))
+    };
+    ($enum:ident, $key:expr, $value:expr) => {
+        from_param!($key, $enum::from_str($value))
+    };
+}
+
+impl<'a> IniHandler for ConfigHandler<'a> {
+    type Error = ConfigError;
+
+    fn section(&mut self, name: &str) -> Result<(), Self::Error> {
+        self.section = Some(
+            ConfigSection::from_str(name)
+                .map_err(|_| ConfigError::InvalidSection(name.to_string()))?,
+        );
+        Ok(())
+    }
+
+    fn option(&mut self, key: &str, value: &str) -> Result<(), Self::Error> {
+        match &self.section {
+            None => return Err(ConfigError::InvalidOption(key.to_string())),
+            Some(ConfigSection::Display) => {
+                let mut settings = &mut self.settings.display;
+                match key {
+                    "mode" => settings.mode = from_param!(DisplayMode, key, value)?,
+                    "every" => settings.every = from_param!(key, value.parse::<f64>())?,
+                    "format" => settings.format = from_param!(MetricFormat, key, value)?,
+                    "theme" => settings.theme = Some(from_param!(BuiltinTheme, key, value)?),
+                    _ => return Err(ConfigError::InvalidOption(key.to_string())),
+                }
+            }
+            Some(ConfigSection::Export) => {
+                let mut settings = &mut self.settings.export;
+                match key {
+                    "kind" => {
+                        settings.kind = ExportType::from_str(value)
+                            .map_err(|_| ConfigError::UnknownExportType(value.to_string()))?
+                    }
+                    "dir" | "directory" => settings.dir = PathBuf::from(value),
+                    "size" => settings.size = Some(from_param!(key, value.parse::<usize>())?),
+                    _ => return Err(ConfigError::InvalidOption(key.to_string())),
+                }
+            }
+            Some(ConfigSection::Logging) => {
+                let mut settings = &mut self.settings.logging;
+                match key {
+                    "file" => settings.file = Some(PathBuf::from(value)),
+                    "level" => settings.level = from_param!(LoggingLevel, key, value)?,
+                    _ => return Err(ConfigError::InvalidOption(key.to_string())),
+                }
+            }
+            Some(ConfigSection::Targets) => {
+                let mut settings = &mut self.settings.targets;
+                match key {
+                    "system" => settings.system = ConfigHandler::parse_bool(key, value)?,
+                    "myself" => settings.myself = ConfigHandler::parse_bool(key, value)?,
+                    _ => return Err(ConfigError::InvalidOption(key.to_string())),
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Access to standard directories
 pub struct Directories {
-    app_name: String,
     xdg_dirs: xdg::BaseDirectories,
 }
 
 impl Directories {
     pub fn new(app_name: &str) -> anyhow::Result<Directories> {
         Ok(Directories {
-            app_name: String::from(app_name),
             xdg_dirs: xdg::BaseDirectories::with_prefix(app_name)?,
         })
     }
 
-    /// Path of the log file in the runtime directory
-    pub fn get_log_file(&self) -> anyhow::Result<PathBuf> {
-        let basename = format!("{}.log", self.app_name);
-        let path = xdg::BaseDirectories::new()?.place_runtime_file(basename)?;
-        Ok(path)
+    /// Return the first config file in the path
+    fn first_config_file(&self, name: &str) -> Option<PathBuf> {
+        let basename = format!("{}.ini", name);
+        self.xdg_dirs.find_config_file(basename)
     }
 
-    fn config_file_in_dir<P>(name: &str, dir: P) -> Option<PathBuf>
-    where
-        P: AsRef<Path>,
-    {
-        for extension in EXTENSIONS {
-            let basename = format!("{}.{}", name, extension);
-            let path = dir.as_ref().join(basename);
-            if path.exists() {
-                return Some(path);
-            }
+    /// Read INI configuration file
+    pub fn read_config_file(&self, name: &str) -> anyhow::Result<Settings> {
+        let mut settings = Settings::new();
+        if let Some(config_file_name) = self.first_config_file(name) {
+            let mut handler = ConfigHandler::new(&mut settings);
+            let mut parser = IniParser::new(&mut handler);
+            parser.parse_file(config_file_name)?;
         }
-        None
-    }
-
-    /// Return the first config file in the path with extension .toml, .yaml, .json
-    pub fn first_config_file(&self, name: &str) -> Option<PathBuf> {
-        let home = self.xdg_dirs.get_config_home();
-        Directories::config_file_in_dir(name, home).or_else(|| {
-            for dir in self.xdg_dirs.get_config_dirs() {
-                if let Some(path) = Directories::config_file_in_dir(name, dir) {
-                    return Some(path);
-                }
-            }
-            None
-        })
-    }
-}
-
-pub struct Reader<'a> {
-    dirs: &'a Directories,
-}
-
-impl<'a> Reader<'a> {
-    pub fn new(dirs: &'a Directories) -> anyhow::Result<Reader> {
-        Ok(Reader { dirs })
-    }
-
-    /// Read config file searching for extension .toml, .yaml, .json.
-    pub fn read_config_file(&self, config: &mut config::Config, name: &str) -> anyhow::Result<()> {
-        if let Some(config_file_name) = self.dirs.first_config_file(name) {
-            let config_file = config::File::from(config_file_name);
-            config.merge(config_file)?;
-        }
-        Ok(())
-    }
-}
-
-/// Return the delay for collecting metrics
-pub fn get_every(settings: &config::Config) -> anyhow::Result<Duration> {
-    Ok(Duration::from_millis(
-        (settings
-            .get_float(KEY_EVERY)
-            .map_err(|_| Error::InvalidParameter(KEY_EVERY))?
-            * 1000.0) as u64,
-    ))
-}
-
-/// Return the best display mode for any and check if mode is available otherwise.
-pub fn get_display_mode(settings: &config::Config) -> anyhow::Result<DisplayMode> {
-    match settings.get_str(KEY_DISPLAY_MODE) {
-        Ok(value) => {
-            let name = value.as_str();
-            Ok(DisplayMode::from_str(name)
-                .map_err(|_| Error::UnknownDisplayMode(name.to_string()))?)
-        }
-        Err(ConfigError::NotFound(_)) => Ok(DisplayMode::Any),
-        _ => Err(Error::InvalidConfigurationEntry(KEY_DISPLAY_MODE))?,
-    }
-}
-
-/// Get metric format
-pub fn get_metric_format(settings: &config::Config) -> anyhow::Result<MetricFormat> {
-    let name = settings.get_str(KEY_METRIC_FORMAT)?;
-    let format =
-        MetricFormat::from_str(&name).map_err(|_| Error::UnknownMetricFormat(name.to_string()))?;
-    Ok(format)
-}
-
-/// Export parameters
-pub struct ExportParameters {
-    pub etype: ExportType,
-    pub dir: PathBuf,
-    pub size: Option<usize>,
-}
-
-impl ExportParameters {
-    /// Get export parameter: type and directory
-    pub fn get(settings: &config::Config) -> anyhow::Result<ExportParameters> {
-        match settings.get_table(KEY_EXPORT) {
-            Ok(settings) => {
-                let etype = match settings.get(KEY_EXPORT_TYPE) {
-                    Some(value) => {
-                        let name = value.clone().into_str()?;
-                        ExportType::from_str(&name)
-                            .map_err(|_| Error::UnknownExportType(name.to_string()))?
-                    }
-                    None => ExportType::None,
-                };
-                let dir = PathBuf::from(match settings.get(KEY_EXPORT_DIR) {
-                    Some(value) => value.clone().into_str()?,
-                    None => String::from("."),
-                });
-                let size = match settings.get(KEY_EXPORT_SIZE) {
-                    Some(size) => Some(size.clone().into_int()? as usize),
-                    None => None,
-                };
-                Ok(ExportParameters { etype, dir, size })
-            }
-            Err(ConfigError::NotFound(_)) => Ok(ExportParameters {
-                etype: ExportType::None,
-                dir: PathBuf::from("."),
-                size: None,
-            }),
-            _ => Err(Error::InvalidConfigurationEntry(KEY_EXPORT))?,
-        }
+        Ok(settings)
     }
 }
 
 #[cfg(test)]
 mod tests {
 
-    use std::collections::HashMap;
+    use std::io::{self, Seek, Write};
+    use std::path::PathBuf;
 
     use super::{
-        get_display_mode, get_every, get_metric_format, DisplayMode, ExportParameters, ExportType,
-        MetricFormat,
+        BuiltinTheme, ConfigHandler, DisplayMode, ExportType, IniParser, LoggingLevel,
+        MetricFormat, Settings,
     };
 
-    #[test]
-    fn parameter_every() -> anyhow::Result<()> {
-        let mut settings = config::Config::default();
-        assert!(get_every(&settings).is_err());
-        settings.set(super::KEY_EVERY, 60)?;
-        assert_eq!(60, get_every(&settings)?.as_secs());
-        Ok(())
-    }
+    const VALID_INI: &str = "[display]
+mode = term
+every = 10
+format = human
+theme = light
+
+[export]
+kind = rrd
+dir = /tmp
+size = 100
+
+[logging]
+file = /var/log/oprs.log
+level = info
+
+[targets]
+system = true
+myself = yes
+";
 
     #[test]
-    fn parameter_display_mode() -> anyhow::Result<()> {
-        let mut settings = config::Config::default();
-        match get_display_mode(&settings)? {
-            DisplayMode::Any => (),
-            _ => panic!("expecting DisplayMode::Any"),
-        }
-        settings.set(super::KEY_DISPLAY_MODE, "invalid")?;
-        assert!(get_display_mode(&settings).is_err());
-        settings.set(super::KEY_DISPLAY_MODE, "text")?;
-        match get_display_mode(&settings)? {
-            DisplayMode::Text => Ok(()),
-            _ => panic!("expecting DisplayMode::Text"),
-        }
-    }
+    fn parse_valid_ini() -> io::Result<()> {
+        let mut buf = io::Cursor::new(Vec::<u8>::new());
+        write!(buf, "{}", VALID_INI)?;
+        buf.seek(io::SeekFrom::Start(0))?;
+        let mut settings = Settings::new();
+        assert_eq!(DisplayMode::Any, settings.display.mode);
+        assert_eq!(super::DEFAULT_DELAY, settings.display.every);
+        assert_eq!(MetricFormat::Raw, settings.display.format);
+        assert_eq!(None, settings.display.theme);
+        assert_eq!(ExportType::None, settings.export.kind);
+        assert_eq!(PathBuf::from("."), settings.export.dir);
+        assert_eq!(None, settings.export.size);
+        assert_eq!(None, settings.logging.file);
+        assert_eq!(LoggingLevel::Warning, settings.logging.level);
+        assert!(!settings.targets.system);
+        assert!(!settings.targets.myself);
 
-    #[test]
-    fn parameter_metric_format() -> anyhow::Result<()> {
-        let mut settings = config::Config::default();
-        assert!(get_metric_format(&settings).is_err());
-        settings.set(super::KEY_METRIC_FORMAT, "invalid")?;
-        assert!(get_metric_format(&settings).is_err());
-        settings.set(super::KEY_METRIC_FORMAT, "human")?;
-        match get_metric_format(&settings)? {
-            MetricFormat::Human => Ok(()),
-            _ => panic!("expecting MetricFormat::Human"),
-        }
-    }
+        let mut handler = ConfigHandler::new(&mut settings);
+        let mut parser = IniParser::new(&mut handler);
+        parser.parse(buf).unwrap();
 
-    #[test]
-    fn parameter_export_parameter() -> anyhow::Result<()> {
-        // empty settings
-        let mut settings = config::Config::default();
-        let params = ExportParameters::get(&settings)?;
-        match params.etype {
-            ExportType::None => (),
-            _ => panic!("expecting ExportType::None"),
-        }
-
-        // filled settings
-        let mut export_settings = HashMap::new();
-        export_settings.insert(String::from(super::KEY_EXPORT_DIR), String::from("/tmp"));
-        export_settings.insert(String::from(super::KEY_EXPORT_TYPE), String::from("csv"));
-        settings.set_default(super::KEY_EXPORT, config::Value::from(export_settings))?;
-        let params = ExportParameters::get(&settings)?;
-        match params.etype {
-            ExportType::Csv => (),
-            _ => panic!("expecting ExportType::Csv"),
-        }
-        assert_eq!("/tmp", params.dir.to_str().unwrap());
-        assert!(params.size.is_none());
+        assert_eq!(DisplayMode::Terminal, settings.display.mode);
+        assert_eq!(10.0, settings.display.every);
+        assert_eq!(MetricFormat::Human, settings.display.format);
+        assert_eq!(Some(BuiltinTheme::Light), settings.display.theme);
+        assert_eq!(ExportType::Rrd, settings.export.kind);
+        assert_eq!(PathBuf::from("/tmp"), settings.export.dir);
+        assert_eq!(Some(100), settings.export.size);
+        assert_eq!(
+            Some(PathBuf::from("/var/log/oprs.log")),
+            settings.logging.file
+        );
+        assert_eq!(LoggingLevel::Info, settings.logging.level);
+        assert!(settings.targets.system);
+        assert!(settings.targets.myself);
         Ok(())
     }
 }

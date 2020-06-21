@@ -40,13 +40,18 @@ where
     basename.and_then(|name| name.to_str()).map(String::from)
 }
 
+/// Read file content
+pub fn read_file_content(filename: &Path) -> anyhow::Result<String> {
+    let mut file = fs::File::open(filename)
+        .with_context(|| format!("{}: cannot open file", filename.display()))?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)?;
+    Ok(content)
+}
+
 /// Read a PID file and returns the PID it contains
 pub fn read_pid_file(pid_file: &Path) -> anyhow::Result<pid_t> {
-    let mut file = fs::File::open(pid_file)
-        .with_context(|| format!("{}: cannot open file", pid_file.display()))?;
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)?;
-    Ok(contents
+    Ok(read_file_content(pid_file)?
         .trim()
         .parse::<i32>()
         .with_context(|| format!("{}: invalid pid file", pid_file.display()))?)

@@ -15,6 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use std::io::{self, Write};
+use strum_macros::EnumString;
 use termion::{
     clear, color,
     cursor::{self, Goto},
@@ -25,10 +26,12 @@ use termion::{
 
 use super::themes::{ColorUse, Theme};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, EnumString, PartialEq)]
 pub enum BuiltinTheme {
-    Dark,
+    #[strum(serialize = "light")]
     Light,
+    #[strum(serialize = "dark")]
+    Dark,
 }
 
 /// A starting point to write
