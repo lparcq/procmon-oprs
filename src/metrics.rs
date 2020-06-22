@@ -19,11 +19,11 @@ use std::hash::Hash;
 use std::result;
 use strum_macros::{EnumIter, EnumMessage, EnumString, IntoStaticStr};
 
-use self::parser::parse_metric_spec;
-use crate::agg::AggregationSet;
-use crate::format::{self, Formatter};
-
-mod parser;
+use crate::{
+    agg::AggregationSet,
+    format::{self, Formatter},
+    parsers::parse_metric_spec,
+};
 
 const SHORT_NAME_MAX_LEN: usize = 10;
 

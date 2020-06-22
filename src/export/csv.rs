@@ -17,33 +17,45 @@
 use libc::pid_t;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
-use std::fs::File;
-use std::io::{self, Write};
+use std::fs::{self, File};
+use std::io::{self, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::{agg::Aggregation, collector::Collector};
+use crate::{agg::Aggregation, cfg::ExportSettings, collector::Collector};
 
 use super::Exporter;
+
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("csv: missing count")]
+    MissingCount,
+}
 
 pub struct CsvExporter {
     separator: &'static str,
     dir: PathBuf,
+    count: Option<usize>,
+    size: Option<u64>,
     files: HashMap<pid_t, File>,
     header: Vec<String>,
 }
 
 impl CsvExporter {
-    pub fn new<P>(dir: P) -> CsvExporter
-    where
-        P: AsRef<Path>,
-    {
-        CsvExporter {
+    pub fn new(settings: &ExportSettings) -> anyhow::Result<CsvExporter> {
+        let count = if settings.size.is_some() {
+            Some(settings.count.ok_or(Error::MissingCount)?)
+        } else {
+            None
+        };
+        Ok(CsvExporter {
             separator: ",",
-            dir: dir.as_ref().to_path_buf(),
+            dir: settings.dir.clone(),
+            count,
+            size: settings.size,
             files: HashMap::new(),
             header: Vec::new(),
-        }
+        })
     }
 
     /// Write the end of CSV line
@@ -76,9 +88,44 @@ impl CsvExporter {
     /// Create a file and write the header
     fn create_file(&mut self, pid: pid_t, name: &str) -> io::Result<()> {
         let filename = self.dir.join(format!("{}_{}.csv", name, pid));
+        if filename.exists() {
+            self.shift_file(&filename, 0)?;
+        }
         let mut file = File::create(filename)?;
         CsvExporter::write_line(&mut file, self.header.iter(), self.separator)?;
         self.files.insert(pid, file);
+        Ok(())
+    }
+
+    fn shifted_name<P>(filename: P, rank: usize) -> PathBuf
+    where
+        P: AsRef<Path>,
+    {
+        let mut name = filename.as_ref().as_os_str().to_os_string();
+        let ext = format!(".{}", rank);
+        name.push(ext.as_str());
+        PathBuf::from(name)
+    }
+
+    /// Shift all files keeping only the last ones
+    fn shift_file<P>(&self, filename: P, rank: usize) -> io::Result<()>
+    where
+        P: AsRef<Path>,
+    {
+        if let Some(count) = self.count {
+            if rank + 1 < count {
+                let source = if rank == 0 {
+                    filename.as_ref().to_path_buf()
+                } else {
+                    CsvExporter::shifted_name(filename.as_ref(), rank)
+                };
+                let destination = CsvExporter::shifted_name(filename.as_ref(), rank + 1);
+                if destination.exists() {
+                    self.shift_file(filename, rank + 1)?;
+                }
+                fs::rename(source, destination)?;
+            }
+        }
         Ok(())
     }
 }
@@ -127,6 +174,12 @@ impl Exporter for CsvExporter {
                 // Necessarily true
                 write!(file, "{:.3}", timestamp.as_secs_f64())?;
                 CsvExporter::write_line_rest(file, samples, self.separator)?;
+                if let Some(size) = self.size {
+                    let written = file.seek(io::SeekFrom::End(0))?;
+                    if written >= size {
+                        pids.insert(pid); // file will be closed
+                    }
+                }
             }
         }
         for pid in pids {

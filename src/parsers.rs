@@ -18,19 +18,55 @@ use log::warn;
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_while},
-    character::complete::char,
+    character::complete::{char, digit1},
     combinator::{all_consuming, opt},
     multi::many0,
-    sequence::preceded,
+    sequence::{pair, preceded},
     IResult,
 };
 use std::result;
 use std::str::FromStr;
 use strum::IntoEnumIterator;
 
-use super::MetricId;
-use crate::agg::{Aggregation, AggregationSet};
-use crate::format::{self, Formatter};
+use crate::{
+    agg::{Aggregation, AggregationSet},
+    format::{self, Formatter},
+    metrics::MetricId,
+};
+
+const KILO: usize = 1000;
+const MEGA: usize = 1000 * KILO;
+const GIGA: usize = 1000 * MEGA;
+const TERA: usize = 1000 * GIGA;
+
+#[derive(thiserror::Error, Debug)]
+pub enum ParseError {
+    #[error("syntax error")]
+    SyntaxError,
+    #[error("value error")]
+    ValueError,
+}
+
+/// Intermediate function to parse a size into two strings.
+fn parse_size_partial(input: &str) -> IResult<&str, (&str, Option<&str>)> {
+    pair(digit1, opt(alt((tag("k"), tag("m"), tag("g"), tag("t")))))(input)
+}
+
+/// Parse size with optional units (ex: 5k)
+pub fn parse_size(input: &str) -> result::Result<u64, ParseError> {
+    let (_, (value, unit)) =
+        all_consuming(parse_size_partial)(input).map_err(|_| ParseError::SyntaxError)?;
+    let factor = match unit {
+        None => 1,
+        Some("k") => KILO,
+        Some("m") => MEGA,
+        Some("g") => GIGA,
+        Some("t") => TERA,
+        Some(_) => panic!("internal error: arm should be unreachable"),
+    } as u64;
+    let value = value.parse::<u64>().map_err(|_| ParseError::ValueError)?;
+    Ok(value * factor)
+}
 
 /// Expands limited globbing
 /// Allowed: prefix mem:*, suffix *:call, middle io:*:call
@@ -157,7 +193,7 @@ pub fn parse_metric_spec(
 #[cfg(test)]
 mod tests {
 
-    use super::parse_metric_spec;
+    use super::{parse_metric_spec, parse_size, ParseError};
     use crate::agg::Aggregation;
     use crate::metrics::MetricId;
 
@@ -214,5 +250,14 @@ mod tests {
                 panic!("parsing must fail: {}", name);
             }
         }
+    }
+
+    #[test]
+    fn parse_sizes() -> Result<(), ParseError> {
+        assert_eq!(123, parse_size("123")?);
+        assert_eq!(123_000, parse_size("123k")?);
+        assert_eq!(15_000_000, parse_size("15m")?);
+        assert_eq!(2_000_000_000, parse_size("2g")?);
+        Ok(())
     }
 }

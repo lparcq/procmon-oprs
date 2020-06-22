@@ -74,6 +74,7 @@ Export
 In CSV export, the first column is the number of seconds since the [Unix Epoch](https://en.wikipedia.org/wiki/Unix_time).
 
 [RRDtool](https://oss.oetiker.ch/rrdtool/) creates one file per process. Only raw values are written in the database.
+The number of rows is set with option --export-count.
 
 Configuration
 -------------
@@ -90,9 +91,10 @@ Example `~/.config/oprs/settings.ini`:
     theme = light
 
     [export]
-    kind = rrd
+    kind = csv
     dir = /tmp
-    size = 100
+    size = 10m
+    count = 5
 
     [logging]
     file = /var/log/oprs.log

@@ -1,3 +1,8 @@
+2020-06-22  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
+
+	* Version 0.8.0: Option export-size and export-count limit the number and size of files in CSV.
+	Option export-count is used instead of export-size to set the number of rows of a RRD.
+
 2020-06-21  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
 
 	* Version 0.7.1: Fix help in command and readme.

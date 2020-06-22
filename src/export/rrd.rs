@@ -19,14 +19,19 @@ use libc::pid_t;
 use log::info;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Duration;
+
+use crate::{agg::Aggregation, cfg::ExportSettings, collector::Collector, metrics::MetricId};
+
+use super::Exporter;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("rrd: interval too large")]
     IntervalTooLarge,
+    #[error("rrd: missing count")]
+    MissingCount,
     #[error("rrd: no standard input for rrdtool subprocess")]
     RrdToolNoStdin,
     #[error("rrd: no standard output for rrdtool subprocess")]
@@ -38,10 +43,6 @@ pub enum Error {
     #[error("rrdtool: unexpected answer: {0}")]
     RrdToolUnexpectedAnswer(String),
 }
-
-use crate::{agg::Aggregation, collector::Collector, metrics::MetricId};
-
-use super::Exporter;
 
 enum DataSourceType {
     Counter,
@@ -110,7 +111,7 @@ fn read_rrdtool_answer<R: BufRead>(stdout: &mut R) -> anyhow::Result<()> {
 
 pub struct RrdExporter {
     interval: Duration,
-    size: usize,
+    rows: usize,
     tool: Child,
     child_in: ChildStdin,
     child_out: BufReader<ChildStdout>,
@@ -120,13 +121,11 @@ pub struct RrdExporter {
 }
 
 impl RrdExporter {
-    pub fn new<P>(dir: P, interval: Duration, size: usize) -> anyhow::Result<RrdExporter>
-    where
-        P: AsRef<Path>,
-    {
+    pub fn new(settings: &ExportSettings, interval: Duration) -> anyhow::Result<RrdExporter> {
+        let rows = settings.count.ok_or(Error::MissingCount)?;
         let mut tool = Command::new("rrdtool")
             .arg("-")
-            .current_dir(dir)
+            .current_dir(settings.dir.clone())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -138,7 +137,7 @@ impl RrdExporter {
         } else {
             Ok(RrdExporter {
                 interval,
-                size,
+                rows,
                 tool,
                 child_in,
                 child_out: BufReader::new(child_out),
@@ -169,10 +168,7 @@ impl Exporter for RrdExporter {
             };
             if let Aggregation::None = agg {
                 self.skip.push(false);
-                let ds = format!(
-                    "DS:{}:{}:{}:0.5:1:{}",
-                    ds_name, ds_type, heart_beat, self.size,
-                );
+                let ds = format!("DS:{}:{}:{}:0.5:1", ds_name, ds_type, heart_beat,);
                 info!("rrd define {}", ds);
                 self.ds.push(ds);
             } else {
@@ -213,7 +209,7 @@ impl Exporter for RrdExporter {
                 for ds in &self.ds {
                     write!(self.child_in, " {}", ds)?;
                 }
-                writeln!(self.child_in, " RRA:AVERAGE:0.5:1:{}", self.size)?;
+                writeln!(self.child_in, " RRA:AVERAGE:0.5:1:{}", self.rows)?;
                 self.read_answer()?;
                 self.pids.insert(pid, filename);
             }

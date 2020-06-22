@@ -34,6 +34,7 @@ mod export;
 mod format;
 mod info;
 mod metrics;
+mod parsers;
 mod proc_dir;
 mod sighdr;
 mod targets;
@@ -44,9 +45,10 @@ mod mocks;
 
 use application::Application;
 use cfg::{
-    BuiltinTheme, ConfigError, DisplayMode, ExportType, LoggingLevel, LoggingSettings,
-    MetricFormat, LOG_FILE_NAME,
+    BuiltinTheme, DisplayMode, ExportType, LoggingLevel, LoggingSettings, MetricFormat,
+    LOG_FILE_NAME,
 };
+use parsers::parse_size;
 use targets::TargetId;
 
 const APP_NAME: &str = "oprs";
@@ -107,9 +109,16 @@ struct Opt {
     #[argh(
         option,
         short = 'S',
-        description = "export size (for rrd, the number of rows)."
+        description = "export size (for csv, the size of files)."
     )]
-    export_size: Option<usize>,
+    export_size: Option<String>,
+
+    #[argh(
+        option,
+        short = 'C',
+        description = "number of exported items (for csv, the number of files; for rrd, the number of rows)."
+    )]
+    export_count: Option<usize>,
 
     #[argh(
         option,
@@ -191,15 +200,6 @@ fn configure_logging(settings: &LoggingSettings) {
 // Main
 //
 
-/// Wrapper for anyhow to convert String to anyhow::Error
-#[derive(thiserror::Error, Debug)]
-pub enum Error {
-    #[error("{0}")]
-    String(String),
-    #[error("{0}")]
-    Config(ConfigError),
-}
-
 macro_rules! override_parameter {
     ($settings:expr, $opt:expr, $field:ident, $option:ident) => {
         if let Some(value) = $opt.$option {
@@ -219,6 +219,11 @@ macro_rules! override_parameter {
     ($settings:expr, $opt:expr, Some(PathBuf($field:ident)), $option:ident) => {
         if let Some(value) = $opt.$option {
             $settings.$field = Some(PathBuf::from(value.as_str()));
+        }
+    };
+    ($settings:expr, $opt:expr, Some(Size($field:ident)), $option:ident) => {
+        if let Some(value) = $opt.$option {
+            $settings.$field = Some(parse_size(value.as_str())?);
         }
     };
     ($settings:expr, $opt:expr, $field:ident) => {
@@ -242,9 +247,11 @@ fn start(opt: Opt) -> anyhow::Result<()> {
 
     override_parameter!(settings.export, opt, kind, export_type);
     override_parameter!(settings.export, opt, PathBuf(dir), export_dir);
-    override_parameter!(settings.export, opt, Some(size), export_size);
+    override_parameter!(settings.export, opt, Some(Size(size)), export_size);
+    override_parameter!(settings.export, opt, Some(count), export_count);
 
     override_parameter!(settings.logging, opt, Some(PathBuf(file)), log_file);
+
     if opt.debug {
         settings.logging.level = LoggingLevel::Debug;
     } else if opt.verbose {

@@ -15,12 +15,13 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use log::info;
+use std::result;
 use std::time::{Duration, SystemTime};
 use strum::{EnumMessage, IntoEnumIterator};
 
 use crate::{
     agg::Aggregation,
-    cfg::{DisplayMode, ExportSettings, ExportType, MetricFormat, Settings},
+    cfg::{DisplayMode, ExportType, MetricFormat, Settings},
     clock::{DriftMonitor, Timer},
     collector::Collector,
     console::{BuiltinTheme, Screen},
@@ -39,10 +40,9 @@ const DRIFT_NOTIFICATION_DELAY: u64 = 300;
 pub enum Error {
     #[error("terminal not available")]
     TerminalNotAvailable,
-    #[error("missing export size")]
-    MissingExportSize,
 }
 
+/// List available metrics
 pub fn list_metrics() {
     for metric_id in MetricId::iter() {
         println!(
@@ -53,49 +53,59 @@ pub fn list_metrics() {
     }
 }
 
+/// Return the best available display
+fn resolve_display_mode(mode: DisplayMode) -> result::Result<DisplayMode, Error> {
+    match mode {
+        DisplayMode::Any => {
+            if TerminalDevice::is_available() {
+                Ok(DisplayMode::Terminal)
+            } else {
+                Ok(DisplayMode::Text)
+            }
+        }
+        DisplayMode::Terminal => {
+            if TerminalDevice::is_available() {
+                Ok(DisplayMode::Terminal)
+            } else {
+                Err(Error::TerminalNotAvailable)
+            }
+        }
+        _ => Ok(mode),
+    }
+}
+
 /// Application displaying the process metrics
-pub struct Application<'s> {
+pub struct Application {
     display_mode: DisplayMode,
     every: Duration,
     count: Option<u64>,
     metrics: Vec<FormattedMetric>,
-    export_params: &'s ExportSettings,
+    exporter: Option<Box<dyn Exporter>>,
     theme: Option<BuiltinTheme>,
 }
 
 /// Get export type
 
-impl<'s> Application<'s> {
-    pub fn new(settings: &'s Settings, metric_names: &[String]) -> anyhow::Result<Application<'s>> {
+impl Application {
+    pub fn new(settings: &Settings, metric_names: &[String]) -> anyhow::Result<Application> {
         let every = Duration::from_millis((settings.display.every * 1000.0) as u64);
         let mut metrics_parser = MetricNamesParser::new(match settings.display.format {
             MetricFormat::Human => true,
             _ => false,
         });
-        let display_mode = match settings.display.mode {
-            DisplayMode::Any => {
-                if TerminalDevice::is_available() {
-                    Ok(DisplayMode::Terminal)
-                } else {
-                    Ok(DisplayMode::Text)
-                }
-            }
-            DisplayMode::Terminal => {
-                if TerminalDevice::is_available() {
-                    Ok(DisplayMode::Terminal)
-                } else {
-                    Err(Error::TerminalNotAvailable)
-                }
-            }
-            display_mode => Ok(display_mode),
-        }?;
+        let display_mode = resolve_display_mode(settings.display.mode)?;
+        let exporter: Option<Box<dyn Exporter>> = match settings.export.kind {
+            ExportType::Csv => Some(Box::new(CsvExporter::new(&settings.export)?)),
+            ExportType::Rrd => Some(Box::new(RrdExporter::new(&settings.export, every)?)),
+            ExportType::None => None,
+        };
 
         Ok(Application {
             display_mode,
             every,
             count: settings.display.count,
             metrics: metrics_parser.parse(metric_names)?,
-            export_params: &settings.export,
+            exporter,
             theme: settings.display.theme,
         })
     }
@@ -119,15 +129,6 @@ impl<'s> Application<'s> {
             DisplayMode::Text => Some(Box::new(TextDevice::new())),
             DisplayMode::None => None,
         };
-        let mut exporter: Option<Box<dyn Exporter>> = match self.export_params.kind {
-            ExportType::Csv => Some(Box::new(CsvExporter::new(self.export_params.dir.as_path()))),
-            ExportType::Rrd => Some(Box::new(RrdExporter::new(
-                self.export_params.dir.as_path(),
-                self.every,
-                self.export_params.size.ok_or(Error::MissingExportSize)?,
-            )?)),
-            ExportType::None => None,
-        };
 
         let mut targets = TargetContainer::new(system_conf);
         targets.push_all(target_ids)?;
@@ -144,7 +145,7 @@ impl<'s> Application<'s> {
         if let Some(ref mut device) = device {
             device.open(&collector)?;
         }
-        if let Some(ref mut exporter) = exporter {
+        if let Some(ref mut exporter) = self.exporter {
             exporter.open(&collector)?;
         }
 
@@ -166,7 +167,7 @@ impl<'s> Application<'s> {
                 device.render(&collector, targets_updated)?;
             }
             if let Some(timestamp) = collect_timestamp {
-                if let Some(ref mut exporter) = exporter {
+                if let Some(ref mut exporter) = self.exporter {
                     exporter.export(&collector, &timestamp)?;
                 }
             }
@@ -190,7 +191,7 @@ impl<'s> Application<'s> {
         if let Some(ref mut device) = device {
             device.close()?;
         }
-        if let Some(ref mut exporter) = exporter {
+        if let Some(ref mut exporter) = self.exporter {
             exporter.close()?;
         }
         info!("stopping");

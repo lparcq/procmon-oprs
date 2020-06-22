@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use strum_macros::{EnumString, IntoStaticStr};
 
-pub use crate::console::BuiltinTheme;
+pub use crate::{console::BuiltinTheme, parsers::parse_size};
 
 pub const DEFAULT_DELAY: f64 = 5.0;
 pub const LOG_FILE_NAME: &str = "settings";
@@ -92,12 +92,8 @@ pub enum ConfigError {
     InvalidOption(String),
     #[error("{0}: invalid parameter value")]
     InvalidParameter(String),
-    #[error("{0}: unknown display mode")]
-    UnknownDisplayMode(String),
     #[error("{0}: unknown export type")]
     UnknownExportType(String),
-    #[error("{0}: unknown metric format")]
-    UnknownMetricFormat(String),
 }
 
 /// Parameters for display
@@ -125,7 +121,8 @@ impl DisplaySettings {
 pub struct ExportSettings {
     pub kind: ExportType,
     pub dir: PathBuf,
-    pub size: Option<usize>,
+    pub size: Option<u64>,
+    pub count: Option<usize>,
 }
 
 impl ExportSettings {
@@ -134,6 +131,7 @@ impl ExportSettings {
             kind: ExportType::None,
             dir: PathBuf::from("."),
             size: None,
+            count: None,
         }
     }
 }
@@ -263,7 +261,8 @@ impl<'a> IniHandler for ConfigHandler<'a> {
                             .map_err(|_| ConfigError::UnknownExportType(value.to_string()))?
                     }
                     "dir" | "directory" => settings.dir = PathBuf::from(value),
-                    "size" => settings.size = Some(from_param!(key, value.parse::<usize>())?),
+                    "size" => settings.size = Some(from_param!(key, parse_size(value))?),
+                    "count" => settings.count = Some(from_param!(key, value.parse::<usize>())?),
                     _ => return Err(ConfigError::InvalidOption(key.to_string())),
                 }
             }
@@ -338,7 +337,8 @@ theme = light
 [export]
 kind = rrd
 dir = /tmp
-size = 100
+size = 10m
+count = 5
 
 [logging]
 file = /var/log/oprs.log
@@ -377,7 +377,7 @@ myself = yes
         assert_eq!(Some(BuiltinTheme::Light), settings.display.theme);
         assert_eq!(ExportType::Rrd, settings.export.kind);
         assert_eq!(PathBuf::from("/tmp"), settings.export.dir);
-        assert_eq!(Some(100), settings.export.size);
+        assert_eq!(Some(10_000_000), settings.export.size);
         assert_eq!(
             Some(PathBuf::from("/var/log/oprs.log")),
             settings.logging.file
