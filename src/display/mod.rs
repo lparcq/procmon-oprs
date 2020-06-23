@@ -28,9 +28,18 @@ pub enum PauseStatus {
 
 pub trait DisplayDevice {
     fn open(&mut self, collector: &Collector) -> anyhow::Result<()>;
+
     fn close(&mut self) -> anyhow::Result<()>;
+
     fn render(&mut self, collector: &Collector, targets_updated: bool) -> anyhow::Result<()>;
-    fn pause(&mut self, timer: &mut Timer) -> anyhow::Result<PauseStatus>;
+
+    fn is_interactive(&self) -> bool {
+        false
+    }
+
+    fn pause(&mut self, _: &mut Timer) -> anyhow::Result<PauseStatus> {
+        panic!("not available");
+    }
 }
 
 pub use crate::display::term::TerminalDevice;

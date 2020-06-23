@@ -103,9 +103,18 @@ impl Timer {
         self.remaining
     }
 
-    pub fn sleep(&mut self) {
-        while let Some(remaining) = self.remaining() {
-            sleep(remaining);
+    /// Check if the given delay has been reached
+    pub fn poll(&mut self, timeout: Duration) -> bool {
+        if let Some(remaining) = self.remaining() {
+            if remaining < timeout {
+                sleep(remaining);
+                true
+            } else {
+                sleep(timeout);
+                false
+            }
+        } else {
+            true
         }
     }
 }

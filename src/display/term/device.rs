@@ -363,6 +363,11 @@ impl DisplayDevice for TerminalDevice {
         Ok(())
     }
 
+    /// Terminal is interactive
+    fn is_interactive(&self) -> bool {
+        true
+    }
+
     /// Wait for a user input or a timeout.
     fn pause(&mut self, timer: &mut Timer) -> anyhow::Result<PauseStatus> {
         if let Some(timeout) = timer.remaining() {

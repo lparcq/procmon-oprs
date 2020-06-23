@@ -17,10 +17,8 @@
 use super::DisplayDevice;
 use crate::{
     agg::Aggregation,
-    clock::Timer,
     collector::Collector,
     console::charset::{TableChar, TableCharSet},
-    display::PauseStatus,
 };
 
 const REPEAT_HEADER_EVERY: u16 = 20;
@@ -297,11 +295,6 @@ impl DisplayDevice for TextDevice {
             self.table.print(targets_updated);
         }
         Ok(())
-    }
-
-    fn pause(&mut self, timer: &mut Timer) -> anyhow::Result<PauseStatus> {
-        timer.sleep();
-        Ok(PauseStatus::TimeOut)
     }
 }
 

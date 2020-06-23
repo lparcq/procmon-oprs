@@ -153,6 +153,12 @@ impl Application {
         let mut loop_number: u64 = 0;
         let mut timer = Timer::new(self.every, true);
         let mut drift = DriftMonitor::new(timer.start_time(), DRIFT_NOTIFICATION_DELAY);
+        let is_interactive = match device {
+            Some(ref device) => device.is_interactive(),
+            _ => false,
+        };
+        let timeout: Duration = Duration::new(0, 500);
+
         while !sighdr.caught() {
             let targets_updated = targets.refresh();
             let collect_timestamp = if timer.expired() {
@@ -178,12 +184,14 @@ impl Application {
                     break;
                 }
             }
-            if let Some(ref mut device) = device {
-                if let PauseStatus::Quit = device.pause(&mut timer)? {
+            if is_interactive {
+                if let PauseStatus::Quit = device.as_mut().unwrap().pause(&mut timer)? {
                     break;
                 }
             } else {
-                timer.sleep();
+                // Signals don't interrupt calls to sleep in rust. Instead the application
+                // sleeps by increments of 500ms.
+                while !timer.poll(timeout) && !sighdr.caught() {}
             }
             drift.update(timer.get_delay());
         }
