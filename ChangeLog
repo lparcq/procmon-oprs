@@ -1,6 +1,6 @@
 2020-06-23  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
 
-	* Version 0.8.0: Fix delay when killing (Ctrl-C) the process in text mode.
+	* Version 0.8.1: Fix delay when killing (Ctrl-C) the process in text mode.
 
 2020-06-22  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
 
