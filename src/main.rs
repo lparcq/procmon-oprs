@@ -128,6 +128,9 @@ struct Opt {
     )]
     format: Option<MetricFormat>,
 
+    #[argh(switch, short = 'g', description = "show or export graph if possible.")]
+    graph: bool,
+
     #[argh(switch, short = 's', description = "monitor system")]
     system: bool,
 

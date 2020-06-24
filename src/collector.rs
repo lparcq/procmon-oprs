@@ -85,15 +85,15 @@ impl Sample {
 }
 
 /// A list of computed samples for a process
-pub struct ProcessSamples {
+pub struct ProcessStatus {
     name: String,
     pid: pid_t,
     samples: Vec<Sample>,
 }
 
-impl ProcessSamples {
-    fn new(name: &str, pid: pid_t, samples: Vec<Sample>) -> ProcessSamples {
-        ProcessSamples {
+impl ProcessStatus {
+    fn new(name: &str, pid: pid_t, samples: Vec<Sample>) -> ProcessStatus {
+        ProcessStatus {
             name: name.to_string(),
             pid,
             samples,
@@ -153,7 +153,7 @@ impl Updater {
         pid: pid_t,
         metrics: &[FormattedMetric],
         values: &[u64],
-    ) -> ProcessSamples {
+    ) -> ProcessStatus {
         let samples = metrics
             .iter()
             .zip(values.iter())
@@ -176,7 +176,7 @@ impl Updater {
         if pid == 0 {
             self.push(&samples); // new system values
         }
-        ProcessSamples::new(target_name, pid, samples)
+        ProcessStatus::new(target_name, pid, samples)
     }
 
     fn get_history(&self, age: usize, metric_index: usize) -> u64 {
@@ -222,11 +222,11 @@ impl Updater {
     fn update_computed_values(
         &mut self,
         metrics: &[FormattedMetric],
-        proc: &mut ProcessSamples,
+        pstat: &mut ProcessStatus,
         values: &[u64],
     ) {
         let mut metric_index = 0;
-        for (metric, sample, value_ref) in izip!(metrics, proc.get_samples_mut(), values) {
+        for (metric, sample, value_ref) in izip!(metrics, pstat.get_samples_mut(), values) {
             let old_value = sample.get_raw_value();
             let new_value = *value_ref;
             let mut ag_index = 0;
@@ -246,8 +246,8 @@ impl Updater {
             }
             metric_index += 1;
         }
-        if proc.get_pid() == 0 {
-            self.push(proc.samples_as_slice()); // new system values
+        if pstat.get_pid() == 0 {
+            self.push(pstat.samples_as_slice()); // new system values
         }
     }
 }
@@ -255,7 +255,7 @@ impl Updater {
 /// Collect raw samples from target and returns computed values
 pub struct Collector<'a> {
     metrics: &'a [FormattedMetric],
-    lines: VecDeque<ProcessSamples>,
+    lines: VecDeque<ProcessStatus>,
     updater: Updater,
     last_line_pos: usize,
 }
@@ -325,7 +325,7 @@ impl<'a> Collector<'a> {
     }
 
     /// Return lines
-    pub fn lines(&self) -> vec_deque::Iter<ProcessSamples> {
+    pub fn lines(&self) -> vec_deque::Iter<ProcessStatus> {
         self.lines.iter()
     }
 

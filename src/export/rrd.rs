@@ -18,13 +18,19 @@ use anyhow::anyhow;
 use libc::pid_t;
 use log::info;
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::iter::IntoIterator;
 use std::time::Duration;
 
-use crate::{agg::Aggregation, cfg::ExportSettings, collector::Collector, metrics::MetricId};
+use crate::{
+    agg::Aggregation,
+    cfg::ExportSettings,
+    collector::{Collector, ProcessStatus},
+    metrics::MetricId,
+};
 
 use super::Exporter;
+
+use crate::export::rrdtool::RrdTool;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -32,16 +38,6 @@ pub enum Error {
     IntervalTooLarge,
     #[error("rrd: missing count")]
     MissingCount,
-    #[error("rrd: no standard input for rrdtool subprocess")]
-    RrdToolNoStdin,
-    #[error("rrd: no standard output for rrdtool subprocess")]
-    RrdToolNoStdout,
-    #[error("rrdtool: premature end of stream")]
-    RrdToolEndOfStream,
-    #[error("rrdtool: {0}")]
-    RrdToolError(String),
-    #[error("rrdtool: unexpected answer: {0}")]
-    RrdToolUnexpectedAnswer(String),
 }
 
 enum DataSourceType {
@@ -95,43 +91,30 @@ fn data_source_type(id: MetricId) -> DataSourceType {
     }
 }
 
-fn read_rrdtool_answer<R: BufRead>(stdout: &mut R) -> anyhow::Result<()> {
-    let mut answer = String::new();
-    stdout.read_line(&mut answer)?;
-    let mut tokens = answer.trim_end().splitn(2, ' ');
-    let tag = tokens.next().ok_or(Error::RrdToolEndOfStream)?;
-    match tag {
-        "OK" => Ok(()),
-        "ERROR:" => Err(Error::RrdToolError(String::from(
-            tokens.next().unwrap_or("no error message"),
-        )))?,
-        _ => Err(Error::RrdToolUnexpectedAnswer(tag.to_string()))?,
+struct ExportInfo {
+    db: String,
+    color: u32,
+}
+
+impl ExportInfo {
+    fn new(db: String, color: u32) -> ExportInfo {
+        ExportInfo { db, color }
     }
 }
 
 pub struct RrdExporter {
     interval: Duration,
     rows: usize,
-    tool: Child,
-    child_in: ChildStdin,
-    child_out: BufReader<ChildStdout>,
+    tool: RrdTool,
     ds: Vec<String>,
     skip: Vec<bool>,
-    pids: HashMap<pid_t, String>,
+    pids: HashMap<pid_t, ExportInfo>,
 }
 
 impl RrdExporter {
     pub fn new(settings: &ExportSettings, interval: Duration) -> anyhow::Result<RrdExporter> {
         let rows = settings.count.ok_or(Error::MissingCount)?;
-        let mut tool = Command::new("rrdtool")
-            .arg("-")
-            .current_dir(settings.dir.clone())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()?;
-        let child_out = tool.stdout.take().ok_or(Error::RrdToolNoStdout)?;
-        let child_in = tool.stdin.take().ok_or(Error::RrdToolNoStdin)?;
+        let tool = RrdTool::new(settings.dir.as_path())?;
         if interval.as_secs() == 0 || interval.subsec_nanos() != 0 {
             Err(anyhow!("rrd: interval must be a whole number of seconds"))
         } else {
@@ -139,8 +122,6 @@ impl RrdExporter {
                 interval,
                 rows,
                 tool,
-                child_in,
-                child_out: BufReader::new(child_out),
                 ds: Vec::new(),
                 skip: Vec::new(),
                 pids: HashMap::new(),
@@ -148,12 +129,27 @@ impl RrdExporter {
         }
     }
 
+    /// File name of a RRD.
     fn filename(pid: pid_t, name: &str) -> String {
         format!("{}_{}.rrd", name, pid)
     }
 
-    fn read_answer(&mut self) -> anyhow::Result<()> {
-        read_rrdtool_answer(&mut self.child_out)
+    /// Create process info.
+    fn make_proc_info(&mut self, proc: &ProcessStatus, timestamp: &Duration) -> anyhow::Result<()> {
+        let pid = proc.get_pid();
+        let dbname = RrdExporter::filename(pid, proc.get_name());
+        let start_time = timestamp
+            .checked_sub(self.interval)
+            .ok_or_else(|| Error::IntervalTooLarge)?;
+        self.tool.create(
+            &dbname,
+            self.ds.iter(),
+            &start_time,
+            &self.interval,
+            self.rows,
+        )?;
+        self.pids.insert(pid, ExportInfo::new(dbname, pid as u32));
+        Ok(())
     }
 }
 
@@ -179,83 +175,27 @@ impl Exporter for RrdExporter {
     }
 
     fn close(&mut self) -> anyhow::Result<()> {
-        if let Some(stdin) = self.tool.stdin.as_mut() {
-            info!("stopping rrdtool");
-            stdin.write_all(b"quit\n")?;
-        }
-        info!("waiting for rrdtool to stop");
-        self.tool.wait()?;
-        info!("rrdtool stopped");
-        Ok(())
+        self.tool.close()
     }
 
     fn export(&mut self, collector: &Collector, timestamp: &Duration) -> anyhow::Result<()> {
-        for proc in collector.lines() {
-            let pid = proc.get_pid();
-            if !self.pids.contains_key(&pid) {
-                let filename = RrdExporter::filename(pid, proc.get_name());
-                let start_time = timestamp
-                    .checked_sub(self.interval)
-                    .ok_or_else(|| Error::IntervalTooLarge)?;
-                let step = self.interval.as_secs();
-                info!("rrd create {} step={}", filename, step);
-                write!(
-                    self.child_in,
-                    "create {} --start={} --step={}",
-                    filename,
-                    start_time.as_secs(),
-                    step
-                )?;
-                for ds in &self.ds {
-                    write!(self.child_in, " {}", ds)?;
+        for pstat in collector.lines() {
+            let pid = pstat.get_pid();
+            let exinfo = match self.pids.get(&pid) {
+                Some(exinfo) => exinfo,
+                None => {
+                    self.make_proc_info(pstat, timestamp)?;
+                    self.pids.get(&pid).unwrap()
                 }
-                writeln!(self.child_in, " RRA:AVERAGE:0.5:1:{}", self.rows)?;
-                self.read_answer()?;
-                self.pids.insert(pid, filename);
-            }
-            let filename = self.pids.get(&pid).unwrap();
-            write!(self.child_in, "update {} {}", filename, timestamp.as_secs())?;
-            for (sample, skip) in proc.samples().zip(self.skip.iter()) {
-                if !skip {
-                    write!(self.child_in, ":{}", sample.values().next().unwrap())?;
-                }
-            }
-            write!(self.child_in, "\n")?;
-            self.read_answer()?;
-        }
-        Ok(())
-    }
-}
+            };
 
-#[cfg(test)]
-mod test {
-
-    use std::io::{self, Seek, Write};
-
-    use super::read_rrdtool_answer;
-
-    #[test]
-    fn parse_rrdtool_answer() -> anyhow::Result<()> {
-        let mut bufok = io::Cursor::new(Vec::<u8>::new());
-        write!(bufok, "OK u:0,01 s:0,02 r:8,05\n")?;
-        bufok.seek(io::SeekFrom::Start(0))?;
-        read_rrdtool_answer(&mut bufok)?;
-
-        let mut buferr = io::Cursor::new(Vec::<u8>::new());
-        write!(
-            buferr,
-            "ERROR: you must define at least one Round Robin Archive\n"
-        )?;
-        buferr.seek(io::SeekFrom::Start(0))?;
-        match read_rrdtool_answer(&mut buferr) {
-            Ok(()) => panic!("rrdtool error not correctly parsed"),
-            Err(err) => {
-                let msg = format!("{:?}", err);
-                assert_eq!(
-                    "rrdtool: you must define at least one Round Robin Archive",
-                    msg.as_str()
-                );
-            }
+            let samples = pstat
+                .samples()
+                .into_iter()
+                .zip(self.skip.iter())
+                .filter(|(_, skip)| !*skip)
+                .map(|(sample, _)| *(sample.values().next().unwrap()));
+            self.tool.update(&exinfo.db, samples, timestamp)?;
         }
         Ok(())
     }

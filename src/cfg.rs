@@ -123,6 +123,7 @@ pub struct ExportSettings {
     pub dir: PathBuf,
     pub size: Option<u64>,
     pub count: Option<usize>,
+    pub graph: bool,
 }
 
 impl ExportSettings {
@@ -132,6 +133,7 @@ impl ExportSettings {
             dir: PathBuf::from("."),
             size: None,
             count: None,
+            graph: false,
         }
     }
 }
@@ -263,6 +265,7 @@ impl<'a> IniHandler for ConfigHandler<'a> {
                     "dir" | "directory" => settings.dir = PathBuf::from(value),
                     "size" => settings.size = Some(from_param!(key, parse_size(value))?),
                     "count" => settings.count = Some(from_param!(key, value.parse::<usize>())?),
+                    "graph" => settings.graph = ConfigHandler::parse_bool(key, value)?,
                     _ => return Err(ConfigError::InvalidOption(key.to_string())),
                 }
             }
@@ -338,6 +341,7 @@ theme = light
 kind = rrd
 dir = /tmp
 size = 10m
+graph = yes
 count = 5
 
 [logging]
@@ -362,6 +366,7 @@ myself = yes
         assert_eq!(ExportType::None, settings.export.kind);
         assert_eq!(PathBuf::from("."), settings.export.dir);
         assert_eq!(None, settings.export.size);
+        assert!(!settings.export.graph);
         assert_eq!(None, settings.logging.file);
         assert_eq!(LoggingLevel::Warning, settings.logging.level);
         assert!(!settings.targets.system);
@@ -378,6 +383,7 @@ myself = yes
         assert_eq!(ExportType::Rrd, settings.export.kind);
         assert_eq!(PathBuf::from("/tmp"), settings.export.dir);
         assert_eq!(Some(10_000_000), settings.export.size);
+        assert!(settings.export.graph);
         assert_eq!(
             Some(PathBuf::from("/var/log/oprs.log")),
             settings.logging.file

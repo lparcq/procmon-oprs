@@ -20,6 +20,7 @@ use crate::collector::Collector;
 
 mod csv;
 mod rrd;
+mod rrdtool;
 
 pub trait Exporter {
     fn open(&mut self, collector: &Collector) -> anyhow::Result<()>;
