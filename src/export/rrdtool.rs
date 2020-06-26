@@ -15,7 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use log::debug;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Write};
 use std::iter::IntoIterator;
 use std::path::Path;
 use std::time::Duration;
@@ -88,15 +88,50 @@ use process::*;
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("rrdtool: no standard input for subprocess")]
-    RrdToolNoStdin,
+    NoStdin,
     #[error("rrdtool: no standard output for subprocess")]
-    RrdToolNoStdout,
+    NoStdout,
     #[error("rrdtool: premature end of stream")]
-    RrdToolEndOfStream,
+    EndOfStream,
+    #[error("rrdtool: invalid graph size: {0}")]
+    InvalidGraphSize(String),
+    #[error("rrdtool: missing graph size")]
+    MissingGraphSize,
     #[error("rrdtool: {0}")]
-    RrdToolError(String),
-    #[error("rrdtool: unexpected answer: {0}")]
-    RrdToolUnexpectedAnswer(String),
+    Process(String),
+    #[error("rrdtool: input/output error: {0}")]
+    Io(io::Error),
+}
+
+macro_rules! try_io {
+    // Assign option to lvalue if option is set.
+    ($res:expr) => {
+        $res.map_err(|err| Error::Io(err))?
+    };
+}
+
+macro_rules! try_write {
+    ($file:expr, $fmt:expr) => {
+        try_io!(write!($file, $fmt))
+    };
+    ($file:expr, $fmt:expr, $($arg:tt)*) => {
+        try_io!(write!($file, $fmt, $($arg)*))
+    };
+}
+
+fn parse_graph_size(line: &str) -> Result<(usize, usize), Error> {
+    let size = line.trim_end();
+    let mut tokens = size.splitn(2, 'x');
+    if let Some(first) = tokens.next() {
+        if let Ok(width) = first.parse::<usize>() {
+            if let Some(second) = tokens.next() {
+                if let Ok(height) = second.parse::<usize>() {
+                    return Ok((width, height));
+                }
+            }
+        }
+    }
+    Err(Error::InvalidGraphSize(size.to_string()))
 }
 
 pub struct RrdTool {
@@ -106,13 +141,13 @@ pub struct RrdTool {
 }
 
 impl RrdTool {
-    pub fn new<P>(working_dir: P) -> anyhow::Result<RrdTool>
+    pub fn new<P>(working_dir: P) -> Result<RrdTool, Error>
     where
         P: AsRef<Path>,
     {
-        let mut process = spawn("rrdtool", working_dir.as_ref())?;
-        let child_out = process.stdout.take().ok_or(Error::RrdToolNoStdout)?;
-        let child_in = process.stdin.take().ok_or(Error::RrdToolNoStdin)?;
+        let mut process = try_io!(spawn("rrdtool", working_dir.as_ref()));
+        let child_out = process.stdout.take().ok_or(Error::NoStdout)?;
+        let child_in = process.stdin.take().ok_or(Error::NoStdin)?;
         Ok(RrdTool {
             process,
             child_in,
@@ -120,18 +155,27 @@ impl RrdTool {
         })
     }
 
-    /// Read a single line answer from a rrdtool subprocess
-    fn read_answer(&mut self) -> anyhow::Result<()> {
-        let mut answer = String::new();
-        self.child_out.read_line(&mut answer)?;
-        let mut tokens = answer.trim_end().splitn(2, ' ');
-        let tag = tokens.next().ok_or(Error::RrdToolEndOfStream)?;
-        match tag {
-            "OK" => Ok(()),
-            "ERROR:" => Err(Error::RrdToolError(String::from(
-                tokens.next().unwrap_or("no error message"),
-            )))?,
-            _ => Err(Error::RrdToolUnexpectedAnswer(tag.to_string()))?,
+    /// Read a lines until the status line from a rrdtool subprocess
+    fn read_answer(&mut self, mut lines: Option<&mut Vec<String>>) -> Result<(), Error> {
+        loop {
+            let mut line = String::new();
+            try_io!(self.child_out.read_line(&mut line));
+            let answer = line.trim_end();
+            let mut tokens = answer.splitn(2, ' ');
+            let tag = tokens.next().ok_or(Error::EndOfStream)?;
+            match tag {
+                "OK" => return Ok(()),
+                "ERROR:" => {
+                    return Err(Error::Process(String::from(
+                        tokens.next().unwrap_or("no error message"),
+                    )))
+                }
+                _ => {
+                    if let Some(ref mut lines) = lines {
+                        lines.push(answer.to_string());
+                    }
+                }
+            }
         }
     }
 
@@ -143,51 +187,81 @@ impl RrdTool {
         start_time: &Duration,
         interval: &Duration,
         rows: usize,
-    ) -> anyhow::Result<()>
+    ) -> Result<(), Error>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
         let step = interval.as_secs();
         debug!("rrd create {} step={}", dbname, step);
-        write!(
+        try_io!(write!(
             self.child_in,
             "create {} --start={} --step={}",
             dbname,
             start_time.as_secs(),
             step
-        )?;
+        ));
         for ds in ds.into_iter() {
-            write!(self.child_in, " {}", ds.as_ref())?;
+            try_io!(write!(self.child_in, " {}", ds.as_ref()));
         }
-        writeln!(self.child_in, " RRA:AVERAGE:0.5:1:{}", rows)?;
-        self.read_answer()
+        try_io!(writeln!(self.child_in, " RRA:AVERAGE:0.5:1:{}", rows));
+        self.read_answer(None)
     }
 
-    /// Send values to a rrdtool subprocess
-    pub fn update<'s, I>(
-        &mut self,
-        dbname: &str,
-        values: I,
-        timestamp: &Duration,
-    ) -> anyhow::Result<()>
+    /// Update values
+    pub fn update<I>(&mut self, dbname: &str, values: I, timestamp: &Duration) -> Result<(), Error>
     where
         I: std::iter::Iterator<Item = u64>,
     {
         debug!("rrd update {}", dbname);
-        write!(self.child_in, "update {} {}", dbname, timestamp.as_secs())?;
+        try_write!(self.child_in, "update {} {}", dbname, timestamp.as_secs());
         for value in values.into_iter() {
-            write!(self.child_in, ":{}", value)?;
+            try_write!(self.child_in, ":{}", value);
         }
-        write!(self.child_in, "\n")?;
-        self.read_answer()
+        try_write!(self.child_in, "\n");
+        self.read_answer(None)
     }
 
-    pub fn close(&mut self) -> anyhow::Result<()> {
+    /// Generate a graph file and return it's size.
+    pub fn graph<I, S>(
+        &mut self,
+        filename: &str,
+        start_time: &Duration,
+        end_time: &Duration,
+        defs: I,
+    ) -> Result<(usize, usize), Error>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let start = start_time.as_secs();
+        let end = end_time.as_secs();
+        debug!("rrd graph {} --start={} --end={}", filename, start, end);
+        try_write!(
+            self.child_in,
+            "graph {} --start={} --end={}",
+            filename,
+            start,
+            end
+        );
+        for def in defs.into_iter() {
+            try_write!(self.child_in, " {}", def.as_ref());
+        }
+        try_write!(self.child_in, "\n");
+        let mut lines = Vec::new();
+        self.read_answer(Some(&mut lines))?;
+        if lines.is_empty() {
+            Err(Error::MissingGraphSize)
+        } else {
+            parse_graph_size(&lines[0])
+        }
+    }
+
+    pub fn close(&mut self) -> Result<(), Error> {
         debug!("stopping rrdtool");
-        self.child_in.write_all(b"quit\n")?;
+        try_io!(self.child_in.write_all(b"quit\n"));
         debug!("waiting for rrdtool to stop");
-        self.process.wait()?;
+        try_io!(self.process.wait());
         debug!("rrdtool stopped");
         Ok(())
     }
@@ -199,7 +273,7 @@ mod test {
     use std::io::{self, BufReader};
     use std::path::PathBuf;
 
-    use super::{spawn, RrdTool};
+    use super::{parse_graph_size, spawn, Error, RrdTool};
 
     fn new_tool(output: &str) -> io::Result<RrdTool> {
         let mut process = spawn(output, PathBuf::new())?;
@@ -213,21 +287,45 @@ mod test {
     }
 
     #[test]
-    fn parse_rrdtool_answer() -> anyhow::Result<()> {
-        let mut tool_ok = new_tool("OK u:0,01 s:0,02 r:8,05")?;
-        tool_ok.read_answer()?;
+    fn parse_rrdtool_answer() -> Result<(), Error> {
+        let mut tool_ok_no_capture = try_io!(new_tool("OK u:0,01 s:0,02 r:8,05"));
+        tool_ok_no_capture.read_answer(None)?;
 
-        let mut tool_err = new_tool("ERROR: you must define at least one Round Robin Archive")?;
-        match tool_err.read_answer() {
+        let mut tool_ok = try_io!(new_tool("OK u:0,01 s:0,02 r:8,05"));
+        let mut lines_ok = Vec::new();
+        tool_ok.read_answer(Some(&mut lines_ok))?;
+        assert!(lines_ok.is_empty());
+
+        let mut tool_err = try_io!(new_tool(
+            "ERROR: you must define at least one Round Robin Archive"
+        ));
+        let mut lines_err = Vec::new();
+        match tool_err.read_answer(Some(&mut lines_err)) {
             Ok(()) => panic!("rrdtool error not correctly parsed"),
             Err(err) => {
-                let msg = format!("{:?}", err);
                 assert_eq!(
                     "rrdtool: you must define at least one Round Robin Archive",
-                    msg.as_str()
+                    format!("{}", err)
                 );
+                assert!(lines_err.is_empty());
             }
         }
+
+        let mut tool_graph = try_io!(new_tool("481x155\nOK u:0,07 s:0,01 r:0,06"));
+        let mut lines_graph = Vec::new();
+        tool_graph.read_answer(Some(&mut lines_graph))?;
+        assert_eq!(1, lines_graph.len());
+        assert_eq!("481x155", lines_graph[0]);
+        Ok(())
+    }
+
+    #[test]
+    fn parse_graph_sizes() -> Result<(), Error> {
+        let (width, height) = parse_graph_size("481x155\n")?;
+        assert_eq!(481, width);
+        assert_eq!(155, height);
+
+        assert!(parse_graph_size("1x2x3\n").is_err());
         Ok(())
     }
 }

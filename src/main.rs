@@ -204,36 +204,15 @@ fn configure_logging(settings: &LoggingSettings) {
 //
 
 macro_rules! override_parameter {
-    ($settings:expr, $opt:expr, $field:ident, $option:ident) => {
-        if let Some(value) = $opt.$option {
-            $settings.$field = value;
+    // Assign option to lvalue if option is set.
+    ($lvalue:expr, $option:expr) => {
+        override_parameter!($lvalue, $option, value, value)
+    };
+    // Assign rvalue to lvalue if option is set by matching var to the value of option.
+    ($lvalue:expr, $option:expr, $var:ident, $($rvalue:tt)*) => {
+        if let Some($var) = $option {
+            $lvalue = $($rvalue)*;
         }
-    };
-    ($settings:expr, $opt:expr, Some($field:ident), $option:ident) => {
-        if let Some(value) = $opt.$option {
-            $settings.$field = Some(value);
-        }
-    };
-    ($settings:expr, $opt:expr, PathBuf($field:ident), $option:ident) => {
-        if let Some(value) = $opt.$option {
-            $settings.$field = PathBuf::from(value.as_str());
-        }
-    };
-    ($settings:expr, $opt:expr, Some(PathBuf($field:ident)), $option:ident) => {
-        if let Some(value) = $opt.$option {
-            $settings.$field = Some(PathBuf::from(value.as_str()));
-        }
-    };
-    ($settings:expr, $opt:expr, Some(Size($field:ident)), $option:ident) => {
-        if let Some(value) = $opt.$option {
-            $settings.$field = Some(parse_size(value.as_str())?);
-        }
-    };
-    ($settings:expr, $opt:expr, $field:ident) => {
-        override_parameter!($settings, $opt, $field, $field)
-    };
-    ($settings:expr, $opt:expr, Some($field:ident)) => {
-        override_parameter!($settings, $opt, Some($field), $field)
     };
 }
 
@@ -242,18 +221,32 @@ fn start(opt: Opt) -> anyhow::Result<()> {
     let dirs = cfg::Directories::new(APP_NAME)?;
     let mut settings = dirs.read_config_file(LOG_FILE_NAME)?;
     // Override config file with command line
-    override_parameter!(settings.display, opt, mode, display);
-    override_parameter!(settings.display, opt, every);
-    override_parameter!(settings.display, opt, format);
-    override_parameter!(settings.display, opt, Some(count));
-    override_parameter!(settings.display, opt, Some(theme), color_theme);
 
-    override_parameter!(settings.export, opt, kind, export_type);
-    override_parameter!(settings.export, opt, PathBuf(dir), export_dir);
-    override_parameter!(settings.export, opt, Some(Size(size)), export_size);
-    override_parameter!(settings.export, opt, Some(count), export_count);
+    override_parameter!(settings.display.mode, opt.display);
+    override_parameter!(settings.display.every, opt.every);
+    override_parameter!(settings.display.format, opt.format);
+    override_parameter!(settings.display.count, opt.count, count, Some(count));
+    override_parameter!(settings.display.theme, opt.color_theme, theme, Some(theme));
 
-    override_parameter!(settings.logging, opt, Some(PathBuf(file)), log_file);
+    override_parameter!(settings.export.kind, opt.export_type);
+    override_parameter!(settings.export.dir, opt.export_dir, dir, PathBuf::from(dir));
+    override_parameter!(
+        settings.export.size,
+        opt.export_size,
+        size,
+        Some(parse_size(&size)?)
+    );
+    override_parameter!(settings.export.count, opt.export_count, count, Some(count));
+    if opt.graph {
+        settings.export.graph = true;
+    }
+
+    override_parameter!(
+        settings.logging.file,
+        opt.log_file,
+        file,
+        Some(PathBuf::from(file))
+    );
 
     if opt.debug {
         settings.logging.level = LoggingLevel::Debug;
@@ -287,6 +280,9 @@ fn start(opt: Opt) -> anyhow::Result<()> {
         let system_conf = info::SystemConf::new()?;
         if let Err(err) = app.run(&target_ids, &system_conf) {
             error!("{}", err);
+            if settings.logging.file.is_some() {
+                eprintln!("{}", err);
+            }
         }
     }
     Ok(())

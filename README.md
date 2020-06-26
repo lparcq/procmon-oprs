@@ -2,6 +2,8 @@ Oprs
 ====
 
 ![Rust](https://github.com/lparcq/procmon-oprs/workflows/Rust/badge.svg)
+[![Crates.io](https://img.shields.io/crates/v/procmon-oprs.svg)](https://crates.io/crates/procmon-oprs)
+![Crates.io](https://img.shields.io/crates/l/procmon-oprs)
 
 Oprs is a process monitor for Linux. The name is an abbreviation for Observe Process ReSources.
 

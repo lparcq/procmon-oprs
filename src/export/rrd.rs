@@ -16,9 +16,10 @@
 
 use anyhow::anyhow;
 use libc::pid_t;
-use log::info;
+use log::{debug, info};
 use std::collections::HashMap;
 use std::iter::IntoIterator;
+use std::rc::Rc;
 use std::time::Duration;
 
 use crate::{
@@ -36,6 +37,8 @@ use crate::export::rrdtool::RrdTool;
 pub enum Error {
     #[error("rrd: interval too large")]
     IntervalTooLarge,
+    #[error("rrd: period too large (interval multiplied by rows)")]
+    PeriodTooLarge,
     #[error("rrd: missing count")]
     MissingCount,
 }
@@ -105,26 +108,35 @@ impl ExportInfo {
 pub struct RrdExporter {
     interval: Duration,
     rows: usize,
+    period: Duration,
     tool: RrdTool,
+    variables: Vec<String>,
     ds: Vec<String>,
     skip: Vec<bool>,
-    pids: HashMap<pid_t, ExportInfo>,
+    pids: HashMap<pid_t, Rc<ExportInfo>>,
+    graph: bool,
 }
 
 impl RrdExporter {
     pub fn new(settings: &ExportSettings, interval: Duration) -> anyhow::Result<RrdExporter> {
         let rows = settings.count.ok_or(Error::MissingCount)?;
         let tool = RrdTool::new(settings.dir.as_path())?;
+        let period = interval
+            .checked_mul(rows as u32)
+            .ok_or(Error::PeriodTooLarge)?;
         if interval.as_secs() == 0 || interval.subsec_nanos() != 0 {
             Err(anyhow!("rrd: interval must be a whole number of seconds"))
         } else {
             Ok(RrdExporter {
                 interval,
                 rows,
+                period,
                 tool,
                 ds: Vec::new(),
+                variables: Vec::new(),
                 skip: Vec::new(),
                 pids: HashMap::new(),
+                graph: settings.graph,
             })
         }
     }
@@ -135,7 +147,11 @@ impl RrdExporter {
     }
 
     /// Create process info.
-    fn make_proc_info(&mut self, proc: &ProcessStatus, timestamp: &Duration) -> anyhow::Result<()> {
+    fn make_proc_info(
+        &mut self,
+        proc: &ProcessStatus,
+        timestamp: &Duration,
+    ) -> anyhow::Result<Rc<ExportInfo>> {
         let pid = proc.get_pid();
         let dbname = RrdExporter::filename(pid, proc.get_name());
         let start_time = timestamp
@@ -148,8 +164,9 @@ impl RrdExporter {
             &self.interval,
             self.rows,
         )?;
-        self.pids.insert(pid, ExportInfo::new(dbname, pid as u32));
-        Ok(())
+        let exinfo = Rc::new(ExportInfo::new(dbname, pid as u32));
+        self.pids.insert(pid, exinfo.clone());
+        Ok(exinfo)
     }
 }
 
@@ -164,7 +181,8 @@ impl Exporter for RrdExporter {
             };
             if let Aggregation::None = agg {
                 self.skip.push(false);
-                let ds = format!("DS:{}:{}:{}:0.5:1", ds_name, ds_type, heart_beat,);
+                let ds = format!("DS:{}:{}:{}:0.5:1", &ds_name, ds_type, heart_beat,);
+                self.variables.push(ds_name);
                 info!("rrd define {}", ds);
                 self.ds.push(ds);
             } else {
@@ -175,19 +193,21 @@ impl Exporter for RrdExporter {
     }
 
     fn close(&mut self) -> anyhow::Result<()> {
-        self.tool.close()
+        self.tool.close()?;
+        Ok(())
     }
 
     fn export(&mut self, collector: &Collector, timestamp: &Duration) -> anyhow::Result<()> {
+        let mut infos = Vec::new();
         for pstat in collector.lines() {
             let pid = pstat.get_pid();
             let exinfo = match self.pids.get(&pid) {
-                Some(exinfo) => exinfo,
-                None => {
-                    self.make_proc_info(pstat, timestamp)?;
-                    self.pids.get(&pid).unwrap()
-                }
+                Some(exinfo) => exinfo.clone(),
+                None => self.make_proc_info(pstat, timestamp)?,
             };
+            if self.graph {
+                infos.push(exinfo.clone());
+            }
 
             let samples = pstat
                 .samples()
@@ -196,6 +216,22 @@ impl Exporter for RrdExporter {
                 .filter(|(_, skip)| !*skip)
                 .map(|(sample, _)| *(sample.values().next().unwrap()));
             self.tool.update(&exinfo.db, samples, timestamp)?;
+        }
+        if self.graph {
+            let start = timestamp
+                .checked_sub(self.period)
+                .ok_or(Error::PeriodTooLarge)?;
+            for ds_name in &self.variables {
+                let filename = format!("{}.png", ds_name);
+                let defs = infos.iter().enumerate().map(|(index, exinfo)| {
+                    format!(
+                        "DEF:v{}={}:{}:AVERAGE LINE1:v{}#{:0>6}",
+                        index, exinfo.db, ds_name, index, exinfo.color
+                    )
+                });
+                let (width, height) = self.tool.graph(&filename, &start, timestamp, defs)?;
+                debug!("graph of size ({}, {})", width, height);
+            }
         }
         Ok(())
     }
