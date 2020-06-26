@@ -119,6 +119,18 @@ macro_rules! try_write {
     };
 }
 
+macro_rules! try_writeln {
+    ($file:expr) => {
+        try_io!(writeln!($file))
+    };
+    ($file:expr, $fmt:expr) => {
+        try_io!(writeln!($file, $fmt))
+    };
+    ($file:expr, $fmt:expr, $($arg:tt)*) => {
+        try_io!(writeln!($file, $fmt, $($arg)*))
+    };
+}
+
 fn parse_graph_size(line: &str) -> Result<(usize, usize), Error> {
     let size = line.trim_end();
     let mut tokens = size.splitn(2, 'x');
@@ -218,7 +230,7 @@ impl RrdTool {
         for value in values.into_iter() {
             try_write!(self.child_in, ":{}", value);
         }
-        try_write!(self.child_in, "\n");
+        try_writeln!(self.child_in);
         self.read_answer(None)
     }
 
@@ -229,6 +241,7 @@ impl RrdTool {
         start_time: &Duration,
         end_time: &Duration,
         defs: I,
+        title: Option<&str>,
     ) -> Result<(usize, usize), Error>
     where
         I: IntoIterator<Item = S>,
@@ -244,10 +257,13 @@ impl RrdTool {
             start,
             end
         );
+        if let Some(title) = title {
+            try_write!(self.child_in, " --title=\"{}\"", title);
+        }
         for def in defs.into_iter() {
             try_write!(self.child_in, " {}", def.as_ref());
         }
-        try_write!(self.child_in, "\n");
+        try_writeln!(self.child_in);
         let mut lines = Vec::new();
         self.read_answer(Some(&mut lines))?;
         if lines.is_empty() {
@@ -259,7 +275,7 @@ impl RrdTool {
 
     pub fn close(&mut self) -> Result<(), Error> {
         debug!("stopping rrdtool");
-        try_io!(self.child_in.write_all(b"quit\n"));
+        try_writeln!(self.child_in, "quit");
         debug!("waiting for rrdtool to stop");
         try_io!(self.process.wait());
         debug!("rrdtool stopped");

@@ -254,6 +254,7 @@ impl Exporter for RrdExporter {
                 .checked_sub(self.period)
                 .ok_or(Error::PeriodTooLarge)?;
             for ds_name in &self.variables {
+                let title = ds_name.replace("_", " ");
                 let filename = format!("{}.png", ds_name);
                 let defs = infos.iter().enumerate().map(|(index, exinfo)| {
                     let def = format!(
@@ -263,7 +264,9 @@ impl Exporter for RrdExporter {
                     debug!("rrd def: {}", def);
                     def
                 });
-                let (width, height) = self.tool.graph(&filename, &start, timestamp, defs)?;
+                let (width, height) =
+                    self.tool
+                        .graph(&filename, &start, timestamp, defs, Some(&title))?;
                 debug!("graph of size ({}, {})", width, height);
             }
         }
