@@ -73,10 +73,21 @@ where stime and utime comes from /proc/PID/stat and user, … from /proc/stat.
 Export
 ------
 
+### CSV
+
 In CSV export, the first column is the number of seconds since the [Unix Epoch](https://en.wikipedia.org/wiki/Unix_time).
 
-[RRDtool](https://oss.oetiker.ch/rrdtool/) creates one file per process. Only raw values are written in the database.
+The size of exported data can be limited with `--export-size` to set the maximum size of a CSV file and `--export-count`
+to set the maximum number of files.
+
+### RRD
+
+Creates one RRD database for each process by spawning a [RRDtool](https://oss.oetiker.ch/rrdtool/) process. Only raw values
+are written in the database.
+
 The number of rows is set with option --export-count.
+
+Option `--graph` creates one png file per metric in the export directory.
 
 Configuration
 -------------

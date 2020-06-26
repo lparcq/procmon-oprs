@@ -74,7 +74,7 @@ mod process {
         P: AsRef<Path>,
     {
         let mut buf = Cursor::new(Vec::<u8>::new());
-        write!(buf, "{}\n", output)?;
+        writeln!(buf, "{}", output)?;
         buf.seek(io::SeekFrom::Start(0))?;
         Ok(Child {
             stdin: Some(ChildStdin {}),
@@ -106,7 +106,7 @@ pub enum Error {
 macro_rules! try_io {
     // Assign option to lvalue if option is set.
     ($res:expr) => {
-        $res.map_err(|err| Error::Io(err))?
+        $res.map_err(Error::Io)?
     };
 }
 

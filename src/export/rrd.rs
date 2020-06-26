@@ -18,7 +18,6 @@ use anyhow::anyhow;
 use libc::pid_t;
 use log::{debug, info};
 use std::collections::{HashMap, HashSet};
-use std::iter::IntoIterator;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -228,7 +227,7 @@ impl Exporter for RrdExporter {
     }
 
     fn export(&mut self, collector: &Collector, timestamp: &Duration) -> anyhow::Result<()> {
-        let mut pids: HashSet<pid_t> = self.pids.keys().map(|pid| *pid).collect();
+        let mut pids: HashSet<pid_t> = self.pids.keys().copied().collect();
         let mut infos = Vec::new();
         for pstat in collector.lines() {
             let pid = pstat.get_pid();
@@ -245,7 +244,6 @@ impl Exporter for RrdExporter {
 
             let samples = pstat
                 .samples()
-                .into_iter()
                 .zip(self.skip.iter())
                 .filter(|(_, skip)| !*skip)
                 .map(|(sample, _)| *(sample.values().next().unwrap()));

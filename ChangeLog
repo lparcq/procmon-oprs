@@ -1,3 +1,7 @@
+2020-06-26  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
+
+	* Version 0.9.0: Fix rrd export and add graph export.
+
 2020-06-23  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
 
 	* Version 0.8.1: Fix delay when killing (Ctrl-C) the process in text mode.

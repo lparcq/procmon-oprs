@@ -163,7 +163,7 @@ impl Exporter for CsvExporter {
     }
 
     fn export(&mut self, collector: &Collector, timestamp: &Duration) -> anyhow::Result<()> {
-        let mut pids: HashSet<pid_t> = self.files.keys().map(|pid| *pid).collect();
+        let mut pids: HashSet<pid_t> = self.files.keys().copied().collect();
         for pstat in collector.lines() {
             let pid = pstat.get_pid();
             if !pids.remove(&pid) {
