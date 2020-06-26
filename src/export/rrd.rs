@@ -36,16 +36,16 @@ use crate::export::rrdtool::RrdTool;
 /// Colors for graphs in order of priority (less used first).
 const COLORS: [u32; 12] = [
     0xfa8072, // salmon
-    0xffff55, // yellow
-    0xfb9a99, // pink
-    0xb2df8a, // light green
-    0xa6cee3, // light blue
     0xcab2d6, // light purple
+    0xffff55, // yellow
+    0xb2df8a, // light green
+    0xfb9a99, // pink
+    0xa6cee3, // light blue
     0xb15928, // maroon
     0x6a3d9a, // purple
     0xff7f00, // orange
-    0xe31a1c, // red
     0x33a02c, // green
+    0xe31a1c, // red
     0x1f78b4, // blue
 ];
 
@@ -113,13 +113,18 @@ fn data_source_type(id: MetricId) -> DataSourceType {
 }
 
 struct ExportInfo {
+    name: String,
     db: String,
     color: u32,
 }
 
 impl ExportInfo {
-    fn new(db: String, color: u32) -> ExportInfo {
-        ExportInfo { db, color }
+    fn new(name: &str, db: &str, color: u32) -> ExportInfo {
+        ExportInfo {
+            name: name.to_string(),
+            db: db.to_string(),
+            color,
+        }
     }
 }
 
@@ -167,9 +172,13 @@ impl RrdExporter {
     }
 
     /// Create process info.
-    fn add_proc_info(&mut self, proc: &ProcessStatus, timestamp: &Duration) -> anyhow::Result<()> {
-        let pid = proc.get_pid();
-        let dbname = RrdExporter::filename(pid, proc.get_name());
+    fn insert_export_info(
+        &mut self,
+        pstat: &ProcessStatus,
+        timestamp: &Duration,
+    ) -> anyhow::Result<()> {
+        let pid = pstat.get_pid();
+        let dbname = RrdExporter::filename(pid, pstat.get_name());
         let start_time = timestamp
             .checked_sub(self.interval)
             .ok_or_else(|| Error::IntervalTooLarge)?;
@@ -185,7 +194,7 @@ impl RrdExporter {
         } else {
             0
         };
-        let exinfo = Rc::new(ExportInfo::new(dbname, color));
+        let exinfo = Rc::new(ExportInfo::new(pstat.get_name(), &dbname, color));
         self.pids.insert(pid, exinfo);
         Ok(())
     }
@@ -202,7 +211,7 @@ impl Exporter for RrdExporter {
             };
             if let Aggregation::None = agg {
                 self.skip.push(false);
-                let ds = format!("DS:{}:{}:{}:0.5:1", &ds_name, ds_type, heart_beat,);
+                let ds = format!("DS:{}:{}:{}:0:U", &ds_name, ds_type, heart_beat,);
                 self.variables.push(ds_name);
                 info!("rrd define {}", ds);
                 self.ds.push(ds);
@@ -223,8 +232,11 @@ impl Exporter for RrdExporter {
         let mut infos = Vec::new();
         for pstat in collector.lines() {
             let pid = pstat.get_pid();
+            if pid == 0 {
+                continue;
+            }
             if !pids.remove(&pid) {
-                self.add_proc_info(pstat, timestamp)?;
+                self.insert_export_info(pstat, timestamp)?;
             }
             let exinfo = self.pids.get(&pid).unwrap();
             if self.graph {
@@ -246,10 +258,12 @@ impl Exporter for RrdExporter {
             for ds_name in &self.variables {
                 let filename = format!("{}.png", ds_name);
                 let defs = infos.iter().enumerate().map(|(index, exinfo)| {
-                    format!(
-                        "DEF:v{}={}:{}:AVERAGE LINE1:v{}#{:0>6}",
-                        index, exinfo.db, ds_name, index, exinfo.color
-                    )
+                    let def = format!(
+                        "DEF:v{}={}:{}:AVERAGE LINE1:v{}#{:0>6x}:\"{}\"",
+                        index, exinfo.db, ds_name, index, exinfo.color, exinfo.name
+                    );
+                    debug!("rrd def: {}", def);
+                    def
                 });
                 let (width, height) = self.tool.graph(&filename, &start, timestamp, defs)?;
                 debug!("graph of size ({}, {})", width, height);

@@ -282,10 +282,10 @@ impl DisplayDevice for TextDevice {
         } else {
             self.table.clear_titles();
             self.table.clear_values();
-            collector.lines().for_each(|proc| {
-                let name = format!("{} [{}]", proc.get_name(), proc.get_pid(),);
+            collector.lines().for_each(|pstat| {
+                let name = format!("{} [{}]", pstat.get_name(), pstat.get_pid(),);
                 self.table.push_title(name);
-                proc.samples().for_each(|sample| {
+                pstat.samples().for_each(|sample| {
                     sample
                         .strings()
                         .for_each(|value| self.table.push_value(value))

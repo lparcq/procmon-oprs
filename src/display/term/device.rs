@@ -316,8 +316,9 @@ impl DisplayDevice for TerminalDevice {
             .collect::<Vec<String>>();
         let columns = collector
             .lines()
-            .map(|proc| {
-                proc.samples()
+            .map(|pstat| {
+                pstat
+                    .samples()
                     .map(|sample| sample.strings())
                     .flatten()
                     .map(|s| s.as_str())
