@@ -17,7 +17,7 @@
 use anyhow::anyhow;
 use libc::pid_t;
 use log::{debug, info};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::iter::IntoIterator;
 use std::rc::Rc;
 use std::time::Duration;
@@ -33,6 +33,22 @@ use super::Exporter;
 
 use crate::export::rrdtool::RrdTool;
 
+/// Colors for graphs in order of priority (less used first).
+const COLORS: [u32; 12] = [
+    0xfa8072, // salmon
+    0xffff55, // yellow
+    0xfb9a99, // pink
+    0xb2df8a, // light green
+    0xa6cee3, // light blue
+    0xcab2d6, // light purple
+    0xb15928, // maroon
+    0x6a3d9a, // purple
+    0xff7f00, // orange
+    0xe31a1c, // red
+    0x33a02c, // green
+    0x1f78b4, // blue
+];
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("rrd: interval too large")]
@@ -41,6 +57,8 @@ pub enum Error {
     PeriodTooLarge,
     #[error("rrd: missing count")]
     MissingCount,
+    #[error("rrd: number of colors exhausted")]
+    NoMoreColors,
 }
 
 enum DataSourceType {
@@ -114,6 +132,7 @@ pub struct RrdExporter {
     ds: Vec<String>,
     skip: Vec<bool>,
     pids: HashMap<pid_t, Rc<ExportInfo>>,
+    color_bucket: Vec<u32>,
     graph: bool,
 }
 
@@ -136,6 +155,7 @@ impl RrdExporter {
                 variables: Vec::new(),
                 skip: Vec::new(),
                 pids: HashMap::new(),
+                color_bucket: Vec::from(COLORS),
                 graph: settings.graph,
             })
         }
@@ -147,11 +167,7 @@ impl RrdExporter {
     }
 
     /// Create process info.
-    fn make_proc_info(
-        &mut self,
-        proc: &ProcessStatus,
-        timestamp: &Duration,
-    ) -> anyhow::Result<Rc<ExportInfo>> {
+    fn add_proc_info(&mut self, proc: &ProcessStatus, timestamp: &Duration) -> anyhow::Result<()> {
         let pid = proc.get_pid();
         let dbname = RrdExporter::filename(pid, proc.get_name());
         let start_time = timestamp
@@ -164,9 +180,14 @@ impl RrdExporter {
             &self.interval,
             self.rows,
         )?;
-        let exinfo = Rc::new(ExportInfo::new(dbname, pid as u32));
-        self.pids.insert(pid, exinfo.clone());
-        Ok(exinfo)
+        let color = if self.graph {
+            self.color_bucket.pop().ok_or(Error::NoMoreColors)?
+        } else {
+            0
+        };
+        let exinfo = Rc::new(ExportInfo::new(dbname, color));
+        self.pids.insert(pid, exinfo);
+        Ok(())
     }
 }
 
@@ -198,13 +219,14 @@ impl Exporter for RrdExporter {
     }
 
     fn export(&mut self, collector: &Collector, timestamp: &Duration) -> anyhow::Result<()> {
+        let mut pids: HashSet<pid_t> = self.pids.keys().map(|pid| *pid).collect();
         let mut infos = Vec::new();
         for pstat in collector.lines() {
             let pid = pstat.get_pid();
-            let exinfo = match self.pids.get(&pid) {
-                Some(exinfo) => exinfo.clone(),
-                None => self.make_proc_info(pstat, timestamp)?,
-            };
+            if !pids.remove(&pid) {
+                self.add_proc_info(pstat, timestamp)?;
+            }
+            let exinfo = self.pids.get(&pid).unwrap();
             if self.graph {
                 infos.push(exinfo.clone());
             }
@@ -231,6 +253,11 @@ impl Exporter for RrdExporter {
                 });
                 let (width, height) = self.tool.graph(&filename, &start, timestamp, defs)?;
                 debug!("graph of size ({}, {})", width, height);
+            }
+        }
+        for pid in pids {
+            if let Some(exinfo) = self.pids.remove(&pid) {
+                self.color_bucket.push(exinfo.color);
             }
         }
         Ok(())
