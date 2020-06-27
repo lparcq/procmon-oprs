@@ -26,7 +26,7 @@ file (pulseaudio) and a process by name (bash), run:
 
     oprs -F human -p 6913 -f pulseaudio.pid -n dhclient mem:vm mem:rss+max time:elapsed fault:major
 
-![Screenshot](doc/screenshot.jpeg)
+![Screenshot of oprs](doc/screenshot.jpeg)
 
 Without argument, the command prints the available metrics.
 
@@ -99,6 +99,8 @@ are written in the database.
 The number of rows is set with option --export-count.
 
 Option `--graph` creates one png file per metric in the export directory.
+
+![Screenshot of RRD graph](doc/mem_rss.png)
 
 Configuration
 -------------
