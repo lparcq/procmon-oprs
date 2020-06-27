@@ -16,6 +16,7 @@ Features
 * Optional minimum and maximum.
 * Select processes by PID, PID file or name.
 * Display in plain text or a terminal UI.
+* Export in CSV or RRDtool format.
 
 Example
 -------
@@ -31,8 +32,8 @@ Without argument, the command prints the available metrics.
 
 By default, the raw figure is printed unless -raw is added: mem:rss-raw+min+max. 
 
-Usage
------
+Metrics
+-------
 
 Without argument, the command prints the list of available metrics.
 
@@ -57,18 +58,28 @@ memory size and the peak size. To get only the max, use: mem:vm-raw+max. To get 
 
 For some metrics, min or max is meaningless.
 
-Export options:
-- csv: comma-separated values, one file per process in the export directory.
-- rrd: Round Robin Database.
-
-CPU usage
----------
+### CPU usage
 
 Unlike other tools, the CPU usage of a process displayed by time:cpu+ratio is the percentage of the
 total CPU time. A process using all cores of a 4-cores system would be at 100%, not 400%.
 
 The CPU usage is (stime + utime) / ((user - guest) + (nice - guest_nice) + system + idle + iowait + irq + softirq)
 where stime and utime comes from /proc/PID/stat and user, … from /proc/stat.
+
+Processes
+---------
+
+Processes are selected using one of the four following options:
+
+- Option --pid: the pid of the process.
+
+- Option --pid-file: file containing the pid of the process. It doesn't have to exists when the command starts.
+
+- Option --name: monitor all processes with the given name.
+
+- Option --merge: sum the metrics of all the processes with the same name.
+
+Options can be specified more than once.
 
 Export
 ------
@@ -80,7 +91,7 @@ In CSV export, the first column is the number of seconds since the [Unix Epoch](
 The size of exported data can be limited with `--export-size` to set the maximum size of a CSV file and `--export-count`
 to set the maximum number of files.
 
-### RRD
+### Round Robin Database (RRD)
 
 Creates one RRD database for each process by spawning a [RRDtool](https://oss.oetiker.ch/rrdtool/) process. Only raw values
 are written in the database.

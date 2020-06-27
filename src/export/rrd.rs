@@ -24,7 +24,7 @@ use std::time::Duration;
 use crate::{
     agg::Aggregation,
     cfg::ExportSettings,
-    collector::{Collector, ProcessStatus},
+    collector::{Collector, TargetStatus},
     metrics::MetricId,
 };
 
@@ -173,11 +173,11 @@ impl RrdExporter {
     /// Create process info.
     fn insert_export_info(
         &mut self,
-        pstat: &ProcessStatus,
+        status: &TargetStatus,
         timestamp: &Duration,
     ) -> anyhow::Result<()> {
-        let pid = pstat.get_pid();
-        let dbname = RrdExporter::filename(pid, pstat.get_name());
+        let pid = status.get_pid();
+        let dbname = RrdExporter::filename(pid, status.get_name());
         let start_time = timestamp
             .checked_sub(self.interval)
             .ok_or_else(|| Error::IntervalTooLarge)?;
@@ -193,7 +193,7 @@ impl RrdExporter {
         } else {
             0
         };
-        let exinfo = Rc::new(ExportInfo::new(pstat.get_name(), &dbname, color));
+        let exinfo = Rc::new(ExportInfo::new(status.get_name(), &dbname, color));
         self.pids.insert(pid, exinfo);
         Ok(())
     }
@@ -229,20 +229,20 @@ impl Exporter for RrdExporter {
     fn export(&mut self, collector: &Collector, timestamp: &Duration) -> anyhow::Result<()> {
         let mut pids: HashSet<pid_t> = self.pids.keys().copied().collect();
         let mut infos = Vec::new();
-        for pstat in collector.lines() {
-            let pid = pstat.get_pid();
+        for status in collector.lines() {
+            let pid = status.get_pid();
             if pid == 0 {
                 continue;
             }
             if !pids.remove(&pid) {
-                self.insert_export_info(pstat, timestamp)?;
+                self.insert_export_info(status, timestamp)?;
             }
             let exinfo = self.pids.get(&pid).unwrap();
             if self.graph {
                 infos.push(exinfo.clone());
             }
 
-            let samples = pstat
+            let samples = status
                 .samples()
                 .zip(self.skip.iter())
                 .filter(|(_, skip)| !*skip)

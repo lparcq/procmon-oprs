@@ -82,7 +82,7 @@ struct Opt {
 
     #[argh(
         option,
-        short = 'y',
+        short = 'e',
         description = "delay between two samples (default: 5.0)"
     )]
     every: Option<f64>,
@@ -145,6 +145,13 @@ struct Opt {
 
     #[argh(option, short = 'n', description = "process name")]
     name: Vec<String>,
+
+    #[argh(
+        option,
+        short = 'm',
+        description = "group of processes with the same name"
+    )]
+    merged: Vec<String>,
 
     #[argh(positional, description = "metric to monitor")]
     metric: Vec<String>,
@@ -271,6 +278,9 @@ fn start(opt: Opt) -> anyhow::Result<()> {
     }
     for name in opt.name {
         target_ids.push(TargetId::ProcessName(name));
+    }
+    for name in opt.merged {
+        target_ids.push(TargetId::ProcessGroup(name));
     }
     if target_ids.is_empty() {
         warn!("no process to monitor, exiting.");

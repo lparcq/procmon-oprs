@@ -85,15 +85,15 @@ impl Sample {
 }
 
 /// A list of computed samples for a process
-pub struct ProcessStatus {
+pub struct TargetStatus {
     name: String,
     pid: pid_t,
     samples: Vec<Sample>,
 }
 
-impl ProcessStatus {
-    fn new(name: &str, pid: pid_t, samples: Vec<Sample>) -> ProcessStatus {
-        ProcessStatus {
+impl TargetStatus {
+    fn new(name: &str, pid: pid_t, samples: Vec<Sample>) -> TargetStatus {
+        TargetStatus {
             name: name.to_string(),
             pid,
             samples,
@@ -153,7 +153,7 @@ impl Updater {
         pid: pid_t,
         metrics: &[FormattedMetric],
         values: &[u64],
-    ) -> ProcessStatus {
+    ) -> TargetStatus {
         let samples = metrics
             .iter()
             .zip(values.iter())
@@ -176,7 +176,7 @@ impl Updater {
         if pid == 0 {
             self.push(&samples); // new system values
         }
-        ProcessStatus::new(target_name, pid, samples)
+        TargetStatus::new(target_name, pid, samples)
     }
 
     fn get_history(&self, age: usize, metric_index: usize) -> u64 {
@@ -222,7 +222,7 @@ impl Updater {
     fn update_computed_values(
         &mut self,
         metrics: &[FormattedMetric],
-        pstat: &mut ProcessStatus,
+        pstat: &mut TargetStatus,
         values: &[u64],
     ) {
         let mut metric_index = 0;
@@ -255,7 +255,7 @@ impl Updater {
 /// Collect raw samples from target and returns computed values
 pub struct Collector<'a> {
     metrics: &'a [FormattedMetric],
-    lines: VecDeque<ProcessStatus>,
+    lines: VecDeque<TargetStatus>,
     updater: Updater,
     last_line_pos: usize,
 }
@@ -276,12 +276,12 @@ impl<'a> Collector<'a> {
     }
 
     /// Collect a target metrics
-    pub fn collect(&mut self, target_name: &str, pid: pid_t, values: Vec<u64>) {
+    pub fn collect(&mut self, target_name: &str, pid: pid_t, values: &[u64]) {
         let line_pos = self.last_line_pos;
         while let Some(mut line) = self.lines.get_mut(line_pos) {
             if line.get_pid() == pid {
                 self.updater
-                    .update_computed_values(self.metrics, &mut line, &values);
+                    .update_computed_values(self.metrics, &mut line, values);
                 self.last_line_pos += 1;
                 return;
             }
@@ -325,7 +325,7 @@ impl<'a> Collector<'a> {
     }
 
     /// Return lines
-    pub fn lines(&self) -> vec_deque::Iter<ProcessStatus> {
+    pub fn lines(&self) -> vec_deque::Iter<TargetStatus> {
         self.lines.iter()
     }
 
