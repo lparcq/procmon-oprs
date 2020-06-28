@@ -14,8 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use libc::{nanosleep, timespec};
 use log::debug;
-use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 /// Timer that expired at constant time
@@ -104,17 +104,23 @@ impl Timer {
     }
 
     /// Check if the given delay has been reached
-    pub fn poll(&mut self, timeout: Duration) -> bool {
-        if let Some(remaining) = self.remaining() {
-            if remaining < timeout {
-                sleep(remaining);
-                true
-            } else {
-                sleep(timeout);
-                false
-            }
+    ///
+    /// Calls nanosleep to have an interruption on Ctrl-C
+    pub fn sleep(&mut self, delay: Duration) -> Option<Duration> {
+        let req = timespec {
+            tv_sec: delay.as_secs() as i64,
+            tv_nsec: delay.subsec_nanos() as i64,
+        };
+        let mut rem = timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        let ret = unsafe { nanosleep(&req, &mut rem) };
+        if ret == 0 || rem.tv_sec < 0 {
+            None
         } else {
-            true
+            let remaining = Duration::new(rem.tv_sec as u64, rem.tv_nsec as u32);
+            Some(remaining)
         }
     }
 }

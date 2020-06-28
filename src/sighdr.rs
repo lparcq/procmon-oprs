@@ -27,11 +27,13 @@ pub struct SignalHandler {
 impl SignalHandler {
     pub fn new() -> Result<SignalHandler, ctrlc::Error> {
         let caught = Arc::new(AtomicBool::new(false));
-        let moved_caught = caught.clone();
+        let handler = SignalHandler {
+            caught: caught.clone(),
+        };
         ctrlc::set_handler(move || {
-            moved_caught.store(true, Ordering::SeqCst);
+            caught.store(true, Ordering::SeqCst);
         })?;
-        Ok(SignalHandler { caught })
+        Ok(handler)
     }
 
     pub fn caught(&self) -> bool {

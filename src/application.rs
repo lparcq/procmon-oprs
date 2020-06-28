@@ -15,6 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use log::info;
+use std::io::Write;
 use std::result;
 use std::time::{Duration, SystemTime};
 use strum::{EnumMessage, IntoEnumIterator};
@@ -157,7 +158,6 @@ impl Application {
             Some(ref device) => device.is_interactive(),
             _ => false,
         };
-        let timeout: Duration = Duration::new(0, 500);
 
         while !sighdr.caught() {
             let targets_updated = targets.refresh();
@@ -189,9 +189,15 @@ impl Application {
                     break;
                 }
             } else {
-                // Signals don't interrupt calls to sleep in rust. Instead the application
-                // sleeps by increments of 500ms.
-                while !timer.poll(timeout) && !sighdr.caught() {}
+                let mut remaining = Some(self.every);
+                while let Some(delay) = remaining {
+                    remaining = timer.sleep(delay);
+                    std::io::stdout().flush()?; // hack: signal not caught otherwise
+                    if sighdr.caught() {
+                        info!("signal caught, exiting.");
+                        break;
+                    }
+                }
             }
             drift.update(timer.get_delay());
         }
