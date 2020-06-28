@@ -1,3 +1,7 @@
+2020-06-28  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
+
+	* Version 0.10.1: Use nanosleep to interrupt pause on signal. Fix display bug in text mode.
+
 2020-06-27  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
 
 	* Version 0.10.0: Add option --merge to monitor a group of processes of the same name.

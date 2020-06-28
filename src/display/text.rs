@@ -35,6 +35,23 @@ struct SubTitle {
     short_name: Option<&'static str>,
 }
 
+/// Information to close a table
+struct HorizontalRule {
+    title_count: usize,
+    subtitle_count: usize,
+    column_rule: String,
+}
+
+impl HorizontalRule {
+    fn new(title_count: usize, subtitle_count: usize, column_rule: String) -> HorizontalRule {
+        HorizontalRule {
+            title_count,
+            subtitle_count,
+            column_rule,
+        }
+    }
+}
+
 /// Space between the vertical lines and the text
 const VERTICAL_PADDING: usize = 0;
 
@@ -47,8 +64,8 @@ struct Table {
     title_width: usize,
     column_width: usize,
     repeat: u16,
+    hrule: Option<HorizontalRule>,
     charset: TableCharSet,
-    hrule: String,
     vertical_padding: String,
 }
 
@@ -63,7 +80,7 @@ impl Table {
             column_width: 0,
             repeat: 0,
             charset: TableCharSet::new(),
-            hrule: String::from(""),
+            hrule: None,
             vertical_padding: " ".repeat(VERTICAL_PADDING),
         }
     }
@@ -95,26 +112,38 @@ impl Table {
         middle_subtitle: &'static str,
         right: &'static str,
     ) {
-        let subtitle_count = self.subtitles.len();
-        let column_count = subtitle_count * self.title_count;
-        for index in 0..column_count {
-            let separator = if index == 0 {
-                left
-            } else if index % subtitle_count == 0 {
-                middle_title
-            } else {
-                middle_subtitle
-            };
-            print!("{}{}", separator, self.hrule);
+        if let Some(HorizontalRule {
+            title_count,
+            subtitle_count,
+            column_rule,
+        }) = &self.hrule
+        {
+            let column_count = subtitle_count * title_count;
+            for index in 0..column_count {
+                let separator = if index == 0 {
+                    left
+                } else if index % subtitle_count == 0 {
+                    middle_title
+                } else {
+                    middle_subtitle
+                };
+                print!("{}{}", separator, column_rule);
+            }
+            println!("{}", right);
         }
-        println!("{}", right);
     }
 
-    fn print_header(&mut self) {
-        if self.title_count > 0 {
-            self.print_footer();
-        }
+    fn print_header(&mut self, column_width: usize) {
+        self.print_footer();
         self.title_count = self.titles.len();
+        let (_, hrule) = self
+            .charset
+            .horizontal_line(column_width + 2 * VERTICAL_PADDING);
+        self.hrule = Some(HorizontalRule::new(
+            self.title_count,
+            self.subtitles.len(),
+            hrule,
+        ));
         // An horizontal rule
         self.horizontal_rule(
             self.charset.get(TableChar::DownRight),
@@ -185,7 +214,7 @@ impl Table {
     }
 
     /// Calculate the column width
-    fn resize(&mut self) {
+    fn resize(&mut self) -> usize {
         let subtitle_count = self.subtitles.len();
         let sep_len = 2 * VERTICAL_PADDING + 1; // padding + vertical line
         let sep_count = subtitle_count - 1; // number of separator
@@ -221,15 +250,13 @@ impl Table {
             self.title_width = title_width;
             self.repeat = 0;
         }
-        let (_, hrule) = self
-            .charset
-            .horizontal_line(column_width + 2 * VERTICAL_PADDING);
-        self.hrule = hrule;
+        column_width
     }
 
     fn print(&mut self, with_header: bool) {
+        let column_width = self.resize();
         if with_header || self.repeat == 0 {
-            self.print_header();
+            self.print_header(column_width);
         }
         self.print_values();
         self.repeat += 1;
@@ -273,6 +300,7 @@ impl DisplayDevice for TextDevice {
     }
 
     fn close(&mut self) -> anyhow::Result<()> {
+        self.table.print_footer();
         Ok(())
     }
 
@@ -291,7 +319,6 @@ impl DisplayDevice for TextDevice {
                         .for_each(|value| self.table.push_value(value))
                 });
             });
-            self.table.resize();
             self.table.print(targets_updated);
         }
         Ok(())
