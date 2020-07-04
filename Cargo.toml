@@ -26,7 +26,7 @@ light-ini = "0.1"
 log = "0"
 nom = "5"
 procfs = "0.7"
-simplelog = "0.7"
+simplelog = "0.8"
 strum = "0.18"
 strum_macros = "0.18"
 termion = "1.5"
@@ -34,7 +34,7 @@ thiserror = "1.0"
 xdg = "2"
 
 [profile.release]
-lto = true
+lto = 'thin'
 panic = 'abort'
 opt-level = 3
 debug = false
@@ -42,4 +42,3 @@ debug = false
 [profile.dev]
 opt-level = 0
 debug = true
-
