@@ -48,7 +48,7 @@ pub fn list_metrics() {
     for metric_id in MetricId::iter() {
         println!(
             "{:<18}\t{}",
-            metric_id.to_str(),
+            metric_id.as_str(),
             metric_id.get_message().unwrap_or("not documented")
         );
     }

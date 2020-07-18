@@ -75,13 +75,13 @@ fn expand_metric_name(metric_ids: &mut Vec<MetricId>, name: &str) {
         // match by suffix
         let suffix = &name[2..];
         MetricId::iter()
-            .filter(|id| id.to_str().ends_with(suffix))
+            .filter(|id| id.as_str().ends_with(suffix))
             .for_each(|id| metric_ids.push(id));
     } else if name.ends_with(":*") {
         // match by prefix
         let prefix = &name[..name.len() - 2];
         MetricId::iter()
-            .filter(|id| id.to_str().starts_with(prefix))
+            .filter(|id| id.as_str().starts_with(prefix))
             .for_each(|id| metric_ids.push(id));
     } else {
         let parts: Vec<&str> = name.split(":*:").collect();
@@ -92,7 +92,7 @@ fn expand_metric_name(metric_ids: &mut Vec<MetricId>, name: &str) {
         let suffix = parts[1];
         MetricId::iter()
             .filter(|id| {
-                let name = id.to_str();
+                let name = id.as_str();
                 name.starts_with(prefix) && name.ends_with(suffix)
             })
             .for_each(|id| metric_ids.push(id));

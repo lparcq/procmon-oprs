@@ -137,11 +137,11 @@ impl Exporter for CsvExporter {
         collector.for_each_computed_metric(|id, ag| {
             if last_id.is_none() || last_id.unwrap() != id {
                 last_id = Some(id);
-                self.header.push(id.to_str().to_string());
+                self.header.push(id.as_str().to_string());
             } else {
                 let name = format!(
                     "{} ({})",
-                    id.to_str(),
+                    id.as_str(),
                     match ag {
                         Aggregation::None => "none", // never used
                         Aggregation::Min => "min",

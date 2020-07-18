@@ -203,7 +203,7 @@ impl Exporter for RrdExporter {
     fn open(&mut self, collector: &Collector) -> anyhow::Result<()> {
         let heart_beat = self.interval.as_secs() * 2;
         collector.for_each_computed_metric(|id, agg| {
-            let ds_name = id.to_str().replace(":", "_");
+            let ds_name = id.as_str().replace(":", "_");
             let ds_type = match data_source_type(id) {
                 DataSourceType::Counter => "COUNTER",
                 DataSourceType::Gauge => "GAUGE",

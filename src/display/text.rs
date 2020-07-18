@@ -285,7 +285,7 @@ impl DisplayDevice for TextDevice {
         collector.for_each_computed_metric(|id, ag| {
             if last_id.is_none() || last_id.unwrap() != id {
                 last_id = Some(id);
-                self.table.push_subtitle(id.to_str(), id.to_short_str());
+                self.table.push_subtitle(id.as_str(), id.to_short_str());
             } else {
                 let subtitle = match ag {
                     Aggregation::None => "none", // never used

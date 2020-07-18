@@ -224,7 +224,7 @@ pub enum MetricId {
 }
 
 impl MetricId {
-    pub fn to_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         self.into()
     }
 
@@ -356,7 +356,7 @@ impl MetricNamesParser {
                     }
                     for id in metric_ids {
                         if parsed_ids.contains(&id) {
-                            return Err(Error::DuplicateMetric(id.to_str().to_string()));
+                            return Err(Error::DuplicateMetric(id.as_str().to_string()));
                         } else {
                             parsed_ids.insert(id);
                             metrics.push(FormattedMetric::new(
