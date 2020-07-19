@@ -388,7 +388,7 @@ mod tests {
 
     #[test]
     fn test_metricid_to_str() {
-        assert_eq!("mem:vm", MetricId::MemVm.to_str());
+        assert_eq!("mem:vm", MetricId::MemVm.as_str());
         let name: &'static str = MetricId::MemVm.into();
         assert_eq!("mem:vm", name);
     }
@@ -405,7 +405,7 @@ mod tests {
             assert!(
                 metric_id.get_message().is_some(),
                 "{}: no message",
-                metric_id.to_str()
+                metric_id.as_str()
             )
         }
     }
@@ -417,9 +417,9 @@ mod tests {
                 Some(name) => assert!(
                     name.len() <= super::SHORT_NAME_MAX_LEN,
                     "{}: short name is too long",
-                    metric_id.to_str()
+                    metric_id.as_str()
                 ),
-                None => panic!("{} has no short name", metric_id.to_str()),
+                None => panic!("{} has no short name", metric_id.as_str()),
             }
         }
     }
