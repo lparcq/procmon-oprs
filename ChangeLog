@@ -1,3 +1,7 @@
+2020-07-19  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
+
+	* Version 0.11.0: In terminal mode, underline values when they change.
+
 2020-06-28  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
 
 	* Version 0.10.1: Use nanosleep to interrupt pause on signal. Fix display bug in text mode.

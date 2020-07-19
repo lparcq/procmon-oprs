@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::convert::AsRef;
 use std::io::{Result, Write};
 use std::iter::{IntoIterator, Iterator};
 
@@ -22,6 +23,42 @@ use crate::console::{
     charset::{TableChar, TableCharSet},
     Origin, Screen, Size,
 };
+
+const STYLE_NORMAL: u8 = 0x00;
+const STYLE_HIGHLIGHT: u8 = 0x01;
+
+pub struct Cell<'a> {
+    value: &'a str,
+    style: u8,
+}
+
+impl<'a> Cell<'a> {
+    pub fn new(value: &'a str) -> Cell<'a> {
+        Cell {
+            value,
+            style: STYLE_NORMAL,
+        }
+    }
+
+    pub fn with_highlight(value: &'a str) -> Cell<'a> {
+        Cell {
+            value,
+            style: STYLE_HIGHLIGHT,
+        }
+    }
+}
+
+impl AsRef<str> for Cell<'_> {
+    fn as_ref(&self) -> &str {
+        self.value
+    }
+}
+
+macro_rules! cell_has_style {
+    ($cell:expr, $style:expr) => {
+        $cell.style & $style == $style
+    };
+}
 
 /// Crosstab widget
 ///
@@ -175,17 +212,15 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
         write!(screen, "{}", self.vline)
     }
 
-    fn write_column<I, S, F>(
+    fn write_column<F>(
         &self,
         screen: &mut Screen,
         pos: Origin,
         index: usize,
-        column: I,
+        column: &[Cell<'_>],
         write_value: F,
     ) -> Result<()>
     where
-        I: IntoIterator<Item = S>,
-        S: AsRef<str>,
         F: Fn(&mut Screen, &str, usize) -> Result<()>,
     {
         let (horizontal_offset, vertical_offset) = self.offset;
@@ -197,7 +232,7 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
             ""
         };
         let width = self.sizer.width_or_zero(index + horizontal_offset);
-        for value in column.into_iter().skip(vertical_offset) {
+        for cell in column.iter().skip(vertical_offset) {
             if y > screen_height {
                 break;
             }
@@ -205,11 +240,17 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
             let shade = (y % 2) == 0;
             write!(screen, "{}", self.vline)?;
             if shade {
-                screen.bg_shade()?;
+                screen.shade(true)?;
             }
-            write_value(screen, value.as_ref(), width)?;
+            if cell_has_style!(cell, STYLE_HIGHLIGHT) {
+                screen.highlight(true)?;
+            }
+            write_value(screen, cell.value, width)?;
+            if cell_has_style!(cell, STYLE_HIGHLIGHT) {
+                screen.highlight(false)?;
+            }
             if shade {
-                screen.bg_reset()?;
+                screen.shade(false)?;
             }
             write!(screen, "{}", right)?;
             y += 1;
@@ -217,28 +258,25 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
         Ok(())
     }
 
-    pub fn write_left_column<I, S>(&self, screen: &mut Screen, pos: Origin, column: I) -> Result<()>
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<str>,
-    {
+    pub fn write_left_column(
+        &self,
+        screen: &mut Screen,
+        pos: Origin,
+        column: &[Cell<'_>],
+    ) -> Result<()> {
         fn write_value(screen: &mut Screen, value: &str, width: usize) -> Result<()> {
             write!(screen, "{:<width$}", value, width = width)
         }
         self.write_column(screen, pos, 0, column, write_value)
     }
 
-    pub fn write_middle_column<I, S>(
+    pub fn write_middle_column(
         &self,
         screen: &mut Screen,
         pos: Origin,
         index: usize,
-        column: I,
-    ) -> Result<()>
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<str>,
-    {
+        column: &[Cell<'_>],
+    ) -> Result<()> {
         fn write_value(screen: &mut Screen, value: &str, width: usize) -> Result<()> {
             write!(screen, "{:>width$}", value, width = width)
         }

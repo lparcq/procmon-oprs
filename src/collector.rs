@@ -23,10 +23,30 @@ use strum::IntoEnumIterator;
 use crate::agg::Aggregation;
 use crate::metrics::{FormattedMetric, MetricId};
 
+/// Tell if it makes sense to track metric changes
+///
+/// Some metrics always change or almost always change. It's better not to track them.
+fn track_change(id: MetricId) -> bool {
+    match id {
+        MetricId::TimeElapsed | MetricId::TimeCpu | MetricId::TimeSystem | MetricId::TimeUser => {
+            false
+        }
+        _ => true,
+    }
+}
+
 /// The raw sample value and the derived aggregations.
+///
+/// The first value in _values_ is the raw value from the system. The following
+/// are the aggregations if any (min, max, ...).
+///
+/// Strings are the formatted values. If the samples don't contain the raw value
+/// (i.e. Aggregation::None is not selected), the first element in _values_ is the
+/// raw value that doesn't have a counterpart in _strings_.
 pub struct Sample {
     values: Vec<u64>,
     strings: Vec<String>,
+    changed: bool,
 }
 
 impl Sample {
@@ -34,6 +54,7 @@ impl Sample {
         Sample {
             values: Vec::new(),
             strings: Vec::new(),
+            changed: false,
         }
     }
 
@@ -41,12 +62,19 @@ impl Sample {
         self.values[0]
     }
 
+    /// Return the numeric values.
     pub fn values(&self) -> Iter<u64> {
         self.values.iter()
     }
 
+    /// Return the formatted strings
     pub fn strings(&self) -> Iter<String> {
         self.strings.iter()
+    }
+
+    /// True if value has changed
+    pub fn changed(&self) -> bool {
+        self.changed
     }
 
     fn push_raw(&mut self, value: u64) {
@@ -62,24 +90,44 @@ impl Sample {
         });
     }
 
-    fn update_raw(&mut self, value: u64) {
-        self.values[0] = value;
+    fn update_raw(&mut self, value: u64, track_change: bool) {
+        let changed = self.values[0] != value;
+        if changed {
+            self.values[0] = value;
+        }
+        if track_change {
+            self.changed = changed;
+        }
     }
 
-    fn update(&mut self, metric: &FormattedMetric, index: usize, ag: Aggregation, value: u64) {
+    fn update(
+        &mut self,
+        metric: &FormattedMetric,
+        index: usize,
+        ag: Aggregation,
+        value: u64,
+        track_change: bool,
+    ) {
         if let Some(last_value) = self.values.get_mut(index) {
+            self.changed = false;
             match ag {
                 Aggregation::None if value == *last_value => return,
                 Aggregation::Min if value >= *last_value => return,
                 Aggregation::Max if value <= *last_value => return,
-                _ => (),
+                _ => {
+                    if let Aggregation::None = ag {
+                        if track_change {
+                            self.changed = true;
+                        }
+                    }
+                    *last_value = value;
+                    let offset = self.values.len() - self.strings.len();
+                    self.strings[index - offset] = match ag {
+                        Aggregation::Ratio => crate::format::ratio(value),
+                        _ => (metric.format)(value),
+                    };
+                }
             }
-            *last_value = value;
-            let offset = self.values.len() - self.strings.len();
-            self.strings[index - offset] = match ag {
-                Aggregation::Ratio => crate::format::ratio(value),
-                _ => (metric.format)(value),
-            };
         }
     }
 }
@@ -122,6 +170,8 @@ impl TargetStatus {
 }
 
 /// Update values
+///
+/// Keeps the history of system values to compute ratio like CPU usage.
 struct Updater {
     system_history: VecDeque<Vec<u64>>,
 }
@@ -231,7 +281,7 @@ impl Updater {
             let new_value = *value_ref;
             let mut ag_index = 0;
             if !metric.aggregations.has(Aggregation::None) {
-                sample.update_raw(new_value);
+                sample.update_raw(new_value, track_change(metric.id));
                 ag_index += 1;
             }
             for ag in Aggregation::iter().filter(|ag| metric.aggregations.has(*ag)) {
@@ -241,7 +291,7 @@ impl Updater {
                     }
                     _ => new_value,
                 };
-                sample.update(&metric, ag_index, ag, value);
+                sample.update(&metric, ag_index, ag, value, track_change(metric.id));
                 ag_index += 1;
             }
             metric_index += 1;

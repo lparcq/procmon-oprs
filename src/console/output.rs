@@ -17,14 +17,14 @@
 use std::io::{self, Write};
 use strum_macros::EnumString;
 use termion::{
-    clear, color,
+    clear,
     cursor::{self, Goto},
     raw::IntoRawMode,
     screen::AlternateScreen,
     style, terminal_size,
 };
 
-use super::themes::{ColorUse, Theme};
+use super::themes::{Style, Theme};
 
 #[derive(Clone, Copy, Debug, EnumString, PartialEq)]
 pub enum BuiltinTheme {
@@ -134,16 +134,27 @@ impl Screen {
         });
     }
 
-    /// Reset color to default
-    pub fn bg_reset(&mut self) -> io::Result<&mut Self> {
-        write!(self.out, "{}", color::Bg(color::Reset))?;
+    /// Background shade
+    pub fn shade(&mut self, on: bool) -> io::Result<&mut Self> {
+        if let Some(theme) = &self.theme {
+            theme.write_style(
+                &mut self.out,
+                if on { Style::Shade } else { Style::NoShade },
+            )?;
+        }
         Ok(self)
     }
 
-    /// Background shade
-    pub fn bg_shade(&mut self) -> io::Result<&mut Self> {
+    pub fn highlight(&mut self, on: bool) -> io::Result<&mut Self> {
         if let Some(theme) = &self.theme {
-            theme.write_color(&mut self.out, ColorUse::BgShade)?;
+            theme.write_style(
+                &mut self.out,
+                if on {
+                    Style::Highlight
+                } else {
+                    Style::NoHighlight
+                },
+            )?;
         }
         Ok(self)
     }

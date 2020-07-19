@@ -22,7 +22,7 @@ use std::time::Duration;
 use super::{
     menu::{Action, MenuBar},
     sizer::ColumnSizer,
-    table::TableDrawer,
+    table::{Cell, TableDrawer},
     Widget, BORDER_WIDTH, ELASTICITY, HEADER_HEIGHT, MENU_HEIGHT,
 };
 use crate::{
@@ -127,7 +127,7 @@ impl TerminalDevice {
     }
 
     /// Calculate the columns width
-    fn prepare<I1, I2>(&mut self, title_widths: I1, subtitles: I2, columns: &[Vec<&str>])
+    fn prepare<I1, I2>(&mut self, title_widths: I1, subtitles: I2, columns: &[Vec<Cell>])
     where
         I1: IntoIterator<Item = usize>,
         I2: IntoIterator<Item = usize>,
@@ -148,11 +148,11 @@ impl TerminalDevice {
     }
 
     /// Write the visible part of the table
-    fn write_table<I1, I2, S>(
+    fn write_table<'a, I1, I2, S>(
         &mut self,
         titles: I1,
         subtitles: I2,
-        columns: &[Vec<S>],
+        columns: &[Vec<Cell<'a>>],
         screen_size: Size,
         table_height: u16,
     ) -> io::Result<()>
@@ -187,14 +187,19 @@ impl TerminalDevice {
         )?;
         table.middle_line(screen, Origin(1, 4))?;
         let pos = Origin(1, 5);
-        table.write_left_column(screen, pos, self.metric_names.iter())?;
+        let left_cells = self
+            .metric_names
+            .iter()
+            .map(|value| Cell::new(value))
+            .collect::<Vec<Cell>>();
+        table.write_left_column(screen, pos, &left_cells)?;
         for (col_num, column) in columns
             .iter()
             .skip(horizontal_offset)
             .take(visible_columns)
             .enumerate()
         {
-            table.write_middle_column(screen, pos, col_num + 1, column.iter())?;
+            table.write_middle_column(screen, pos, col_num + 1, column)?;
         }
         let bottom_y = table_height - (vertical_offset as u16);
         if bottom_y <= screen_height {
@@ -319,12 +324,20 @@ impl DisplayDevice for TerminalDevice {
             .map(|pstat| {
                 pstat
                     .samples()
-                    .map(|sample| sample.strings())
+                    .map(|sample| {
+                        let changed = sample.changed();
+                        sample.strings().map(move |s| {
+                            if changed {
+                                Cell::with_highlight(s.as_str())
+                            } else {
+                                Cell::new(s.as_str())
+                            }
+                        })
+                    })
                     .flatten()
-                    .map(|s| s.as_str())
-                    .collect::<Vec<&str>>()
+                    .collect::<Vec<Cell>>()
             })
-            .collect::<Vec<Vec<&str>>>();
+            .collect::<Vec<Vec<Cell>>>();
         // Prepare table
         self.prepare(
             collector.lines().map(|line| line.get_name().len()),

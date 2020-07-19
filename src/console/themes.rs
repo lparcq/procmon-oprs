@@ -16,10 +16,13 @@
 
 use std::fmt::Display;
 use std::io;
-use termion::color;
+use termion::{color, style};
 
-pub enum ColorUse {
-    BgShade,
+pub enum Style {
+    Highlight,
+    NoHighlight,
+    Shade,
+    NoShade,
 }
 
 /// A list of colors by usage
@@ -28,14 +31,13 @@ pub struct Theme {
 }
 
 impl Theme {
-    pub fn write_color(&self, out: &mut dyn io::Write, usage: ColorUse) -> io::Result<()> {
-        write!(
-            out,
-            "{}",
-            match usage {
-                ColorUse::BgShade => &self.colors[0],
-            }
-        )
+    pub fn write_style(&self, out: &mut dyn io::Write, usage: Style) -> io::Result<()> {
+        match usage {
+            Style::Highlight => write!(out, "{}", style::Underline),
+            Style::NoHighlight => write!(out, "{}", style::NoUnderline),
+            Style::Shade => write!(out, "{}", &self.colors[0]),
+            Style::NoShade => write!(out, "{}", color::Bg(color::Reset)),
+        }
     }
 }
 
