@@ -25,7 +25,7 @@ use crate::{
     agg::Aggregation,
     cfg::ExportSettings,
     collector::{Collector, TargetStatus},
-    metrics::MetricId,
+    metrics::MetricDataType,
 };
 
 use super::Exporter;
@@ -58,57 +58,6 @@ pub enum Error {
     MissingCount,
     #[error("rrd: number of colors exhausted")]
     NoMoreColors,
-}
-
-enum DataSourceType {
-    Counter,
-    Gauge,
-}
-
-fn data_source_type(id: MetricId) -> DataSourceType {
-    match id {
-        MetricId::FaultMinor | MetricId::FaultMajor => DataSourceType::Counter,
-        MetricId::FdAll
-        | MetricId::FdHigh
-        | MetricId::FdFile
-        | MetricId::FdSocket
-        | MetricId::FdNet
-        | MetricId::FdPipe
-        | MetricId::FdAnon
-        | MetricId::FdMemFile
-        | MetricId::FdOther => DataSourceType::Gauge,
-        MetricId::IoReadCall
-        | MetricId::IoReadTotal
-        | MetricId::IoReadStorage
-        | MetricId::IoWriteCall
-        | MetricId::IoWriteTotal
-        | MetricId::IoWriteStorage => DataSourceType::Counter,
-        MetricId::MapAnonSize
-        | MetricId::MapAnonCount
-        | MetricId::MapHeapSize
-        | MetricId::MapHeapCount
-        | MetricId::MapFileSize
-        | MetricId::MapFileCount
-        | MetricId::MapStackSize
-        | MetricId::MapStackCount
-        | MetricId::MapThreadStackSize
-        | MetricId::MapThreadStackCount
-        | MetricId::MapVdsoSize
-        | MetricId::MapVdsoCount
-        | MetricId::MapVsyscallSize
-        | MetricId::MapVsyscallCount
-        | MetricId::MapVvarSize
-        | MetricId::MapVvarCount
-        | MetricId::MapOtherSize
-        | MetricId::MapOtherCount => DataSourceType::Gauge,
-        MetricId::MemRss | MetricId::MemVm | MetricId::MemText | MetricId::MemData => {
-            DataSourceType::Gauge
-        }
-        MetricId::TimeElapsed | MetricId::TimeCpu | MetricId::TimeSystem | MetricId::TimeUser => {
-            DataSourceType::Counter
-        }
-        MetricId::ThreadCount => DataSourceType::Gauge,
-    }
 }
 
 struct ExportInfo {
@@ -204,9 +153,9 @@ impl Exporter for RrdExporter {
         let heart_beat = self.interval.as_secs() * 2;
         collector.for_each_computed_metric(|id, agg| {
             let ds_name = id.as_str().replace(":", "_");
-            let ds_type = match data_source_type(id) {
-                DataSourceType::Counter => "COUNTER",
-                DataSourceType::Gauge => "GAUGE",
+            let ds_type = match id.data_type() {
+                MetricDataType::Counter => "COUNTER",
+                MetricDataType::Gauge => "GAUGE",
             };
             if let Aggregation::None = agg {
                 self.skip.push(false);

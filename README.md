@@ -58,6 +58,12 @@ memory size and the peak size. To get only the max, use: mem:vm-raw+max. To get 
 
 For some metrics, min or max is meaningless.
 
+### Data type
+
+Metrics are either:
+- Counters: values that always increase like the number of read call or the CPU time.
+- Gauges: positive values that may decrease such as the memory comsumptions.
+
 ### CPU usage
 
 Unlike other tools, the CPU usage of a process displayed by time:cpu+ratio is the percentage of the
@@ -129,6 +135,12 @@ Example `~/.config/oprs/settings.ini`:
     [targets]
     system = yes
     myself = yes
+
+Limitations
+-----------
+
+Currently counters aren't well supported with option --merge. When a process dissappears, the total counter
+decreases which is not correct.
 
 License
 -------

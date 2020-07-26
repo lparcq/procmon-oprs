@@ -252,8 +252,15 @@ impl Updater {
                     let old_system_value = self.get_history(2, metric_index);
                     let new_system_value = self.get_history(1, metric_index);
                     let system_delta = new_system_value - old_system_value;
-                    let delta = new_value - old_value;
-                    delta * PERCENT_FACTOR / system_delta
+                    if new_value >= old_value {
+                        let delta = new_value - old_value;
+                        delta * PERCENT_FACTOR / system_delta
+                    } else {
+                        // When processes are merged the total cpu time can go backward.
+                        // The total of processes that dissapeared should be subtracted
+                        // to get a correct value.
+                        0
+                    }
                 } else {
                     0
                 }

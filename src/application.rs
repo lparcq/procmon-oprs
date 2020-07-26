@@ -29,7 +29,7 @@ use crate::{
     display::{DisplayDevice, PauseStatus, TerminalDevice, TextDevice},
     export::{CsvExporter, Exporter, RrdExporter},
     info::SystemConf,
-    metrics::{FormattedMetric, MetricId, MetricNamesParser},
+    metrics::{FormattedMetric, MetricDataType, MetricId, MetricNamesParser},
     sighdr::SignalHandler,
     targets::{TargetContainer, TargetId},
 };
@@ -47,8 +47,12 @@ pub enum Error {
 pub fn list_metrics() {
     for metric_id in MetricId::iter() {
         println!(
-            "{:<18}\t{}",
+            "{:<18}\t{:<9}\t{}",
             metric_id.as_str(),
+            match metric_id.data_type() {
+                MetricDataType::Counter => "[counter]",
+                MetricDataType::Gauge => "[gauge]",
+            },
             metric_id.get_message().unwrap_or("not documented")
         );
     }

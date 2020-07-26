@@ -37,6 +37,16 @@ pub enum Error {
     UnknownMetric(String),
 }
 
+/// Metric data type
+///
+/// There are two types:
+/// - Counter is always increasing such as the number of read calls
+/// - Gauge is a positive number that may decrease like the memory consumption
+pub enum MetricDataType {
+    Counter,
+    Gauge,
+}
+
 /// Metrics that can be collected for a process
 #[derive(
     Copy,
@@ -271,6 +281,54 @@ impl MetricId {
             }
         }
     }
+
+    /// The data type either counter (always increasing) or gauge (varying but positive).
+    pub fn data_type(self) -> MetricDataType {
+        match self {
+            MetricId::FaultMinor | MetricId::FaultMajor => MetricDataType::Counter,
+            MetricId::FdAll
+            | MetricId::FdHigh
+            | MetricId::FdFile
+            | MetricId::FdSocket
+            | MetricId::FdNet
+            | MetricId::FdPipe
+            | MetricId::FdAnon
+            | MetricId::FdMemFile
+            | MetricId::FdOther => MetricDataType::Gauge,
+            MetricId::IoReadCall
+            | MetricId::IoReadTotal
+            | MetricId::IoReadStorage
+            | MetricId::IoWriteCall
+            | MetricId::IoWriteTotal
+            | MetricId::IoWriteStorage => MetricDataType::Counter,
+            MetricId::MapAnonSize
+            | MetricId::MapAnonCount
+            | MetricId::MapHeapSize
+            | MetricId::MapHeapCount
+            | MetricId::MapFileSize
+            | MetricId::MapFileCount
+            | MetricId::MapStackSize
+            | MetricId::MapStackCount
+            | MetricId::MapThreadStackSize
+            | MetricId::MapThreadStackCount
+            | MetricId::MapVdsoSize
+            | MetricId::MapVdsoCount
+            | MetricId::MapVsyscallSize
+            | MetricId::MapVsyscallCount
+            | MetricId::MapVvarSize
+            | MetricId::MapVvarCount
+            | MetricId::MapOtherSize
+            | MetricId::MapOtherCount => MetricDataType::Gauge,
+            MetricId::MemRss | MetricId::MemVm | MetricId::MemText | MetricId::MemData => {
+                MetricDataType::Gauge
+            }
+            MetricId::TimeElapsed
+            | MetricId::TimeCpu
+            | MetricId::TimeSystem
+            | MetricId::TimeUser => MetricDataType::Counter,
+            MetricId::ThreadCount => MetricDataType::Gauge,
+        }
+    }
 }
 
 /// Metric with associated aggregations and a formatter function
@@ -380,7 +438,7 @@ mod tests {
     use std::str::FromStr;
     use strum::{EnumMessage, IntoEnumIterator};
 
-    use super::{MetricId, MetricNamesParser};
+    use super::{MetricDataType, MetricId, MetricNamesParser};
 
     fn vec_of_string(vstr: &[&str]) -> Vec<String> {
         vstr.iter().map(|s| s.to_string()).collect()
@@ -488,5 +546,31 @@ mod tests {
                 pattern
             );
         }
+    }
+
+    #[test]
+    fn data_type() {
+        assert!(matches!(
+            MetricId::FaultMajor.data_type(),
+            MetricDataType::Counter
+        ));
+        assert!(matches!(MetricId::FdAll.data_type(), MetricDataType::Gauge));
+        assert!(matches!(
+            MetricId::IoReadTotal.data_type(),
+            MetricDataType::Counter
+        ));
+        assert!(matches!(
+            MetricId::MapHeapSize.data_type(),
+            MetricDataType::Gauge
+        ));
+        assert!(matches!(MetricId::MemVm.data_type(), MetricDataType::Gauge));
+        assert!(matches!(
+            MetricId::TimeCpu.data_type(),
+            MetricDataType::Counter
+        ));
+        assert!(matches!(
+            MetricId::ThreadCount.data_type(),
+            MetricDataType::Gauge
+        ));
     }
 }
