@@ -1,3 +1,7 @@
+2020-07-26  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
+
+	* Version 0.11.1: Fix crash when targets are merged. Metrics of type counter can decrease.
+
 2020-07-19  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
 
 	* Version 0.11.0: In terminal mode, underline values when they change.
