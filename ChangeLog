@@ -1,3 +1,7 @@
+2020-08-02  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
+
+	* Version 0.11.2: Keep the counters of dead processes when merging as they can't decrease unlike gauges.
+
 2020-07-26  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
 
 	* Version 0.11.1: Fix crash when targets are merged. Metrics of type counter can decrease.

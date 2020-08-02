@@ -229,6 +229,7 @@ impl Updater {
         TargetStatus::new(target_name, pid, samples)
     }
 
+    /// Historical metrics for the system
     fn get_history(&self, age: usize, metric_index: usize) -> u64 {
         self.system_history[self.system_history.len() - age]
             .get(metric_index)
@@ -256,9 +257,11 @@ impl Updater {
                         let delta = new_value - old_value;
                         delta * PERCENT_FACTOR / system_delta
                     } else {
-                        // When processes are merged the total cpu time can go backward.
-                        // The total of processes that dissapeared should be subtracted
-                        // to get a correct value.
+                        log::warn!(
+                            "time value goes backward (from {} to {})",
+                            old_value,
+                            new_value,
+                        );
                         0
                     }
                 } else {

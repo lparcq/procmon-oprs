@@ -16,14 +16,18 @@
 
 use libc::pid_t;
 use procfs::process::Process;
-use std::collections::BTreeSet;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::result;
 
-use crate::collector::Collector;
-use crate::info::{ProcessInfo, SystemConf, SystemInfo};
-use crate::proc_dir::{PidFinder, ProcessDir};
-use crate::utils::*;
+use crate::{
+    collector::Collector,
+    info::{ProcessInfo, SystemConf, SystemInfo},
+    metrics::MetricDataType,
+    proc_dir::{PidFinder, ProcessDir},
+    utils::*,
+};
 
 /// Hard limit for the maximum pid on Linux (see https://stackoverflow.com/questions/6294133/maximum-pid-in-linux)
 const MAX_LINUX_PID: pid_t = 4_194_304;
@@ -47,6 +51,7 @@ pub enum TargetId {
 /// Target process
 trait Target {
     fn get_name(&self) -> &str;
+    fn initialize(&mut self, collector: &Collector);
     fn collect(&self, collector: &mut Collector);
 }
 
@@ -65,6 +70,8 @@ impl<'a> Target for SystemTarget<'a> {
     fn get_name(&self) -> &str {
         "system"
     }
+
+    fn initialize(&mut self, _: &Collector) {}
 
     fn collect(&self, collector: &mut Collector) {
         let mut system = SystemInfo::new(self.system_conf);
@@ -125,7 +132,7 @@ impl<'a> StaticTarget<'a> {
         self.proc_dir.exists()
     }
 
-    fn get_pid(&self) -> Option<pid_t> {
+    fn pid(&self) -> Option<pid_t> {
         self.process.as_ref().map(|proc| proc.pid())
     }
 
@@ -151,6 +158,8 @@ impl<'a> Target for StaticTarget<'a> {
     fn get_name(&self) -> &str {
         self.name.as_str()
     }
+
+    fn initialize(&mut self, _: &Collector) {}
 
     fn collect(&self, collector: &mut Collector) {
         self.collect_with_name(self.get_name(), collector);
@@ -200,6 +209,8 @@ impl<'a> Target for DynamicTarget<'a> {
         }
     }
 
+    fn initialize(&mut self, _: &Collector) {}
+
     fn collect(&self, collector: &mut Collector) {
         if let Some(target) = &self.target {
             target.collect_with_name(self.get_name(), collector);
@@ -241,7 +252,7 @@ impl<'a> TargetSet<'a> {
         let mut previous_pids = BTreeSet::new();
         let mut updated = false;
         self.set.retain(|target| {
-            if let Some(pid) = target.get_pid() {
+            if let Some(pid) = target.pid() {
                 previous_pids.insert(pid);
                 let alive = target.is_alive();
                 if !alive {
@@ -293,6 +304,8 @@ impl<'a> Target for DistinctTargets<'a> {
         self.name.as_str()
     }
 
+    fn initialize(&mut self, _: &Collector) {}
+
     fn collect(&self, collector: &mut Collector) {
         for target in self.targets.set.iter() {
             target.collect(collector);
@@ -306,13 +319,76 @@ impl<'a> MultiTargets<'a> for DistinctTargets<'a> {
     }
 }
 
+/// Sample cache
+///
+/// Dead samples are the sum of the last samples of dead processes. It's used to keep
+/// the total of the counters of a process that terminated.
+struct SampleCache {
+    is_cached: Vec<bool>,
+    last_samples: BTreeMap<pid_t, Vec<u64>>,
+    dead_samples: Vec<u64>,
+}
+
+impl SampleCache {
+    fn new() -> SampleCache {
+        SampleCache {
+            is_cached: Vec::new(),
+            last_samples: BTreeMap::new(),
+            dead_samples: Vec::new(),
+        }
+    }
+
+    fn set_cached(&mut self, is_cached: &[bool]) {
+        self.is_cached = Vec::from(is_cached);
+    }
+
+    /// Fill the set with the current pids
+    fn pids_set(&self, pids: &mut BTreeSet<pid_t>) {
+        self.last_samples.keys().for_each(|pid| {
+            let _ = pids.insert(*pid);
+        });
+    }
+
+    /// Insert the last samples of a process
+    fn insert(&mut self, pid: i32, samples: &[u64]) {
+        self.last_samples.insert(pid, Vec::from(samples));
+    }
+
+    /// Remove a process from the last samples
+    ///
+    /// The last samples are added to the dead samples
+    fn remove(&mut self, pid: i32) {
+        if let Some(samples) = self.last_samples.remove(&pid) {
+            if self.dead_samples.is_empty() {
+                self.dead_samples = samples;
+            } else {
+                samples.iter().enumerate().for_each(|(index, value)| {
+                    if self.is_cached[index] {
+                        self.dead_samples[index] += value
+                    }
+                })
+            }
+        }
+    }
+
+    /// Dead samples
+    fn dead_samples(&self) -> &Vec<u64> {
+        &self.dead_samples
+    }
+}
+
 /// Processes with the same name as a single target.
 ///
 /// The metrics are the sum of all the process values.
+///
+/// As metrics of type counters are accumulated over the lifetime of the target. It's
+/// necessary to remember the values of the processes that have died. Otherwise metrics
+/// like the number of IO read could decrease from time to time.
 struct MergedTargets<'a> {
     name: String,
     group_id: pid_t,
     targets: TargetSet<'a>,
+    cache: RefCell<SampleCache>,
 }
 
 impl<'a> MergedTargets<'a> {
@@ -321,6 +397,7 @@ impl<'a> MergedTargets<'a> {
             name: name.to_string(),
             group_id,
             targets: TargetSet::new(system_conf),
+            cache: RefCell::new(SampleCache::new()),
         }
     }
 }
@@ -330,18 +407,40 @@ impl<'a> Target for MergedTargets<'a> {
         self.name.as_str()
     }
 
+    fn initialize(&mut self, collector: &Collector) {
+        let are_counters = collector
+            .metrics()
+            .map(|metric| std::matches!(metric.id.data_type(), MetricDataType::Counter))
+            .collect::<Vec<bool>>();
+        self.cache.borrow_mut().set_cached(&are_counters);
+    }
+
     fn collect(&self, collector: &mut Collector) {
-        let mut samples: Vec<u64> = collector.metrics().map(|_| 0 as u64).collect();
+        let mut merged_samples: Vec<u64> = collector.metrics().map(|_| 0 as u64).collect();
+        let mut cache = self.cache.borrow_mut();
+        let mut old_pids = BTreeSet::new();
+        cache.pids_set(&mut old_pids);
         for target in self.targets.set.iter() {
             if let Some(mut proc_info) = target.process_info() {
-                proc_info
-                    .extract_metrics(collector.metrics())
+                let samples = proc_info.extract_metrics(collector.metrics());
+                samples
                     .iter()
                     .enumerate()
-                    .for_each(|(index, value)| samples[index] += value);
+                    .for_each(|(index, value)| merged_samples[index] += value);
+                let pid = proc_info.pid();
+                cache.insert(pid, &samples);
+                old_pids.remove(&pid);
             }
         }
-        collector.collect(self.get_name(), self.group_id, &samples)
+        old_pids.iter().for_each(|pid| cache.remove(*pid));
+        cache
+            .dead_samples()
+            .iter()
+            .enumerate()
+            .for_each(|(index, value)| {
+                merged_samples[index] += value;
+            });
+        collector.collect(self.get_name(), self.group_id, &merged_samples)
     }
 }
 
@@ -404,6 +503,15 @@ impl<'a> TargetContainer<'a> {
                 });
         }
         changed
+    }
+
+    pub fn initialize(&mut self, collector: &Collector) {
+        self.singles
+            .iter_mut()
+            .for_each(|target| target.initialize(collector));
+        self.multis
+            .iter_mut()
+            .for_each(|target| target.initialize(collector));
     }
 
     pub fn collect(&self, collector: &mut Collector) {

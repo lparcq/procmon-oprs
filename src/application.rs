@@ -163,6 +163,8 @@ impl Application {
             _ => false,
         };
 
+        targets.initialize(&collector);
+
         while !sighdr.caught() {
             let targets_updated = targets.refresh();
             let collect_timestamp = if timer.expired() {

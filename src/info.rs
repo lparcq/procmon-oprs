@@ -16,6 +16,7 @@
 
 // Extract metrics from procfs interface.
 
+use libc::pid_t;
 use procfs::{
     process::{FDTarget, Io, MMapPath, Process, Stat, StatM},
     KernelStats, Meminfo, ProcResult,
@@ -362,6 +363,10 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
             stat: None,
             statm: None,
         }
+    }
+
+    pub fn pid(&self) -> pid_t {
+        self.process.pid()
     }
 
     fn with_fd_stats<F>(&mut self, func: F) -> u64
