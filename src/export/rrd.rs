@@ -108,7 +108,7 @@ impl RrdExporter {
                 variables: Vec::new(),
                 skip: Vec::new(),
                 pids: HashMap::new(),
-                color_bucket: Vec::from(COLORS),
+                color_bucket: COLORS.to_vec(),
                 graph: settings.graph,
             })
         }

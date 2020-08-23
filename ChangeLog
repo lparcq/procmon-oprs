@@ -1,3 +1,7 @@
+2020-08-23  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
+
+	* Version 0.11.3: Fix issue #1 (https://github.com/lparcq/procmon-oprs/issues/1)
+
 2020-08-02  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
 
 	* Version 0.11.2: Keep the counters of dead processes when merging as they can't decrease unlike gauges.

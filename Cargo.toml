@@ -1,6 +1,6 @@
 [package]
 name = "procmon-oprs"
-version = "0.11.2"
+version = "0.11.3"
 authors = ["Laurent Pelecq <lpelecq+rust@circoise.eu>"]
 description = "A process monitor for Linux"
 readme = "README.md"
@@ -27,8 +27,8 @@ log = "0"
 nom = "5"
 procfs = "0.8"
 simplelog = "0.8"
-strum = "0.18"
-strum_macros = "0.18"
+strum = "0.19"
+strum_macros = "0.19"
 termion = "1.5"
 thiserror = "1.0"
 xdg = "2"
