@@ -18,7 +18,7 @@ use libc::pid_t;
 use procfs::process::Process;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::result;
 
 use crate::{
@@ -28,9 +28,6 @@ use crate::{
     proc_dir::{PidFinder, ProcessDir},
     utils::*,
 };
-
-/// Hard limit for the maximum pid on Linux (see https://stackoverflow.com/questions/6294133/maximum-pid-in-linux)
-const MAX_LINUX_PID: pid_t = 4_194_304;
 
 #[derive(thiserror::Error, Debug)]
 enum Error {
@@ -50,7 +47,7 @@ pub enum TargetId {
 
 /// Target process
 trait Target {
-    fn get_name(&self) -> &str;
+    fn name(&self) -> &str;
     fn initialize(&mut self, collector: &Collector);
     fn collect(&self, collector: &mut Collector);
 }
@@ -67,7 +64,7 @@ impl<'a> SystemTarget<'a> {
 }
 
 impl<'a> Target for SystemTarget<'a> {
-    fn get_name(&self) -> &str {
+    fn name(&self) -> &str {
         "system"
     }
 
@@ -76,8 +73,9 @@ impl<'a> Target for SystemTarget<'a> {
     fn collect(&self, collector: &mut Collector) {
         let mut system = SystemInfo::new(self.system_conf);
         collector.collect(
-            self.get_name(),
+            self.name(),
             0,
+            None,
             &system.extract_metrics(collector.metrics()),
         );
     }
@@ -148,6 +146,7 @@ impl<'a> StaticTarget<'a> {
             collector.collect(
                 name,
                 process.pid(),
+                None,
                 &proc_info.extract_metrics(collector.metrics()),
             )
         }
@@ -155,14 +154,14 @@ impl<'a> StaticTarget<'a> {
 }
 
 impl<'a> Target for StaticTarget<'a> {
-    fn get_name(&self) -> &str {
+    fn name(&self) -> &str {
         self.name.as_str()
     }
 
     fn initialize(&mut self, _: &Collector) {}
 
     fn collect(&self, collector: &mut Collector) {
-        self.collect_with_name(self.get_name(), collector);
+        self.collect_with_name(self.name(), collector);
     }
 }
 
@@ -199,11 +198,11 @@ impl<'a> DynamicTarget<'a> {
 }
 
 impl<'a> Target for DynamicTarget<'a> {
-    fn get_name(&self) -> &str {
+    fn name(&self) -> &str {
         match &self.name {
             Some(name) => name.as_str(),
             None => match &self.target {
-                Some(target) => target.get_name(),
+                Some(target) => target.name(),
                 None => "<unknown>",
             },
         }
@@ -213,7 +212,7 @@ impl<'a> Target for DynamicTarget<'a> {
 
     fn collect(&self, collector: &mut Collector) {
         if let Some(target) = &self.target {
-            target.collect_with_name(self.get_name(), collector);
+            target.collect_with_name(self.name(), collector);
         }
     }
 }
@@ -246,6 +245,10 @@ impl<'a> TargetSet<'a> {
             set: Vec::new(),
             system_conf,
         }
+    }
+
+    fn len(&self) -> usize {
+        self.set.len()
     }
 
     fn refresh(&mut self, current_pids: &[pid_t]) -> bool {
@@ -300,7 +303,7 @@ impl<'a> DistinctTargets<'a> {
 }
 
 impl<'a> Target for DistinctTargets<'a> {
-    fn get_name(&self) -> &str {
+    fn name(&self) -> &str {
         self.name.as_str()
     }
 
@@ -403,7 +406,7 @@ impl<'a> MergedTargets<'a> {
 }
 
 impl<'a> Target for MergedTargets<'a> {
-    fn get_name(&self) -> &str {
+    fn name(&self) -> &str {
         self.name.as_str()
     }
 
@@ -440,7 +443,12 @@ impl<'a> Target for MergedTargets<'a> {
             .for_each(|(index, value)| {
                 merged_samples[index] += value;
             });
-        collector.collect(self.get_name(), self.group_id, &merged_samples)
+        collector.collect(
+            self.name(),
+            self.group_id,
+            Some(self.targets.len()),
+            &merged_samples,
+        )
     }
 }
 
@@ -461,14 +469,12 @@ pub struct TargetContainer<'a> {
 
 impl<'a> TargetContainer<'a> {
     pub fn new(system_conf: &'a SystemConf) -> TargetContainer<'a> {
-        let current_group_id =
-            read_pid_file(Path::new("/proc/sys/kernel/pid_max")).unwrap_or(MAX_LINUX_PID);
         TargetContainer {
             system: None,
             singles: Vec::new(),
             multis: Vec::new(),
             system_conf,
-            current_group_id,
+            current_group_id: system_conf.max_pid(),
         }
     }
 
@@ -490,7 +496,7 @@ impl<'a> TargetContainer<'a> {
                 let mut pid_finder = PidFinder::new(&mut pids);
                 self.multis
                     .iter()
-                    .for_each(|target| pid_finder.register(target.get_name()));
+                    .for_each(|target| pid_finder.register(target.name()));
                 pid_finder.fill();
             }
             self.multis

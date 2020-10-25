@@ -1,3 +1,7 @@
+2020-10-25  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
+
+	* Version 0.12.0: For merged targets, display the number of processes instead of the group id.
+
 2020-08-23  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
 
 	* Version 0.11.3: Fix issue #1 (https://github.com/lparcq/procmon-oprs/issues/1)

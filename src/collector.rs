@@ -136,24 +136,34 @@ impl Sample {
 pub struct TargetStatus {
     name: String,
     pid: pid_t,
+    count: Option<usize>,
     samples: Vec<Sample>,
 }
 
 impl TargetStatus {
-    fn new(name: &str, pid: pid_t, samples: Vec<Sample>) -> TargetStatus {
+    fn new(name: &str, pid: pid_t, count: Option<usize>, samples: Vec<Sample>) -> TargetStatus {
         TargetStatus {
             name: name.to_string(),
             pid,
+            count,
             samples,
         }
     }
 
-    pub fn get_name(&self) -> &str {
+    pub fn name(&self) -> &str {
         self.name.as_str()
     }
 
-    pub fn get_pid(&self) -> pid_t {
+    pub fn pid(&self) -> pid_t {
         self.pid
+    }
+
+    pub fn count(&self) -> Option<usize> {
+        self.count
+    }
+
+    pub fn set_count(&mut self, count: Option<usize>) {
+        self.count = count;
     }
 
     pub fn samples(&self) -> Iter<Sample> {
@@ -201,6 +211,7 @@ impl Updater {
         &mut self,
         target_name: &str,
         pid: pid_t,
+        count: Option<usize>,
         metrics: &[FormattedMetric],
         values: &[u64],
     ) -> TargetStatus {
@@ -226,7 +237,7 @@ impl Updater {
         if pid == 0 {
             self.push(&samples); // new system values
         }
-        TargetStatus::new(target_name, pid, samples)
+        TargetStatus::new(target_name, pid, count, samples)
     }
 
     /// Historical metrics for the system
@@ -281,11 +292,13 @@ impl Updater {
     /// Update values for an existing process
     fn update_computed_values(
         &mut self,
+        count: Option<usize>,
         metrics: &[FormattedMetric],
         pstat: &mut TargetStatus,
         values: &[u64],
     ) {
         let mut metric_index = 0;
+        pstat.set_count(count);
         for (metric, sample, value_ref) in izip!(metrics, pstat.get_samples_mut(), values) {
             let old_value = sample.get_raw_value();
             let new_value = *value_ref;
@@ -306,7 +319,7 @@ impl Updater {
             }
             metric_index += 1;
         }
-        if pstat.get_pid() == 0 {
+        if pstat.pid() == 0 {
             self.push(pstat.samples_as_slice()); // new system values
         }
     }
@@ -336,16 +349,16 @@ impl<'a> Collector<'a> {
     }
 
     /// Collect a target metrics
-    pub fn collect(&mut self, target_name: &str, pid: pid_t, values: &[u64]) {
+    pub fn collect(&mut self, target_name: &str, pid: pid_t, count: Option<usize>, values: &[u64]) {
         let line_pos = self.last_line_pos;
         while let Some(mut line) = self.lines.get_mut(line_pos) {
-            if line.get_pid() == pid {
+            if line.pid() == pid {
                 self.updater
-                    .update_computed_values(self.metrics, &mut line, values);
+                    .update_computed_values(count, self.metrics, &mut line, values);
                 self.last_line_pos += 1;
                 return;
             }
-            if line.get_name() == target_name {
+            if line.name() == target_name {
                 // Targets keeps the process order. The one in the list doesn't exists anymore.
                 self.lines.remove(line_pos);
             } else {
@@ -355,7 +368,7 @@ impl<'a> Collector<'a> {
         }
         let line = self
             .updater
-            .new_computed_values(target_name, pid, self.metrics, &values);
+            .new_computed_values(target_name, pid, count, self.metrics, &values);
         if line_pos >= self.lines.len() {
             self.lines.push_back(line);
         } else {

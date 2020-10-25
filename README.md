@@ -83,7 +83,7 @@ Processes are selected using one of the four following options:
 
 - Option --name: monitor all processes with the given name.
 
-- Option --merge: sum the metrics of all the processes with the same name.
+- Option --merge: sum the metrics of all the processes with the same name. The number of processes is displayed between parenthesis instead of the pid.
 
 Options can be specified more than once.
 

@@ -317,7 +317,10 @@ impl DisplayDevice for TerminalDevice {
     fn render(&mut self, collector: &Collector, _targets_updated: bool) -> anyhow::Result<()> {
         let subtitles = collector
             .lines()
-            .map(|line| format!("{}", line.get_pid()))
+            .map(|line| match line.count() {
+                Some(count) => format!("({})", count),
+                None => format!("{}", line.pid()),
+            })
             .collect::<Vec<String>>();
         let columns = collector
             .lines()
@@ -340,7 +343,7 @@ impl DisplayDevice for TerminalDevice {
             .collect::<Vec<Vec<Cell>>>();
         // Prepare table
         self.prepare(
-            collector.lines().map(|line| line.get_name().len()),
+            collector.lines().map(|line| line.name().len()),
             subtitles.iter().map(|s| s.len()),
             &columns,
         );
@@ -363,7 +366,7 @@ impl DisplayDevice for TerminalDevice {
             table_height,
         );
         self.write_table(
-            collector.lines().map(|line| line.get_name()),
+            collector.lines().map(|line| line.name()),
             subtitles.iter().map(|s| s.as_str()),
             &columns,
             Size(screen_width, screen_height - (MENU_HEIGHT as u16)),

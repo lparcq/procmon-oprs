@@ -165,9 +165,9 @@ impl Exporter for CsvExporter {
     fn export(&mut self, collector: &Collector, timestamp: &Duration) -> anyhow::Result<()> {
         let mut pids: HashSet<pid_t> = self.files.keys().copied().collect();
         for pstat in collector.lines() {
-            let pid = pstat.get_pid();
+            let pid = pstat.pid();
             if !pids.remove(&pid) {
-                self.create_file(pid, pstat.get_name())?;
+                self.create_file(pid, pstat.name())?;
             }
             let samples = pstat.samples().map(|sample| sample.values()).flatten();
             if let Some(ref mut file) = self.files.get_mut(&pid) {

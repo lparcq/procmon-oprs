@@ -22,14 +22,17 @@ use procfs::{
     KernelStats, Meminfo, ProcResult,
 };
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::slice::Iter;
 use std::time::SystemTime;
 
 use crate::{
     metrics::{FormattedMetric, MetricId},
-    utils::read_file_first_line,
+    utils::{read_file_first_line, read_pid_file},
 };
+
+/// Hard limit for the maximum pid on Linux (see https://stackoverflow.com/questions/6294133/maximum-pid-in-linux)
+const MAX_LINUX_PID: pid_t = 4_194_304;
 
 /// Elapsed time since a start time
 /// Since the boot time is in seconds since the Epoch, no need to be more precise than the second.
@@ -113,6 +116,7 @@ pub struct SystemConf {
     ticks_per_second: u64,
     boot_time_seconds: u64,
     page_size: u64,
+    max_pid: pid_t,
 }
 
 impl SystemConf {
@@ -120,10 +124,13 @@ impl SystemConf {
         let ticks_per_second = procfs::ticks_per_second()?;
         let kstat = KernelStats::new()?;
         let page_size = procfs::page_size()?;
+        let max_pid = read_pid_file(Path::new("/proc/sys/kernel/pid_max")).unwrap_or(MAX_LINUX_PID);
+
         Ok(SystemConf {
             ticks_per_second: ticks_per_second as u64,
             boot_time_seconds: kstat.btime,
             page_size: page_size as u64,
+            max_pid,
         })
     }
 
@@ -131,6 +138,11 @@ impl SystemConf {
     /// A u64 can hold more than 10 millions years
     pub fn ticks_to_millis(&self, ticks: u64) -> u64 {
         ticks * 1000 / self.ticks_per_second
+    }
+
+    /// Maximum value for a process ID
+    pub fn max_pid(&self) -> pid_t {
+        self.max_pid
     }
 }
 
