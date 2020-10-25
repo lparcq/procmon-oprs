@@ -297,9 +297,10 @@ impl Updater {
         pstat: &mut TargetStatus,
         values: &[u64],
     ) {
-        let mut metric_index = 0;
         pstat.set_count(count);
-        for (metric, sample, value_ref) in izip!(metrics, pstat.get_samples_mut(), values) {
+        for (metric_index, (metric, sample, value_ref)) in
+            izip!(metrics, pstat.get_samples_mut(), values).enumerate()
+        {
             let old_value = sample.get_raw_value();
             let new_value = *value_ref;
             let mut ag_index = 0;
@@ -317,7 +318,6 @@ impl Updater {
                 sample.update(&metric, ag_index, ag, value, track_change(metric.id));
                 ag_index += 1;
             }
-            metric_index += 1;
         }
         if pstat.pid() == 0 {
             self.push(pstat.samples_as_slice()); // new system values

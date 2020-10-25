@@ -94,10 +94,8 @@ pub struct Application {
 impl Application {
     pub fn new(settings: &Settings, metric_names: &[String]) -> anyhow::Result<Application> {
         let every = Duration::from_millis((settings.display.every * 1000.0) as u64);
-        let mut metrics_parser = MetricNamesParser::new(match settings.display.format {
-            MetricFormat::Human => true,
-            _ => false,
-        });
+        let mut metrics_parser =
+            MetricNamesParser::new(matches!(settings.display.format, MetricFormat::Human));
         let display_mode = resolve_display_mode(settings.display.mode)?;
         let exporter: Option<Box<dyn Exporter>> = match settings.export.kind {
             ExportType::Csv => Some(Box::new(CsvExporter::new(&settings.export)?)),

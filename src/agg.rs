@@ -4,7 +4,7 @@ use std::cmp;
 use strum_macros::{EnumIter, EnumString};
 
 /// Possible metric aggregations
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, EnumIter, EnumString)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter, EnumString)]
 pub enum Aggregation {
     #[strum(serialize = "raw")]
     None,
@@ -24,6 +24,13 @@ impl Aggregation {
             Aggregation::Max => 0x04,
             Aggregation::Ratio => 0x08,
         }
+    }
+}
+
+/// Partial Ordering
+impl cmp::PartialOrd for Aggregation {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
