@@ -19,16 +19,16 @@
 use libc::pid_t;
 use procfs::{
     process::{FDTarget, Io, MMapPath, Process, Stat, StatM},
-    KernelStats, Meminfo, ProcResult,
+    CpuTime, KernelStats, Meminfo, ProcResult,
 };
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::slice::Iter;
 use std::time::SystemTime;
 
 use crate::{
     metrics::{FormattedMetric, MetricId},
-    utils::{read_file_first_line, read_pid_file},
+    utils::read_pid_file,
 };
 
 /// Hard limit for the maximum pid on Linux (see https://stackoverflow.com/questions/6294133/maximum-pid-in-linux)
@@ -47,67 +47,6 @@ fn elapsed_seconds_since(start_time: u64) -> u64 {
             }
         }
         Err(_) => 0,
-    }
-}
-
-/// Convert the next token to u64
-///
-/// Unconditionaly with an error message.
-/// ```
-/// let v = &["1"];
-/// let _ = parse_u64!(v.iter(), "cannot parse 1");
-/// ```
-///
-/// Parse into Option<u64> without error:
-/// ```
-/// let v = &["1"];
-/// parse_u64!(v.iter()).expect("cannot parse 1");
-/// ```
-macro_rules! parse_u64 {
-    ($iter:expr) => {
-        $iter.next().map(|s| s.parse::<u64>()).transpose()
-    };
-    ($iter:expr, $msg:expr) => {
-        $iter.next().expect($msg).parse::<u64>()
-    };
-}
-
-/// System CPU time.  
-/// Replacement for procfs::KernelStats that returns time in number of seconds as f32 instead of ticks.
-struct CpuTime {
-    pub user: u64,
-    pub nice: u64,
-    pub system: u64,
-    pub idle: u64,
-    pub iowait: Option<u64>,
-    pub irq: Option<u64>,
-    pub softirq: Option<u64>,
-    pub steal: Option<u64>,
-    pub guest: Option<u64>,
-    pub guest_nice: Option<u64>,
-}
-
-impl CpuTime {
-    fn new() -> anyhow::Result<CpuTime> {
-        let line = read_file_first_line(PathBuf::from("/proc/stat"))?;
-        CpuTime::parse(line.trim_end())
-    }
-
-    fn parse(line: &str) -> anyhow::Result<CpuTime> {
-        let mut lexer = line.split_whitespace();
-        assert!(lexer.next().expect("cannot parse /proc/stat") == "cpu");
-        Ok(CpuTime {
-            user: parse_u64!(lexer, "cannot parse user time in /proc/stat")?,
-            nice: parse_u64!(lexer, "cannot parse user nice time in /proc/stat")?,
-            system: parse_u64!(lexer, "cannot parse system time in /proc/stat")?,
-            idle: parse_u64!(lexer, "cannot parse idle in /proc/stat")?,
-            iowait: parse_u64!(lexer)?,
-            irq: parse_u64!(lexer)?,
-            softirq: parse_u64!(lexer)?,
-            steal: parse_u64!(lexer)?,
-            guest: parse_u64!(lexer)?,
-            guest_nice: parse_u64!(lexer)?,
-        })
     }
 }
 
@@ -167,7 +106,7 @@ impl<'a> SystemInfo<'a> {
         F: Fn(&CpuTime) -> u64,
     {
         if self.cputime.is_none() {
-            self.cputime = Some(CpuTime::new().expect("cannot access /proc/stat"));
+            self.cputime = Some(KernelStats::new().expect("cannot access /proc/stat").total);
         }
         self.cputime.as_ref().map_or(0, |cputime| func(cputime))
     }
@@ -515,25 +454,5 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
                 MetricId::ThreadCount => self.with_stat(|stat| stat.num_threads as u64),
             })
             .collect()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-
-    #[test]
-    fn test_cputime() {
-        let ct =
-            super::CpuTime::parse("cpu  236978 15 97017 6027274 1568 9614 7437 0 0 0").unwrap();
-        assert_eq!(236978, ct.user);
-        assert_eq!(15, ct.nice);
-        assert_eq!(97017, ct.system);
-        assert_eq!(6027274, ct.idle);
-        assert_eq!(Some(1568), ct.iowait);
-        assert_eq!(Some(9614), ct.irq);
-        assert_eq!(Some(7437), ct.softirq);
-        assert_eq!(Some(0), ct.steal);
-        assert_eq!(Some(0), ct.guest);
-        assert_eq!(Some(0), ct.guest_nice);
     }
 }
