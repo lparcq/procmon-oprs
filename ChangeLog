@@ -1,3 +1,7 @@
+2020-12-19  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
+
+	* Version 0.12.1: Upgrade to procfs 0.12 and use CpuTime from KernelStats.
+
 2020-10-25  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
 
 	* Version 0.12.0: For merged targets, display the number of processes instead of the group id.
