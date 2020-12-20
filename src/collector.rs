@@ -20,8 +20,11 @@ use std::collections::{vec_deque, VecDeque};
 use std::slice::Iter;
 use strum::IntoEnumIterator;
 
-use crate::agg::Aggregation;
-use crate::metrics::{FormattedMetric, MetricId};
+use crate::{
+    agg::Aggregation,
+    info::SystemInfo,
+    metrics::{FormattedMetric, MetricId},
+};
 
 /// Tell if it makes sense to track metric changes
 ///
@@ -183,27 +186,32 @@ impl TargetStatus {
 ///
 /// Keeps the history of system values to compute ratio like CPU usage.
 struct Updater {
-    system_history: VecDeque<Vec<u64>>,
+    system_values: Vec<u64>,
+    total_time: VecDeque<u64>,
 }
 
 impl Updater {
     fn new() -> Updater {
         Updater {
-            system_history: VecDeque::with_capacity(2),
+            system_values: Vec::with_capacity(2),
+            total_time: VecDeque::with_capacity(2),
         }
     }
 
+    /// Keep current system values
+    fn push_samples(&mut self, samples: &[Sample]) {
+        self.system_values = samples
+            .iter()
+            .map(|sample| sample.get_raw_value())
+            .collect();
+    }
+
     /// Remove old values and push new values
-    fn push(&mut self, samples: &[Sample]) {
-        while self.system_history.len() > 1 {
-            let _ = self.system_history.pop_front();
+    fn push_system_time(&mut self, milliseconds: u64) {
+        while self.total_time.len() > 1 {
+            let _ = self.total_time.pop_front();
         }
-        self.system_history.push_back(
-            samples
-                .iter()
-                .map(|sample| sample.get_raw_value())
-                .collect(),
-        );
+        self.total_time.push_back(milliseconds);
     }
 
     /// Computed values for a new process
@@ -235,17 +243,17 @@ impl Updater {
             })
             .collect::<Vec<Sample>>();
         if pid == 0 {
-            self.push(&samples); // new system values
+            self.push_samples(&samples); // new system values
         }
         TargetStatus::new(target_name, pid, count, samples)
     }
 
     /// Historical metrics for the system
-    fn get_history(&self, age: usize, metric_index: usize) -> u64 {
-        self.system_history[self.system_history.len() - age]
-            .get(metric_index)
-            .copied()
-            .unwrap_or(0)
+    fn get_total_time(&self, age: usize) -> u64 {
+        match self.total_time.get(self.total_time.len() - age) {
+            Some(val_ref) => *val_ref,
+            None => 0,
+        }
     }
 
     /// Percentage of the value on the system total
@@ -257,13 +265,11 @@ impl Updater {
         new_value: u64,
     ) -> u64 {
         const PERCENT_FACTOR: u64 = 1000;
-        let hlen = self.system_history.len();
+        let hlen = self.total_time.len();
         match metric.id {
             MetricId::TimeCpu | MetricId::TimeSystem | MetricId::TimeUser => {
                 if hlen >= 2 {
-                    let old_system_value = self.get_history(2, metric_index);
-                    let new_system_value = self.get_history(1, metric_index);
-                    let system_delta = new_system_value - old_system_value;
+                    let system_delta = self.get_total_time(1) - self.get_total_time(2);
                     if new_value >= old_value {
                         let delta = new_value - old_value;
                         delta * PERCENT_FACTOR / system_delta
@@ -279,13 +285,10 @@ impl Updater {
                     0
                 }
             }
-            _ if hlen >= 1 => match self.system_history[hlen - 1].get(metric_index) {
-                Some(system_value) if *system_value > 0 => {
-                    new_value * PERCENT_FACTOR / *system_value
-                }
+            _ => match self.system_values.get(metric_index) {
+                Some(val_ref) if *val_ref > 0 => new_value * PERCENT_FACTOR / *val_ref,
                 _ => 0,
             },
-            _ => panic!("internal error"),
         }
     }
 
@@ -320,7 +323,7 @@ impl Updater {
             }
         }
         if pstat.pid() == 0 {
-            self.push(pstat.samples_as_slice()); // new system values
+            self.push_samples(pstat.samples_as_slice()); // new system values
         }
     }
 }
@@ -346,6 +349,11 @@ impl<'a> Collector<'a> {
     /// Start collecting from the beginning
     pub fn rewind(&mut self) {
         self.last_line_pos = 0;
+    }
+
+    /// Set idle system time
+    pub fn collect_system(&mut self, system: &mut SystemInfo) {
+        self.updater.push_system_time(system.total_time());
     }
 
     /// Collect a target metrics

@@ -136,12 +136,6 @@ Example `~/.config/oprs/settings.ini`:
     system = yes
     myself = yes
 
-Limitations
------------
-
-Currently counters aren't well supported with option --merge. When a process dissappears, the total counter
-decreases which is not correct.
-
 License
 -------
 

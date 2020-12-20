@@ -72,6 +72,7 @@ impl<'a> Target for SystemTarget<'a> {
 
     fn collect(&self, collector: &mut Collector) {
         let mut system = SystemInfo::new(self.system_conf);
+        collector.collect_system(&mut system);
         collector.collect(
             self.name(),
             0,

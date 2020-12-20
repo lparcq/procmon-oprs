@@ -124,6 +124,23 @@ impl<'a> SystemInfo<'a> {
         }
     }
 
+    fn non_idle_ticks(&mut self) -> u64 {
+        self.with_cputime(|ct| {
+            (ct.user - ct.guest.unwrap_or(0))
+                + (ct.nice - ct.guest_nice.unwrap_or(0))
+                + ct.system
+                + ct.iowait.unwrap_or(0)
+                + ct.irq.unwrap_or(0)
+                + ct.softirq.unwrap_or(0)
+                + ct.steal.unwrap_or(0)
+        })
+    }
+
+    pub fn total_time(&mut self) -> u64 {
+        self.system_conf
+            .ticks_to_millis(self.with_cputime(|ct| ct.idle) + self.non_idle_ticks())
+    }
+
     pub fn extract_metrics(&mut self, metrics: Iter<FormattedMetric>) -> Vec<u64> {
         metrics
             .map(|metric| match metric.id {
@@ -133,16 +150,7 @@ impl<'a> SystemInfo<'a> {
                 MetricId::TimeElapsed => {
                     elapsed_seconds_since(self.system_conf.boot_time_seconds) * 1000
                 }
-                MetricId::TimeCpu => self.system_conf.ticks_to_millis(self.with_cputime(|ct| {
-                    (ct.user - ct.guest.unwrap_or(0))
-                        + (ct.nice - ct.guest_nice.unwrap_or(0))
-                        + ct.system
-                        + ct.idle
-                        + ct.iowait.unwrap_or(0)
-                        + ct.irq.unwrap_or(0)
-                        + ct.softirq.unwrap_or(0)
-                        + ct.steal.unwrap_or(0)
-                })),
+                MetricId::TimeCpu => self.system_conf.ticks_to_millis(self.non_idle_ticks()),
                 MetricId::TimeSystem => self
                     .system_conf
                     .ticks_to_millis(self.with_cputime(|ct| ct.system)),
