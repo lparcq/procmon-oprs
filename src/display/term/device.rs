@@ -15,7 +15,6 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use chrono::Local;
-use std::cmp::max;
 use std::io::{self, Write};
 use std::time::Duration;
 
@@ -127,24 +126,38 @@ impl TerminalDevice {
     }
 
     /// Calculate the columns width
-    fn prepare<I1, I2>(&mut self, title_widths: I1, subtitles: I2, columns: &[Vec<Cell>])
+    ///
+    /// `title_widths` contains the width of the static titles, `subtitles` and `columns`
+    // contain the values of the rest of the table.
+    fn prepare<I1, I2>(&mut self, title_widths: I1, subtitle_widths: I2, columns: &[Vec<Cell>])
     where
         I1: IntoIterator<Item = usize>,
         I2: IntoIterator<Item = usize>,
     {
-        self.sizer
-            .overwrite(0, ColumnSizer::max_width(self.metric_names.as_slice()));
+        self.sizer.overwrite(
+            0,
+            ColumnSizer::strings_max_width(self.metric_names.as_slice()),
+        );
         columns.iter().enumerate().for_each(|(col_num, column)| {
             self.sizer
-                .overwrite(col_num + 1, ColumnSizer::max_width(&column));
+                .overwrite(col_num + 1, ColumnSizer::strings_max_width(&column));
         });
 
-        title_widths
-            .into_iter()
-            .zip(subtitles.into_iter())
-            .map(|(tlen, stlen)| max(tlen, stlen))
-            .enumerate()
-            .for_each(|(index, len)| self.sizer.overwrite_min(index + 1, len));
+        // Overwrite column widths with the respective size of titles and subtitles
+        self.sizer.overwrite_mins(1, title_widths);
+        self.sizer.overwrite_mins(1, subtitle_widths);
+    }
+
+    // Set column of equal size if it fits on screen.
+    fn equalize_columns(&mut self, screen_width: usize) {
+        let max_column_width = self.sizer.max_width_after(1); // max width not including left header
+        let number_of_columns = self.sizer.len();
+        let best_table_width = self.sizer.width_or_zero(0)
+            + max_column_width * (number_of_columns - 1)
+            + BORDER_WIDTH * (number_of_columns + 1);
+        if best_table_width < screen_width {
+            self.sizer.overwrite_mins_equally(1, max_column_width);
+        }
     }
 
     /// Write the visible part of the table
@@ -315,6 +328,7 @@ impl DisplayDevice for TerminalDevice {
     }
 
     fn render(&mut self, collector: &Collector, _targets_updated: bool) -> anyhow::Result<()> {
+        let Size(screen_width, screen_height) = self.screen.size()?;
         let subtitles = collector
             .lines()
             .map(|line| match line.count() {
@@ -347,8 +361,8 @@ impl DisplayDevice for TerminalDevice {
             subtitles.iter().map(|s| s.len()),
             &columns,
         );
-
         self.sizer.truncate(columns.len() + 1);
+        self.equalize_columns(screen_width as usize);
         let _ = self.sizer.freeze();
 
         let now = Local::now().format("%X").to_string();
@@ -359,7 +373,6 @@ impl DisplayDevice for TerminalDevice {
 
         // Draw table
         let table_height = self.metric_names.len() + HEADER_HEIGHT + 3 * BORDER_WIDTH;
-        let Size(screen_width, screen_height) = self.screen.size()?;
         let scrollable = self.recenter_table(
             screen_width as usize,
             screen_height as usize - MENU_HEIGHT,

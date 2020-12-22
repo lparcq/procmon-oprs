@@ -1,6 +1,10 @@
+2020-12-22  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
+
+	* Version 0.13.0: Use columns of equal size if the screen is wide enough.
+
 2020-12-20  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
 
-	* version 0.12.2: Fix system CPU time.
+	* Version 0.12.2: Fix system CPU time.
 
 2020-12-19  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
 
