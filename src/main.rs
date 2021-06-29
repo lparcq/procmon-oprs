@@ -178,6 +178,7 @@ fn configure_logging(settings: &LoggingSettings) {
             convert_log_level(log_level),
             simplelog::Config::default(),
             simplelog::TerminalMode::Mixed,
+            simplelog::ColorChoice::Auto,
         )?;
         Ok(())
     }

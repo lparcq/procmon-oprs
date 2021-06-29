@@ -22,7 +22,8 @@ use super::{
     menu::{Action, MenuBar},
     sizer::ColumnSizer,
     table::{Cell, TableDrawer},
-    Widget, BORDER_WIDTH, ELASTICITY, HEADER_HEIGHT, MENU_HEIGHT,
+    Widget, BORDER_WIDTH, COLUMN_SEPARATOR_WIDTH, ELASTICITY, HEADER_HEIGHT,
+    HEADER_SEPARATOR_HEIGHT, MENU_HEIGHT,
 };
 use crate::{
     agg::Aggregation,
@@ -75,7 +76,7 @@ impl TerminalDevice {
         let mut width = self.sizer.width_or_zero(0) + BORDER_WIDTH; // left header
         let start_index = horizontal_offset + 1;
         for index in start_index..self.sizer.len() {
-            width += self.sizer.width_or_zero(index) + BORDER_WIDTH;
+            width += self.sizer.width_or_zero(index) + COLUMN_SEPARATOR_WIDTH;
             if width >= screen_width as usize {
                 break;
             }
@@ -83,7 +84,7 @@ impl TerminalDevice {
         }
         let mut scrollable_columns = 0;
         for offset in 0..start_index {
-            width += self.sizer.width_or_zero(start_index - offset) + BORDER_WIDTH;
+            width += self.sizer.width_or_zero(start_index - offset) + COLUMN_SEPARATOR_WIDTH;
             if width >= screen_width as usize {
                 break;
             }
@@ -150,11 +151,12 @@ impl TerminalDevice {
 
     // Set column of equal size if it fits on screen.
     fn equalize_columns(&mut self, screen_width: usize) {
-        let max_column_width = self.sizer.max_width_after(1); // max width not including left header
+        let max_column_width = self.sizer.max_width_after(1); // max column width not including left header
         let number_of_columns = self.sizer.len();
         let best_table_width = self.sizer.width_or_zero(0)
             + max_column_width * (number_of_columns - 1)
-            + BORDER_WIDTH * (number_of_columns + 1);
+            + BORDER_WIDTH * 2
+            + COLUMN_SEPARATOR_WIDTH * (number_of_columns - 1);
         if best_table_width < screen_width {
             self.sizer.overwrite_mins_equally(1, max_column_width);
         }
@@ -182,6 +184,7 @@ impl TerminalDevice {
             screen_size,
             self.table_offset,
             visible_columns,
+            BORDER_WIDTH,
         );
         let (horizontal_offset, vertical_offset) = self.table_offset;
         let screen = &mut self.screen;
@@ -361,8 +364,11 @@ impl DisplayDevice for TerminalDevice {
             subtitles.iter().map(|s| s.len()),
             &columns,
         );
-        self.sizer.truncate(columns.len() + 1);
-        self.equalize_columns(screen_width as usize);
+        let number_of_columns = columns.len() + 1;
+        self.sizer.truncate(number_of_columns);
+        if number_of_columns > 1 {
+            self.equalize_columns(screen_width as usize);
+        }
         let _ = self.sizer.freeze();
 
         let now = Local::now().format("%X").to_string();
@@ -372,7 +378,8 @@ impl DisplayDevice for TerminalDevice {
         write!(self.screen, "{}", human_duration(self.every))?;
 
         // Draw table
-        let table_height = self.metric_names.len() + HEADER_HEIGHT + 3 * BORDER_WIDTH;
+        let table_height =
+            self.metric_names.len() + HEADER_HEIGHT + HEADER_SEPARATOR_HEIGHT + 2 * BORDER_WIDTH;
         let scrollable = self.recenter_table(
             screen_width as usize,
             screen_height as usize - MENU_HEIGHT,

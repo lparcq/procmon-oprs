@@ -27,6 +27,8 @@ mod table;
 
 const ELASTICITY: usize = 2;
 const BORDER_WIDTH: usize = 1;
+const COLUMN_SEPARATOR_WIDTH: usize = 1;
+const HEADER_SEPARATOR_HEIGHT: usize = 1;
 const MENU_HEIGHT: usize = 1;
 const HEADER_HEIGHT: usize = 2;
 

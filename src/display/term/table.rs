@@ -18,7 +18,7 @@ use std::convert::AsRef;
 use std::io::{Result, Write};
 use std::iter::{IntoIterator, Iterator};
 
-use super::{sizer::ColumnSizer, BORDER_WIDTH};
+use super::{sizer::ColumnSizer, COLUMN_SEPARATOR_WIDTH};
 use crate::console::{
     charset::{TableChar, TableCharSet},
     Origin, Screen, Size,
@@ -69,6 +69,7 @@ pub struct TableDrawer<'a, 'b> {
     screen_size: Size,
     offset: (usize, usize),
     visible_columns: usize,
+    border_width: usize,
     hrule: (usize, String),
     vline: &'static str,
 }
@@ -80,6 +81,7 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
         screen_size: Size,
         offset: (usize, usize),
         visible_columns: usize,
+        border_width: usize,
     ) -> TableDrawer<'a, 'b> {
         let vline: &'static str = charset.get(TableChar::Vertical);
         let max_col_width = sizer.iter().max().unwrap_or(&0);
@@ -91,6 +93,7 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
             screen_size,
             offset,
             visible_columns,
+            border_width,
             hrule,
             vline,
         }
@@ -99,12 +102,12 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
     fn skip_columns(&self, x: u16, count: usize) -> u16 {
         let mut x = x;
         if count > 0 {
-            x += (self.sizer.width_or_zero(0) + BORDER_WIDTH) as u16;
+            x += (self.sizer.width_or_zero(0) + self.border_width) as u16;
             let (horizontal_offset, _) = self.offset;
             let start_index = horizontal_offset + 1;
             let end_index = start_index + count - 1;
             for index in start_index..end_index {
-                x += (self.sizer.width_or_zero(index) + BORDER_WIDTH) as u16;
+                x += (self.sizer.width_or_zero(index) + COLUMN_SEPARATOR_WIDTH) as u16;
             }
         }
         x
