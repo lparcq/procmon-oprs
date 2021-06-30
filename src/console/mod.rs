@@ -15,7 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 pub use self::input::{is_tty, Event, EventChannel, Key};
-pub use self::output::{BuiltinTheme, Clip, Origin, Screen, Size};
+pub use self::output::{BuiltinTheme, Clip, Origin, RenderFlags, Screen, Size};
 
 pub mod charset;
 

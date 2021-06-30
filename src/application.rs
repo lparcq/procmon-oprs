@@ -25,7 +25,7 @@ use crate::{
     cfg::{DisplayMode, ExportType, MetricFormat, Settings},
     clock::{DriftMonitor, Timer},
     collector::Collector,
-    console::{BuiltinTheme, Screen},
+    console::{BuiltinTheme, RenderFlags, Screen},
     display::{DisplayDevice, PauseStatus, TerminalDevice, TextDevice},
     export::{CsvExporter, Exporter, RrdExporter},
     info::SystemConf,
@@ -87,6 +87,7 @@ pub struct Application {
     metrics: Vec<FormattedMetric>,
     exporter: Option<Box<dyn Exporter>>,
     theme: Option<BuiltinTheme>,
+    flags: RenderFlags,
 }
 
 /// Get export type
@@ -103,6 +104,10 @@ impl Application {
             ExportType::None => None,
         };
 
+        let mut flags = RenderFlags::new();
+        if settings.display.border {
+            flags.set(RenderFlags::TABLE_BORDER);
+        }
         Ok(Application {
             display_mode,
             every,
@@ -110,6 +115,7 @@ impl Application {
             metrics: metrics_parser.parse(metric_names)?,
             exporter,
             theme: settings.display.theme,
+            flags,
         })
     }
 
@@ -123,7 +129,7 @@ impl Application {
         let mut device: Option<Box<dyn DisplayDevice>> = match self.display_mode {
             DisplayMode::Any => panic!("internal error: must use check_display_mode first"),
             DisplayMode::Terminal => {
-                let mut screen = Screen::new()?;
+                let mut screen = Screen::new(self.flags.clone())?;
                 if let Some(theme) = &self.theme {
                     screen.set_theme(*theme);
                 }

@@ -24,7 +24,7 @@ use termion::{
     style, terminal_size,
 };
 
-use super::themes::{Style, Theme};
+use super::themes::{PaintMode, Theme};
 
 #[derive(Clone, Copy, Debug, EnumString, PartialEq)]
 pub enum BuiltinTheme {
@@ -58,17 +58,39 @@ pub struct Size(pub u16, pub u16);
 /// Rectangle area position and size (x, y, width, height)
 pub struct Clip(pub u16, pub u16, pub u16, pub u16);
 
+/// Generic flags
+#[derive(Debug, Clone)]
+pub struct RenderFlags(u8);
+
+impl RenderFlags {
+    pub const TABLE_BORDER: u8 = 0x01;
+
+    pub fn new() -> RenderFlags {
+        RenderFlags(0)
+    }
+
+    pub fn set(&mut self, flag: u8) {
+        self.0 |= flag;
+    }
+
+    pub fn has(&self, flag: u8) -> bool {
+        (self.0 & flag) == flag
+    }
+}
+
 /// Terminal screen
 pub struct Screen {
     out: Box<dyn Write>,
     theme: Option<Theme>,
+    flags: RenderFlags,
 }
 
 impl Screen {
-    pub fn new() -> anyhow::Result<Screen> {
+    pub fn new(flags: RenderFlags) -> anyhow::Result<Screen> {
         Ok(Screen {
             out: Box::new(AlternateScreen::from(io::stdout().into_raw_mode()?)),
             theme: None,
+            flags,
         })
     }
 
@@ -137,9 +159,13 @@ impl Screen {
     /// Background shade
     pub fn shade(&mut self, on: bool) -> io::Result<&mut Self> {
         if let Some(theme) = &self.theme {
-            theme.write_style(
+            theme.paint_mode(
                 &mut self.out,
-                if on { Style::Shade } else { Style::NoShade },
+                if on {
+                    PaintMode::Shade
+                } else {
+                    PaintMode::NoShade
+                },
             )?;
         }
         Ok(self)
@@ -147,16 +173,20 @@ impl Screen {
 
     pub fn highlight(&mut self, on: bool) -> io::Result<&mut Self> {
         if let Some(theme) = &self.theme {
-            theme.write_style(
+            theme.paint_mode(
                 &mut self.out,
                 if on {
-                    Style::Highlight
+                    PaintMode::Highlight
                 } else {
-                    Style::NoHighlight
+                    PaintMode::NoHighlight
                 },
             )?;
         }
         Ok(self)
+    }
+
+    pub fn flags(&self) -> &RenderFlags {
+        &self.flags
     }
 }
 
@@ -167,5 +197,19 @@ impl Write for Screen {
 
     fn flush(&mut self) -> io::Result<()> {
         self.out.flush()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::RenderFlags;
+
+    #[test]
+    fn render_flags() {
+        let mut flags = RenderFlags::new();
+        assert!(!flags.has(RenderFlags::TABLE_BORDER));
+        flags.set(RenderFlags::TABLE_BORDER);
+        assert!(flags.has(RenderFlags::TABLE_BORDER));
     }
 }

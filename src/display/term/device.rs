@@ -22,16 +22,17 @@ use super::{
     menu::{Action, MenuBar},
     sizer::ColumnSizer,
     table::{Cell, TableDrawer},
-    Widget, BORDER_WIDTH, COLUMN_SEPARATOR_WIDTH, ELASTICITY, HEADER_HEIGHT,
-    HEADER_SEPARATOR_HEIGHT, MENU_HEIGHT,
+    Widget, COLUMN_SEPARATOR_WIDTH, ELASTICITY, HEADER_HEIGHT, HEADER_SEPARATOR_HEIGHT,
+    MENU_HEIGHT,
 };
+
 use crate::{
     agg::Aggregation,
     clock::Timer,
     collector::Collector,
     console::{
-        charset::{TableChar, TableCharSet},
-        is_tty, Clip, EventChannel, Origin, Screen, Size,
+        charset::{ArrowChar, ArrowCharSet, TableCharSet},
+        is_tty, Clip, EventChannel, Origin, RenderFlags, Screen, Size,
     },
     display::{DisplayDevice, PauseStatus},
     format::human_duration,
@@ -42,7 +43,8 @@ pub struct TerminalDevice {
     every: Duration,
     events: EventChannel,
     screen: Screen,
-    charset: TableCharSet,
+    arrow_chars: ArrowCharSet,
+    table_chars: TableCharSet,
     menu: MenuBar,
     sizer: ColumnSizer,
     table_offset: (usize, usize),
@@ -51,11 +53,18 @@ pub struct TerminalDevice {
 
 impl TerminalDevice {
     pub fn new(every: Duration, screen: Screen) -> anyhow::Result<TerminalDevice> {
+        let has_border = screen.flags().has(RenderFlags::TABLE_BORDER);
+        let table_chars = if has_border {
+            TableCharSet::new()
+        } else {
+            TableCharSet::without_lines()
+        };
         Ok(TerminalDevice {
             every,
             events: EventChannel::new(),
             screen,
-            charset: TableCharSet::new(),
+            arrow_chars: ArrowCharSet::new(),
+            table_chars,
             menu: MenuBar::new(),
             sizer: ColumnSizer::new(ELASTICITY),
             table_offset: (0, 0),
@@ -73,7 +82,7 @@ impl TerminalDevice {
     fn number_of_visible_columns(&self, screen_width: u16) -> (usize, usize) {
         let mut visible_columns = 0;
         let (horizontal_offset, _) = self.table_offset;
-        let mut width = self.sizer.width_or_zero(0) + BORDER_WIDTH; // left header
+        let mut width = self.sizer.width_or_zero(0) + self.table_chars.border_width; // left header
         let start_index = horizontal_offset + 1;
         for index in start_index..self.sizer.len() {
             width += self.sizer.width_or_zero(index) + COLUMN_SEPARATOR_WIDTH;
@@ -155,7 +164,7 @@ impl TerminalDevice {
         let number_of_columns = self.sizer.len();
         let best_table_width = self.sizer.width_or_zero(0)
             + max_column_width * (number_of_columns - 1)
-            + BORDER_WIDTH * 2
+            + self.table_chars.border_width * 2
             + COLUMN_SEPARATOR_WIDTH * (number_of_columns - 1);
         if best_table_width < screen_width {
             self.sizer.overwrite_mins_equally(1, max_column_width);
@@ -179,30 +188,37 @@ impl TerminalDevice {
         let Size(screen_width, screen_height) = screen_size;
         let (visible_columns, _) = self.number_of_visible_columns(screen_width);
         let table = TableDrawer::new(
-            &self.charset,
+            &self.table_chars,
             &self.sizer,
             screen_size,
             self.table_offset,
             visible_columns,
-            BORDER_WIDTH,
         );
         let (horizontal_offset, vertical_offset) = self.table_offset;
         let screen = &mut self.screen;
-        table.top_line(screen, Origin(1, 1))?;
+        let has_border = self.table_chars.border_width > 0;
+        let mut y = 1;
+        if has_border {
+            table.top_line(screen, Origin(1, y))?;
+            y += 1;
+        }
         table.write_horizontal_header(
             screen,
-            Origin(1, 2),
+            Origin(1, y),
             titles.into_iter().skip(horizontal_offset),
             true,
         )?;
+        y += 1;
         table.write_horizontal_header(
             screen,
-            Origin(1, 3),
+            Origin(1, y),
             subtitles.into_iter().skip(horizontal_offset),
             false,
         )?;
-        table.middle_line(screen, Origin(1, 4))?;
-        let pos = Origin(1, 5);
+        y += 1;
+        table.middle_line(screen, Origin(1, y))?;
+        y += 1;
+        let pos = Origin(1, y);
         let left_cells = self
             .metric_names
             .iter()
@@ -236,16 +252,16 @@ impl TerminalDevice {
     fn write_arrows(&mut self, scrollable: (bool, bool, bool, bool)) -> io::Result<()> {
         let (left, up, down, right) = scrollable;
         if left {
-            self.header_cross_symbol(2, 1, self.charset.get(TableChar::ArrowLeft))?;
+            self.header_cross_symbol(2, 1, self.arrow_chars.get(ArrowChar::Left))?;
         }
         if up {
-            self.header_cross_symbol(1, 2, self.charset.get(TableChar::ArrowUp))?;
+            self.header_cross_symbol(1, 2, self.arrow_chars.get(ArrowChar::Up))?;
         }
         if down {
-            self.header_cross_symbol(1, 0, self.charset.get(TableChar::ArrowDown))?;
+            self.header_cross_symbol(1, 0, self.arrow_chars.get(ArrowChar::Down))?;
         }
         if right {
-            self.header_cross_symbol(0, 1, self.charset.get(TableChar::ArrowRight))?;
+            self.header_cross_symbol(0, 1, self.arrow_chars.get(ArrowChar::Right))?;
         }
         Ok(())
     }
@@ -378,8 +394,10 @@ impl DisplayDevice for TerminalDevice {
         write!(self.screen, "{}", human_duration(self.every))?;
 
         // Draw table
-        let table_height =
-            self.metric_names.len() + HEADER_HEIGHT + HEADER_SEPARATOR_HEIGHT + 2 * BORDER_WIDTH;
+        let table_height = self.metric_names.len()
+            + HEADER_HEIGHT
+            + HEADER_SEPARATOR_HEIGHT
+            + 2 * self.table_chars.border_width;
         let scrollable = self.recenter_table(
             screen_width as usize,
             screen_height as usize - MENU_HEIGHT,

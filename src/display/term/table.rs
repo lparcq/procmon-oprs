@@ -64,36 +64,39 @@ macro_rules! cell_has_style {
 ///
 /// Table with horizontal header and vertical header
 pub struct TableDrawer<'a, 'b> {
-    charset: &'a TableCharSet,
+    chars: &'a TableCharSet,
     sizer: &'b ColumnSizer,
     screen_size: Size,
     offset: (usize, usize),
     visible_columns: usize,
-    border_width: usize,
+    bhrule: (usize, String),
+    bvline: &'static str,
     hrule: (usize, String),
     vline: &'static str,
 }
 
 impl<'a, 'b> TableDrawer<'a, 'b> {
     pub fn new(
-        charset: &'a TableCharSet,
+        chars: &'a TableCharSet,
         sizer: &'b ColumnSizer,
         screen_size: Size,
         offset: (usize, usize),
         visible_columns: usize,
-        border_width: usize,
     ) -> TableDrawer<'a, 'b> {
-        let vline: &'static str = charset.get(TableChar::Vertical);
+        let bvline: &'static str = chars.get(TableChar::Vertical);
+        let vline: &'static str = chars.get(TableChar::VerticalInner);
         let max_col_width = sizer.iter().max().unwrap_or(&0);
         // string that stores the largest line
-        let hrule = charset.horizontal_line(*max_col_width);
+        let bhrule = chars.outter_horizontal_line(*max_col_width);
+        let hrule = chars.inner_horizontal_line(*max_col_width);
         TableDrawer {
-            charset,
+            chars,
             sizer,
             screen_size,
             offset,
             visible_columns,
-            border_width,
+            bhrule,
+            bvline,
             hrule,
             vline,
         }
@@ -102,7 +105,7 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
     fn skip_columns(&self, x: u16, count: usize) -> u16 {
         let mut x = x;
         if count > 0 {
-            x += (self.sizer.width_or_zero(0) + self.border_width) as u16;
+            x += (self.sizer.width_or_zero(0) + self.chars.border_width) as u16;
             let (horizontal_offset, _) = self.offset;
             let start_index = horizontal_offset + 1;
             let end_index = start_index + count - 1;
@@ -113,8 +116,14 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
         x
     }
 
-    fn write_column_rule(&self, screen: &mut Screen, index: usize, separator: &str) -> Result<()> {
-        let (hlen, hrule) = &self.hrule;
+    fn write_column_rule(
+        &self,
+        screen: &mut Screen,
+        index: usize,
+        separator: &str,
+        hlen: usize,
+        hrule: &str,
+    ) -> Result<()> {
         let column_width = self.sizer.width_or_zero(index);
         let hrule_len = column_width * hlen;
         write!(screen, "{}{}", separator, &hrule[0..hrule_len])
@@ -128,13 +137,15 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
         left: &'static str,
         middle: &'static str,
         right: &'static str,
+        hlen: usize,
+        hrule: &str,
     ) -> Result<()> {
         let (horizontal_offset, _) = self.offset;
         let mut start_col = start_col;
         let mut separator = left;
         if start_col == 0 {
             screen.origin(origin)?;
-            self.write_column_rule(screen, 0, separator)?;
+            self.write_column_rule(screen, 0, separator, hlen, hrule)?;
             start_col = 1;
             separator = middle;
         } else {
@@ -144,7 +155,7 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
         start_col += horizontal_offset;
         let column_count = start_col + self.visible_columns;
         for index in start_col..column_count {
-            self.write_column_rule(screen, index, separator)?;
+            self.write_column_rule(screen, index, separator, hlen, hrule)?;
             separator = middle;
         }
         write!(screen, "{}", right)
@@ -152,37 +163,46 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
 
     /// Top line of the table
     pub fn top_line(&self, screen: &mut Screen, pos: Origin) -> Result<()> {
+        let (hlen, hrule) = &self.bhrule;
         self.horizontal_rule(
             screen,
             pos,
             1,
-            self.charset.get(TableChar::DownRight),
-            self.charset.get(TableChar::DownHorizontal),
-            self.charset.get(TableChar::DownLeft),
+            self.chars.get(TableChar::DownRight),
+            self.chars.get(TableChar::DownHorizontal),
+            self.chars.get(TableChar::DownLeft),
+            *hlen,
+            hrule,
         )
     }
 
     /// Line between the header and the body
     pub fn middle_line(&self, screen: &mut Screen, pos: Origin) -> Result<()> {
+        let (hlen, hrule) = &self.hrule;
         self.horizontal_rule(
             screen,
             pos,
             0,
-            self.charset.get(TableChar::DownRight),
-            self.charset.get(TableChar::VerticalHorizontal),
-            self.charset.get(TableChar::VerticalLeft),
+            self.chars.get(TableChar::DownRight),
+            self.chars.get(TableChar::VerticalHorizontal),
+            self.chars.get(TableChar::VerticalLeft),
+            *hlen,
+            hrule,
         )
     }
 
     /// Top line of the table
     pub fn bottom_line(&self, screen: &mut Screen, pos: Origin) -> Result<()> {
+        let (hlen, hrule) = &self.bhrule;
         self.horizontal_rule(
             screen,
             pos,
             0,
-            self.charset.get(TableChar::UpRight),
-            self.charset.get(TableChar::UpHorizontal),
-            self.charset.get(TableChar::UpLeft),
+            self.chars.get(TableChar::UpRight),
+            self.chars.get(TableChar::UpHorizontal),
+            self.chars.get(TableChar::UpLeft),
+            *hlen,
+            hrule,
         )
     }
 
@@ -221,6 +241,8 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
         pos: Origin,
         index: usize,
         column: &[Cell<'_>],
+        left_line: &'static str,
+        right_line: &'static str,
         write_value: F,
     ) -> Result<()>
     where
@@ -229,8 +251,9 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
         let (horizontal_offset, vertical_offset) = self.offset;
         let Size(_, screen_height) = self.screen_size;
         let Origin(x, mut y) = pos;
-        let right = if index + 1 >= self.visible_columns {
-            self.vline
+        let next_index = index + 1;
+        let right = if next_index >= self.visible_columns {
+            right_line
         } else {
             ""
         };
@@ -241,7 +264,7 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
             }
             screen.goto(x, y)?;
             let shade = (y % 2) == 0;
-            write!(screen, "{}", self.vline)?;
+            write!(screen, "{}", left_line)?;
             if shade {
                 screen.shade(true)?;
             }
@@ -270,7 +293,7 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
         fn write_value(screen: &mut Screen, value: &str, width: usize) -> Result<()> {
             write!(screen, "{:<width$}", value, width = width)
         }
-        self.write_column(screen, pos, 0, column, write_value)
+        self.write_column(screen, pos, 0, column, self.bvline, self.vline, write_value)
     }
 
     pub fn write_middle_column(
@@ -284,6 +307,19 @@ impl<'a, 'b> TableDrawer<'a, 'b> {
             write!(screen, "{:>width$}", value, width = width)
         }
         let pos = pos.with_x(self.skip_columns(pos.get_x(), index));
-        self.write_column(screen, pos, index, column, write_value)
+        let right_line = if index + 1 == self.sizer.len() {
+            self.bvline
+        } else {
+            self.vline
+        };
+        self.write_column(
+            screen,
+            pos,
+            index,
+            column,
+            self.vline,
+            right_line,
+            write_value,
+        )
     }
 }

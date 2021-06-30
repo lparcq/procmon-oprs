@@ -18,7 +18,7 @@ use std::fmt::Display;
 use std::io;
 use termion::{color, style};
 
-pub enum Style {
+pub enum PaintMode {
     Highlight,
     NoHighlight,
     Shade,
@@ -31,12 +31,12 @@ pub struct Theme {
 }
 
 impl Theme {
-    pub fn write_style(&self, out: &mut dyn io::Write, usage: Style) -> io::Result<()> {
-        match usage {
-            Style::Highlight => write!(out, "{}", style::Underline),
-            Style::NoHighlight => write!(out, "{}", style::NoUnderline),
-            Style::Shade => write!(out, "{}", &self.colors[0]),
-            Style::NoShade => write!(out, "{}", color::Bg(color::Reset)),
+    pub fn paint_mode(&self, out: &mut dyn io::Write, mode: PaintMode) -> io::Result<()> {
+        match mode {
+            PaintMode::Highlight => write!(out, "{}", style::Underline),
+            PaintMode::NoHighlight => write!(out, "{}", style::NoUnderline),
+            PaintMode::Shade => write!(out, "{}", &self.colors[0]),
+            PaintMode::NoShade => write!(out, "{}", color::Bg(color::Reset)),
         }
     }
 }

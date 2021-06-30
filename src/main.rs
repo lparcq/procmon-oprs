@@ -97,6 +97,9 @@ struct Opt {
     )]
     display: Option<DisplayMode>,
 
+    #[argh(switch, short = 'B', description = "don't show table borders.")]
+    no_border: bool,
+
     #[argh(
         option,
         short = 'X',
@@ -237,6 +240,9 @@ fn start(opt: Opt) -> anyhow::Result<()> {
     override_parameter!(settings.display.format, opt.format);
     override_parameter!(settings.display.count, opt.count, count, Some(count));
     override_parameter!(settings.display.theme, opt.color_theme, theme, Some(theme));
+    if opt.no_border {
+        settings.display.border = false;
+    }
 
     override_parameter!(settings.export.kind, opt.export_type);
     override_parameter!(settings.export.dir, opt.export_dir, dir, PathBuf::from(dir));

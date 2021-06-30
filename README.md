@@ -121,6 +121,7 @@ Example `~/.config/oprs/settings.ini`:
     every = 10
     format = human
     theme = light
+    border = yes
 
     [export]
     kind = csv

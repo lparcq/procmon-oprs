@@ -138,7 +138,7 @@ impl Table {
         self.title_count = self.titles.len();
         let (_, hrule) = self
             .charset
-            .horizontal_line(column_width + 2 * VERTICAL_PADDING);
+            .inner_horizontal_line(column_width + 2 * VERTICAL_PADDING);
         self.hrule = Some(HorizontalRule::new(
             self.title_count,
             self.subtitles.len(),
@@ -161,7 +161,7 @@ impl Table {
                 width = self.title_width
             );
         }
-        let vline = self.charset.get(TableChar::Vertical);
+        let vline = self.charset.get(TableChar::VerticalInner);
         println!("{}", vline);
         self.horizontal_rule(
             self.charset.get(TableChar::VerticalRight),
