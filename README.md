@@ -140,7 +140,7 @@ Example `~/.config/oprs/settings.ini`:
 License
 -------
 
-Copyright (c) 2020 Laurent Pelecq
+Copyright (c) 2020-2021 Laurent Pelecq
 
 `oprs` is distributed under the terms of the GNU General Public License version 3.
 
