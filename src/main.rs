@@ -60,7 +60,8 @@ const APP_NAME: &str = "oprs";
 //
 
 #[derive(FromArgs, PartialEq, Debug)]
-/// Display procfs metrics of processes
+/// Display metrics of processes.
+/// Without argument, the command prints the available metrics.
 struct Opt {
     #[argh(switch, short = 'v', description = "verbose mode")]
     verbose: bool,
