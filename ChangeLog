@@ -1,3 +1,7 @@
+2021-10-17  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
+
+	* Version 0.15.0: Support vsys metric for shared memory segment
+
 2021-06-30  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
 
 	* Version 0.14.0: Option to show/hide the table borders
