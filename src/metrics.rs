@@ -164,7 +164,7 @@ pub enum MetricId {
     MapThreadStackCount,
     #[strum(
         serialize = "map:tstack:size",
-        message = "total size of mapped vdso region, see: vdso(7"
+        message = "total size of mapped vdso region, see: vdso(7)"
     )]
     MapThreadStackSize,
     #[strum(
@@ -174,9 +174,19 @@ pub enum MetricId {
     MapVdsoCount,
     #[strum(
         serialize = "map:vdso:size",
-        message = "total size of mapped vsyscall region, see: vdso(7"
+        message = "total size of mapped vdso region, see: vdso(7)"
     )]
     MapVdsoSize,
+    #[strum(
+        serialize = "map:vsys:count",
+        message = "number of shared memory segment"
+    )]
+    MapVsysCount,
+    #[strum(
+        serialize = "map:vsys:size",
+        message = "total size of shared memory segments"
+    )]
+    MapVsysSize,
     #[strum(
         serialize = "map:vsyscall:count",
         message = "number of mapped vsyscall region, see: vdso(7)"
@@ -184,7 +194,7 @@ pub enum MetricId {
     MapVsyscallCount,
     #[strum(
         serialize = "map:vsyscall:size",
-        message = "total size of mapped kernel variable, see: vdso(7"
+        message = "total size of mapped vsyscall region, see: vdso(7)"
     )]
     MapVsyscallSize,
     #[strum(
@@ -194,17 +204,17 @@ pub enum MetricId {
     MapVvarCount,
     #[strum(
         serialize = "map:vvar:size",
-        message = "total size of other mapped memory region"
+        message = "total size of mapped kernel variable, see: vdso(7)"
     )]
     MapVvarSize,
     #[strum(
         serialize = "map:other:count",
-        message = "total size of other mapped memory region"
+        message = "number of other mapped memory region"
     )]
     MapOtherCount,
     #[strum(
         serialize = "map:other:size",
-        message = "number of other mapped memory region"
+        message = "total size of other mapped memory region"
     )]
     MapOtherSize,
     #[strum(serialize = "mem:rss", message = "resident set size")]
@@ -255,6 +265,7 @@ impl MetricId {
             MetricId::MapStackCount => Some("m:stk:cnt"),
             MetricId::MapThreadStackCount => Some("m:tsck:cnt"),
             MetricId::MapVdsoCount => Some("m:vdso:cnt"),
+            MetricId::MapVsysCount => Some("m:vsys:cnt"),
             MetricId::MapVsyscallCount => Some("m:vsc:cnt"),
             MetricId::MapVvarCount => Some("m:vv:cnt"),
             MetricId::MapOtherCount => Some("m:oth:cnt"),
@@ -264,6 +275,7 @@ impl MetricId {
             MetricId::MapStackSize => Some("m:stk:sz"),
             MetricId::MapThreadStackSize => Some("m:tstk:sz"),
             MetricId::MapVdsoSize => Some("m:vdso:sz"),
+            MetricId::MapVsysSize => Some("m:vsys:sz"),
             MetricId::MapVsyscallSize => Some("m:vsc:sz"),
             MetricId::MapVvarSize => Some("m:vv:sz"),
             MetricId::MapOtherSize => Some("m:oth:sz"),
@@ -313,6 +325,8 @@ impl MetricId {
             | MetricId::MapThreadStackCount
             | MetricId::MapVdsoSize
             | MetricId::MapVdsoCount
+            | MetricId::MapVsysSize
+            | MetricId::MapVsysCount
             | MetricId::MapVsyscallSize
             | MetricId::MapVsyscallCount
             | MetricId::MapVvarSize

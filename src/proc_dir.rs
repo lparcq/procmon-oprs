@@ -100,19 +100,17 @@ impl<'a, 'b> PidFinder<'a, 'b> {
 
     pub fn fill(&mut self) {
         if let Ok(entries) = fs::read_dir("/proc") {
-            for entry in entries {
-                if let Ok(entry) = entry {
-                    if let Ok(pid) = i32::from_str(&entry.file_name().to_string_lossy()) {
-                        let path = entry.path();
-                        let proc_dir = ProcessDir::new(path.as_path());
-                        if let Some(name) = proc_dir.process_name_from_exe() {
-                            if self.insert(name.as_str(), pid) {
-                                continue;
-                            }
+            for entry in entries.into_iter().flatten() {
+                if let Ok(pid) = i32::from_str(&entry.file_name().to_string_lossy()) {
+                    let path = entry.path();
+                    let proc_dir = ProcessDir::new(path.as_path());
+                    if let Some(name) = proc_dir.process_name_from_exe() {
+                        if self.insert(name.as_str(), pid) {
+                            continue;
                         }
-                        if let Some(name) = proc_dir.process_name_from_cmdline() {
-                            let _ = self.insert(name.as_str(), pid);
-                        }
+                    }
+                    if let Some(name) = proc_dir.process_name_from_cmdline() {
+                        let _ = self.insert(name.as_str(), pid);
                     }
                 }
             }

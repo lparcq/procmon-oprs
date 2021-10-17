@@ -318,7 +318,7 @@ impl Updater {
                     }
                     _ => new_value,
                 };
-                sample.update(&metric, ag_index, ag, value, track_change(metric.id));
+                sample.update(metric, ag_index, ag, value, track_change(metric.id));
                 ag_index += 1;
             }
         }
@@ -376,7 +376,7 @@ impl<'a> Collector<'a> {
         }
         let line = self
             .updater
-            .new_computed_values(target_name, pid, count, self.metrics, &values);
+            .new_computed_values(target_name, pid, count, self.metrics, values);
         if line_pos >= self.lines.len() {
             self.lines.push_back(line);
         } else {

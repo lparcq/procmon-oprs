@@ -51,10 +51,10 @@ pub fn read_file_content(filename: &Path) -> anyhow::Result<String> {
 
 /// Read a PID file and returns the PID it contains
 pub fn read_pid_file(pid_file: &Path) -> anyhow::Result<pid_t> {
-    Ok(read_file_content(pid_file)?
+    read_file_content(pid_file)?
         .trim()
         .parse::<i32>()
-        .with_context(|| format!("{}: invalid pid file", pid_file.display()))?)
+        .with_context(|| format!("{}: invalid pid file", pid_file.display()))
 }
 
 /// Read the first string in a file

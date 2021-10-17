@@ -129,7 +129,7 @@ impl RrdExporter {
         let dbname = RrdExporter::filename(pid, status.name());
         let start_time = timestamp
             .checked_sub(self.interval)
-            .ok_or_else(|| Error::IntervalTooLarge)?;
+            .ok_or(Error::IntervalTooLarge)?;
         self.tool.create(
             &dbname,
             self.ds.iter(),

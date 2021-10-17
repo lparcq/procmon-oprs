@@ -150,7 +150,7 @@ impl TerminalDevice {
         );
         columns.iter().enumerate().for_each(|(col_num, column)| {
             self.sizer
-                .overwrite(col_num + 1, ColumnSizer::strings_max_width(&column));
+                .overwrite(col_num + 1, ColumnSizer::strings_max_width(column));
         });
 
         // Overwrite column widths with the respective size of titles and subtitles

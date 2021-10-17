@@ -18,7 +18,7 @@ use libc::pid_t;
 use procfs::process::Process;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::result;
 
 use crate::{
@@ -187,12 +187,12 @@ struct DynamicTarget<'a> {
 }
 
 impl<'a> DynamicTarget<'a> {
-    fn new(pid_file: &PathBuf, system_conf: &'a SystemConf) -> DynamicTarget<'a> {
+    fn new(pid_file: &Path, system_conf: &'a SystemConf) -> DynamicTarget<'a> {
         DynamicTarget {
             name: basename(pid_file, true),
-            target: read_pid_file(pid_file.as_path())
+            target: read_pid_file(pid_file)
                 .map_or(None, |pid| Some(StaticTarget::new(pid, system_conf))),
-            pid_file: pid_file.clone(),
+            pid_file: pid_file.to_path_buf(),
             system_conf,
         }
     }
@@ -420,7 +420,7 @@ impl<'a> Target for MergedTargets<'a> {
     }
 
     fn collect(&self, collector: &mut Collector) {
-        let mut merged_samples: Vec<u64> = collector.metrics().map(|_| 0 as u64).collect();
+        let mut merged_samples: Vec<u64> = collector.metrics().map(|_| 0_u64).collect();
         let mut cache = self.cache.borrow_mut();
         let mut old_pids = BTreeSet::new();
         cache.pids_set(&mut old_pids);
@@ -539,26 +539,26 @@ impl<'a> TargetContainer<'a> {
         match target_id {
             TargetId::System => {
                 if self.system.is_none() {
-                    self.system = Some(SystemTarget::new(&self.system_conf)?)
+                    self.system = Some(SystemTarget::new(self.system_conf)?)
                 }
             }
             TargetId::Pid(pid) => self.singles.push(Box::new(StaticTarget::new_existing(
                 *pid,
-                &self.system_conf,
+                self.system_conf,
             )?)),
             TargetId::PidFile(pid_file) => self
                 .singles
-                .push(Box::new(DynamicTarget::new(&pid_file, &self.system_conf))),
+                .push(Box::new(DynamicTarget::new(pid_file, self.system_conf))),
             TargetId::ProcessName(name) => self.multis.push(Box::new(DistinctTargets::new(
                 name.as_str(),
-                &self.system_conf,
+                self.system_conf,
             ))),
             TargetId::ProcessGroup(name) => {
                 self.current_group_id += 1;
                 self.multis.push(Box::new(MergedTargets::new(
                     name.as_str(),
                     self.current_group_id,
-                    &self.system_conf,
+                    self.system_conf,
                 )));
             }
         };

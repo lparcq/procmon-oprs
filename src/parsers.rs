@@ -71,15 +71,13 @@ pub fn parse_size(input: &str) -> result::Result<u64, ParseError> {
 /// Expands limited globbing
 /// Allowed: prefix mem:*, suffix *:call, middle io:*:call
 fn expand_metric_name(metric_ids: &mut Vec<MetricId>, name: &str) {
-    if name.starts_with("*:") {
+    if let Some(suffix) = name.strip_prefix("*:") {
         // match by suffix
-        let suffix = &name[2..];
         MetricId::iter()
             .filter(|id| id.as_str().ends_with(suffix))
             .for_each(|id| metric_ids.push(id));
-    } else if name.ends_with(":*") {
+    } else if let Some(prefix) = name.strip_suffix(":*") {
         // match by prefix
-        let prefix = &name[..name.len() - 2];
         MetricId::iter()
             .filter(|id| id.as_str().starts_with(prefix))
             .for_each(|id| metric_ids.push(id));
@@ -101,7 +99,7 @@ fn expand_metric_name(metric_ids: &mut Vec<MetricId>, name: &str) {
 
 /// parse a metric name or pattern
 fn parse_metric_pattern(input: &str) -> IResult<&str, &str> {
-    take_while(|c| c == ':' || c == '*' || (c >= 'a' && c <= 'z'))(input)
+    take_while(|c| c == ':' || c == '*' || ('a'..='z').contains(&c))(input)
 }
 
 /// Parse metric name such as abc:def

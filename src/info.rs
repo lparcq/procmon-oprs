@@ -217,6 +217,7 @@ macro_rules! maps_count_key {
             MMapPath::Stack => MetricId::MapStackCount,
             MMapPath::TStack(_) => MetricId::MapThreadStackCount,
             MMapPath::Vdso => MetricId::MapVdsoCount,
+            MMapPath::Vsys(_) => MetricId::MapVsysCount,
             MMapPath::Vvar => MetricId::MapVvarCount,
             MMapPath::Vsyscall => MetricId::MapVsyscallCount,
             MMapPath::Anonymous => MetricId::MapAnonCount,
@@ -234,6 +235,7 @@ macro_rules! maps_size_key {
             MMapPath::Stack => MetricId::MapStackSize,
             MMapPath::TStack(_) => MetricId::MapThreadStackSize,
             MMapPath::Vdso => MetricId::MapVdsoSize,
+            MMapPath::Vsys(_) => MetricId::MapVsysSize,
             MMapPath::Vvar => MetricId::MapVvarSize,
             MMapPath::Vsyscall => MetricId::MapVsyscallSize,
             MMapPath::Anonymous => MetricId::MapAnonSize,
@@ -249,24 +251,26 @@ struct MapsStats {
 
 impl MapsStats {
     fn new(process: &Process) -> ProcResult<MapsStats> {
-        static COUNT_METRICS: [MetricId; 9] = [
+        static COUNT_METRICS: [MetricId; 10] = [
             MetricId::MapAnonCount,
             MetricId::MapHeapCount,
             MetricId::MapFileCount,
             MetricId::MapStackCount,
             MetricId::MapThreadStackCount,
             MetricId::MapVdsoCount,
+            MetricId::MapVsysCount,
             MetricId::MapVsyscallCount,
             MetricId::MapVvarCount,
             MetricId::MapOtherCount,
         ];
-        static SIZE_METRICS: [MetricId; 9] = [
+        static SIZE_METRICS: [MetricId; 10] = [
             MetricId::MapAnonSize,
             MetricId::MapHeapSize,
             MetricId::MapFileSize,
             MetricId::MapStackSize,
             MetricId::MapThreadStackSize,
             MetricId::MapVdsoSize,
+            MetricId::MapVsysSize,
             MetricId::MapVsyscallSize,
             MetricId::MapVvarSize,
             MetricId::MapOtherSize,
@@ -333,7 +337,7 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
         F: Fn(&FdStats) -> u64,
     {
         if self.fd_stats.is_none() {
-            self.fd_stats = FdStats::new(&self.process).ok();
+            self.fd_stats = FdStats::new(self.process).ok();
         }
         self.fd_stats.as_ref().map_or(0, |stat| func(stat))
     }
@@ -353,7 +357,7 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
         F: Fn(&MapsStats) -> u64,
     {
         if self.maps_stats.is_none() {
-            self.maps_stats = MapsStats::new(&self.process).ok();
+            self.maps_stats = MapsStats::new(self.process).ok();
         }
         self.maps_stats.as_ref().map_or(0, |stat| func(stat))
     }
@@ -425,6 +429,7 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
                 | MetricId::MapStackCount
                 | MetricId::MapThreadStackCount
                 | MetricId::MapVdsoCount
+                | MetricId::MapVsysCount
                 | MetricId::MapVsyscallCount
                 | MetricId::MapVvarCount
                 | MetricId::MapOtherCount => {
@@ -436,6 +441,7 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
                 | MetricId::MapStackSize
                 | MetricId::MapThreadStackSize
                 | MetricId::MapVdsoSize
+                | MetricId::MapVsysSize
                 | MetricId::MapVsyscallSize
                 | MetricId::MapVvarSize
                 | MetricId::MapOtherSize => self.with_maps_stats(|stat| stat.sizes[&metric.id]),

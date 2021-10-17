@@ -23,7 +23,7 @@ use argh::FromArgs;
 use log::{error, warn};
 use simplelog::{self, SimpleLogger, TermLogger, WriteLogger};
 use std::fs::{self, File};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 mod agg;
 mod application;
@@ -186,9 +186,10 @@ fn configure_logging(settings: &LoggingSettings) {
         )?;
         Ok(())
     }
-    fn configure_file_logging(log_file: &PathBuf, log_level: LoggingLevel) -> anyhow::Result<()> {
+
+    fn configure_file_logging(log_file: &Path, log_level: LoggingLevel) -> anyhow::Result<()> {
         if log_file.exists() {
-            let mut backup_file = log_file.clone();
+            let mut backup_file = log_file.to_path_buf();
             if backup_file.set_extension("log.0") {
                 fs::rename(log_file, backup_file)?;
             }
