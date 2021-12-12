@@ -1,3 +1,7 @@
+2021-12-12  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
+
+	* Version 0.15.1: Update procfs to version 0.12.
+
 2021-10-17  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
 
 	* Version 0.15.0: Support vsys metric for shared memory segment
