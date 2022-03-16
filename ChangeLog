@@ -1,3 +1,7 @@
+2022-03-16  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
+
+	* Version 0.15.2: Update strum to version 0.24.
+
 2021-12-12  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
 
 	* Version 0.15.1: Update procfs to version 0.12.
