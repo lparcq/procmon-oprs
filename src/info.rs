@@ -172,7 +172,6 @@ struct FdStats {
 
 impl FdStats {
     fn new(process: &Process) -> ProcResult<FdStats> {
-        let mut highest = 0;
         let mut kinds = HashMap::new();
         kinds.insert(MetricId::FdAnon, 0);
         kinds.insert(MetricId::FdFile, 0);
@@ -183,7 +182,11 @@ impl FdStats {
         kinds.insert(MetricId::FdSocket, 0);
 
         let fdinfos = process.fd()?;
-        fdinfos.iter().for_each(|fdinfo| {
+        let mut highest = 0;
+        let mut ninfos = 0;
+        for fsres in fdinfos {
+            let fdinfo = fsres?;
+            ninfos += 1;
             if fdinfo.fd > highest {
                 highest = fdinfo.fd;
             }
@@ -199,10 +202,10 @@ impl FdStats {
             if let Some(count_ref) = kinds.get_mut(&key) {
                 *count_ref += 1
             }
-        });
+        }
         Ok(FdStats {
-            highest,
-            total: fdinfos.len(),
+            highest: highest as u32,
+            total: ninfos,
             kinds,
         })
     }
@@ -446,13 +449,7 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
                 | MetricId::MapVvarSize
                 | MetricId::MapOtherSize => self.with_maps_stats(|stat| stat.sizes[&metric.id]),
                 MetricId::MemVm => self.with_stat(|stat| stat.vsize),
-                MetricId::MemRss => self.with_system_stat(|stat, sc| {
-                    if stat.rss < 0 {
-                        0
-                    } else {
-                        (stat.rss as u64) * sc.page_size
-                    }
-                }),
+                MetricId::MemRss => self.with_system_stat(|stat, sc| stat.rss * sc.page_size),
                 MetricId::MemText => self.with_system_statm(|statm, sc| statm.text * sc.page_size),
                 MetricId::MemData => self.with_system_statm(|statm, sc| statm.data * sc.page_size),
                 MetricId::TimeElapsed => self.with_system_stat(ProcessInfo::elapsed_seconds) * 1000,
