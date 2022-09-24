@@ -15,255 +15,174 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use chrono::Local;
-use std::io::{self, Write};
+use std::io;
 use std::time::Duration;
-
-use super::{
-    menu::{Action, MenuBar},
-    sizer::ColumnSizer,
-    table::{Cell, TableDrawer},
-    Widget, COLUMN_SEPARATOR_WIDTH, ELASTICITY, HEADER_HEIGHT, HEADER_SEPARATOR_HEIGHT,
-    MENU_HEIGHT,
+use termion::{
+    raw::{IntoRawMode, RawTerminal},
+    screen::AlternateScreen,
+};
+use tui::{
+    backend::TermionBackend,
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Span, Spans, Text},
+    widgets::{Block, Borders, Cell, Row, Table},
+    Terminal,
 };
 
 use crate::{
     agg::Aggregation,
     clock::Timer,
     collector::Collector,
-    console::{
-        charset::{ArrowChar, ArrowCharSet, TableCharSet},
-        is_tty, Clip, EventChannel, Origin, RenderFlags, Screen, Size,
-    },
+    console::{is_tty, Event, EventChannel, Key},
     display::{DisplayDevice, PauseStatus},
     format::human_duration,
 };
+
+/// Action
+pub enum Action {
+    None,
+    Quit,
+    MultiplyTimeout(u16),
+    DivideTimeout(u16),
+    ScrollRight,
+    ScrollUp,
+    ScrollDown,
+    ScrollLeft,
+}
+
+impl From<Event> for Action {
+    fn from(evt: Event) -> Self {
+        match evt {
+            Event::Key(Key::Esc) => Action::Quit,
+            Event::Key(Key::Ctrl('c')) => Action::Quit,
+            Event::Key(Key::PageUp) => Action::DivideTimeout(2),
+            Event::Key(Key::PageDown) => Action::MultiplyTimeout(2),
+            Event::Key(Key::Right) => Action::ScrollRight,
+            Event::Key(Key::Up) => Action::ScrollUp,
+            Event::Key(Key::Down) => Action::ScrollDown,
+            Event::Key(Key::Left) => Action::ScrollLeft,
+            _ => Action::None,
+        }
+    }
+}
+
+fn key_name(key: Key) -> String {
+    match key {
+        Key::Backspace => "⌫".to_string(),
+        Key::Left => "⇲".to_string(),
+        Key::Right => "⬅".to_string(),
+        Key::Up => "⬆".to_string(),
+        Key::Down => "⬇".to_string(),
+        Key::Home => "⇱".to_string(),
+        Key::End => "⇲".to_string(),
+        Key::PageUp => "PgUp".to_string(),
+        Key::PageDown => "PgDn".to_string(),
+        Key::BackTab => "⇤".to_string(),
+        Key::Delete => "⌧".to_string(),
+        Key::Insert => "Ins".to_string(),
+        Key::F(num) => format!("F{}", num),
+        Key::Char('\t') => "⇥".to_string(),
+        Key::Char(ch) => format!("{}", ch),
+        Key::Alt(ch) => format!("M-{}", ch),
+        Key::Ctrl(ch) => format!("C-{}", ch),
+        Key::Null => "\\0".to_string(),
+        Key::Esc => "Esc".to_string(),
+        _ => "?".to_string(),
+    }
+}
+
+/// Compute the maximum length of strings
+struct MaxLength {
+    length: usize,
+}
+
+impl MaxLength {
+    fn new() -> MaxLength {
+        MaxLength { length: 0 }
+    }
+
+    /// Count the maximun length of a string
+    fn check(&mut self, s: &str) {
+        if s.len() > self.length {
+            self.length = s.len()
+        }
+    }
+
+    /// Count the maximun length of strings
+    fn iterate<I, S>(&mut self, it: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        for s in it.into_iter() {
+            self.check(s.as_ref());
+        }
+    }
+
+    /// Count the length and return the string.
+    fn as_str<'a>(&mut self, s: &'a str) -> &'a str {
+        self.check(s);
+        s
+    }
+
+    /// Return the string centered
+    fn center(&self, s: &str) -> String {
+        format!("{:^width$}", s, width = self.length)
+    }
+
+    /// Return the string centered
+    fn right(&self, s: &str) -> String {
+        format!("{:>width$}", s, width = self.length)
+    }
+}
 
 /// Print on standard output as a table
 pub struct TerminalDevice {
     every: Duration,
     events: EventChannel,
-    screen: Screen,
-    arrow_chars: ArrowCharSet,
-    table_chars: TableCharSet,
-    menu: MenuBar,
-    sizer: ColumnSizer,
+    terminal: Terminal<TermionBackend<Box<AlternateScreen<RawTerminal<io::Stdout>>>>>,
     table_offset: (usize, usize),
     metric_names: Vec<String>,
+    menu: tui::widgets::Paragraph<'static>,
 }
 
 impl TerminalDevice {
-    pub fn new(every: Duration, screen: Screen) -> anyhow::Result<TerminalDevice> {
-        let has_border = screen.flags().has(RenderFlags::TABLE_BORDER);
-        let table_chars = if has_border {
-            TableCharSet::new()
-        } else {
-            TableCharSet::without_lines()
-        };
+    pub fn new(every: Duration) -> anyhow::Result<TerminalDevice> {
+        let screen = AlternateScreen::from(io::stdout().into_raw_mode()?);
+        let backend = TermionBackend::new(Box::new(screen));
+        let terminal = Terminal::new(backend)?;
+        let mut sep = "";
+        let mut spans = Vec::new();
+        vec![
+            (key_name(Key::Esc), "Quit"),
+            (key_name(Key::PageUp), "Faster"),
+            (key_name(Key::PageDown), "Slower"),
+        ]
+        .iter()
+        .for_each(|(key, action)| {
+            spans.push(Span::raw(sep));
+            spans.push(Span::styled(
+                key.to_string(),
+                Style::default().add_modifier(Modifier::REVERSED),
+            ));
+            spans.push(Span::raw(format!(" {}", action)));
+            sep = "  ";
+        });
+        let menu = tui::widgets::Paragraph::new(Spans::from(spans)).alignment(Alignment::Left);
+
         Ok(TerminalDevice {
             every,
             events: EventChannel::new(),
-            screen,
-            arrow_chars: ArrowCharSet::new(),
-            table_chars,
-            menu: MenuBar::new(),
-            sizer: ColumnSizer::new(ELASTICITY),
+            terminal,
             table_offset: (0, 0),
             metric_names: Vec::new(),
+            menu,
         })
     }
 
     pub fn is_available() -> bool {
         is_tty(&io::stdin())
-    }
-
-    /// Calculate the number of visible columns without counting the left header.
-    /// Return also the number of columns that could be visible if there were
-    /// scrolled to the left.
-    fn number_of_visible_columns(&self, screen_width: u16) -> (usize, usize) {
-        let mut visible_columns = 0;
-        let (horizontal_offset, _) = self.table_offset;
-        let mut width = self.sizer.width_or_zero(0) + self.table_chars.border_width; // left header
-        let start_index = horizontal_offset + 1;
-        for index in start_index..self.sizer.len() {
-            width += self.sizer.width_or_zero(index) + COLUMN_SEPARATOR_WIDTH;
-            if width >= screen_width as usize {
-                break;
-            }
-            visible_columns += 1;
-        }
-        let mut scrollable_columns = 0;
-        for offset in 0..start_index {
-            width += self.sizer.width_or_zero(start_index - offset) + COLUMN_SEPARATOR_WIDTH;
-            if width >= screen_width as usize {
-                break;
-            }
-            scrollable_columns += 1; // column could be visible
-        }
-        (visible_columns, scrollable_columns)
-    }
-
-    /// Scroll table left or up to fill available space.
-    /// Return if the table is scrollable on left, up, down, right
-    fn recenter_table(
-        &mut self,
-        screen_width: usize,
-        screen_height: usize,
-        table_height: usize,
-    ) -> (bool, bool, bool, bool) {
-        let (mut horizontal_offset, mut vertical_offset) = self.table_offset;
-        if table_height < screen_height {
-            vertical_offset = 0;
-        } else if table_height - screen_height <= vertical_offset {
-            vertical_offset = table_height - screen_height;
-        }
-        let (mut visible_columns, scrollable_columns) =
-            self.number_of_visible_columns(screen_width as u16);
-        if horizontal_offset >= scrollable_columns {
-            horizontal_offset -= scrollable_columns;
-            visible_columns += scrollable_columns;
-        }
-        self.table_offset = (horizontal_offset, vertical_offset);
-        let left_scrollable = horizontal_offset > 0;
-        let up_scrollable = vertical_offset > 0;
-        let down_scrollable = table_height - vertical_offset > screen_height;
-        let right_scrollable = (self.sizer.len() - 1) - horizontal_offset > visible_columns;
-        (
-            left_scrollable,
-            up_scrollable,
-            down_scrollable,
-            right_scrollable,
-        )
-    }
-
-    /// Calculate the columns width
-    ///
-    /// `title_widths` contains the width of the static titles, `subtitles` and `columns`
-    // contain the values of the rest of the table.
-    fn prepare<I1, I2>(&mut self, title_widths: I1, subtitle_widths: I2, columns: &[Vec<Cell>])
-    where
-        I1: IntoIterator<Item = usize>,
-        I2: IntoIterator<Item = usize>,
-    {
-        self.sizer.overwrite(
-            0,
-            ColumnSizer::strings_max_width(self.metric_names.as_slice()),
-        );
-        columns.iter().enumerate().for_each(|(col_num, column)| {
-            self.sizer
-                .overwrite(col_num + 1, ColumnSizer::strings_max_width(column));
-        });
-
-        // Overwrite column widths with the respective size of titles and subtitles
-        self.sizer.overwrite_mins(1, title_widths);
-        self.sizer.overwrite_mins(1, subtitle_widths);
-    }
-
-    // Set column of equal size if it fits on screen.
-    fn equalize_columns(&mut self, screen_width: usize) {
-        let max_column_width = self.sizer.max_width_after(1); // max column width not including left header
-        let number_of_columns = self.sizer.len();
-        let best_table_width = self.sizer.width_or_zero(0)
-            + max_column_width * (number_of_columns - 1)
-            + self.table_chars.border_width * 2
-            + COLUMN_SEPARATOR_WIDTH * (number_of_columns - 1);
-        if best_table_width < screen_width {
-            self.sizer.overwrite_mins_equally(1, max_column_width);
-        }
-    }
-
-    /// Write the visible part of the table
-    fn write_table<'a, I1, I2, S>(
-        &mut self,
-        titles: I1,
-        subtitles: I2,
-        columns: &[Vec<Cell<'a>>],
-        screen_size: Size,
-        table_height: u16,
-    ) -> io::Result<()>
-    where
-        I1: IntoIterator<Item = S>,
-        I2: IntoIterator<Item = S>,
-        S: AsRef<str>,
-    {
-        let Size(screen_width, screen_height) = screen_size;
-        let (visible_columns, _) = self.number_of_visible_columns(screen_width);
-        let table = TableDrawer::new(
-            &self.table_chars,
-            &self.sizer,
-            screen_size,
-            self.table_offset,
-            visible_columns,
-        );
-        let (horizontal_offset, vertical_offset) = self.table_offset;
-        let screen = &mut self.screen;
-        let has_border = self.table_chars.border_width > 0;
-        let mut y = 1;
-        if has_border {
-            table.top_line(screen, Origin(1, y))?;
-            y += 1;
-        }
-        table.write_horizontal_header(
-            screen,
-            Origin(1, y),
-            titles.into_iter().skip(horizontal_offset),
-            true,
-        )?;
-        y += 1;
-        table.write_horizontal_header(
-            screen,
-            Origin(1, y),
-            subtitles.into_iter().skip(horizontal_offset),
-            false,
-        )?;
-        y += 1;
-        table.middle_line(screen, Origin(1, y))?;
-        y += 1;
-        let pos = Origin(1, y);
-        let left_cells = self
-            .metric_names
-            .iter()
-            .map(|value| Cell::new(value))
-            .collect::<Vec<Cell>>();
-        table.write_left_column(screen, pos, &left_cells)?;
-        for (col_num, column) in columns
-            .iter()
-            .skip(horizontal_offset)
-            .take(visible_columns)
-            .enumerate()
-        {
-            table.write_middle_column(screen, pos, col_num + 1, column)?;
-        }
-        let bottom_y = table_height - (vertical_offset as u16);
-        if bottom_y <= screen_height {
-            table.bottom_line(screen, Origin(1, bottom_y))?;
-        }
-        Ok(())
-    }
-
-    /// Write a symbol in a cross in the left top part
-    fn header_cross_symbol(&mut self, dx: u16, dy: u16, symbol: &str) -> io::Result<()> {
-        let x = (self.sizer.width_or_zero(0) as u16) - dx - 1;
-        let y = 3 - dy;
-        self.screen.goto(x, y)?;
-        write!(self.screen, "{}", symbol)
-    }
-
-    /// Write arrows according of the part of the table that can be scrolled.
-    fn write_arrows(&mut self, scrollable: (bool, bool, bool, bool)) -> io::Result<()> {
-        let (left, up, down, right) = scrollable;
-        if left {
-            self.header_cross_symbol(2, 1, self.arrow_chars.get(ArrowChar::Left))?;
-        }
-        if up {
-            self.header_cross_symbol(1, 2, self.arrow_chars.get(ArrowChar::Up))?;
-        }
-        if down {
-            self.header_cross_symbol(1, 0, self.arrow_chars.get(ArrowChar::Down))?;
-        }
-        if right {
-            self.header_cross_symbol(0, 1, self.arrow_chars.get(ArrowChar::Right))?;
-        }
-        Ok(())
     }
 
     /// Execute an interactive action.
@@ -342,79 +261,77 @@ impl DisplayDevice for TerminalDevice {
 
     /// Show the cursor on exit.
     fn close(&mut self) -> anyhow::Result<()> {
-        self.screen.cursor_show()?.flush()?;
+        self.terminal.show_cursor()?;
         Ok(())
     }
 
     fn render(&mut self, collector: &Collector, _targets_updated: bool) -> anyhow::Result<()> {
-        let Size(screen_width, screen_height) = self.screen.size()?;
-        let subtitles = collector
-            .lines()
-            .map(|line| match line.count() {
+        let nrows = self.metric_names.len();
+        let ncols = collector.len() + 1;
+        let mut cw = MaxLength::new();
+
+        let time_string = format!("{}", Local::now().format("%X"));
+        let delay = human_duration(self.every);
+        let title = format!(" {} / {} ", time_string, delay);
+
+        let mut titles = Vec::with_capacity(ncols);
+        titles.push(Cell::from(""));
+        let mut rows: Vec<Vec<Cell>> = Vec::with_capacity(nrows);
+        self.metric_names.iter().for_each(|name| {
+            let mut row = Vec::with_capacity(ncols);
+            row.push(Cell::from(cw.as_str(name.as_str())));
+            rows.push(row);
+        });
+        // Pre-calculate column width
+        collector.lines().for_each(|target| {
+            cw.check(target.name());
+            target.samples().for_each(|sample| {
+                cw.iterate(sample.strings());
+            });
+        });
+        collector.lines().for_each(|target| {
+            let mut title = Text::styled(
+                cw.center(target.name()),
+                Style::default().add_modifier(Modifier::BOLD),
+            );
+            let subtitle = match target.count() {
                 Some(count) => format!("({})", count),
-                None => format!("{}", line.pid()),
+                None => format!("{}", target.pid()),
+            };
+            cw.check(&subtitle);
+            title.extend(Text::from(cw.center(&subtitle)));
+            titles.push(Cell::from(title));
+            let mut row_index = 0;
+            target.samples().for_each(|sample| {
+                let changed = sample.changed();
+                sample.strings().for_each(|value| {
+                    rows[row_index].push(Cell::from(cw.right(value.as_str())).style(if changed {
+                        Style::default().fg(Color::Blue)
+                    } else {
+                        Style::default()
+                    }));
+                    row_index += 1;
+                })
             })
-            .collect::<Vec<String>>();
-        let columns = collector
-            .lines()
-            .map(|pstat| {
-                pstat
-                    .samples()
-                    .map(|sample| {
-                        let changed = sample.changed();
-                        sample.strings().map(move |s| {
-                            if changed {
-                                Cell::with_highlight(s.as_str())
-                            } else {
-                                Cell::new(s.as_str())
-                            }
-                        })
-                    })
-                    .flatten()
-                    .collect::<Vec<Cell>>()
-            })
-            .collect::<Vec<Vec<Cell>>>();
-        // Prepare table
-        self.prepare(
-            collector.lines().map(|line| line.name().len()),
-            subtitles.iter().map(|s| s.len()),
-            &columns,
-        );
-        let number_of_columns = columns.len() + 1;
-        self.sizer.truncate(number_of_columns);
-        if number_of_columns > 1 {
-            self.equalize_columns(screen_width as usize);
-        }
-        let _ = self.sizer.freeze();
-
-        let now = Local::now().format("%X").to_string();
-        self.screen.clear_all()?.goto(2, 2)?;
-        write!(self.screen, "{}", now)?;
-        self.screen.goto(2, 3)?;
-        write!(self.screen, "{}", human_duration(self.every))?;
-
-        // Draw table
-        let table_height = self.metric_names.len()
-            + HEADER_HEIGHT
-            + HEADER_SEPARATOR_HEIGHT
-            + 2 * self.table_chars.border_width;
-        let scrollable = self.recenter_table(
-            screen_width as usize,
-            screen_height as usize - MENU_HEIGHT,
-            table_height,
-        );
-        self.write_table(
-            collector.lines().map(|line| line.name()),
-            subtitles.iter().map(|s| s.as_str()),
-            &columns,
-            Size(screen_width, screen_height - (MENU_HEIGHT as u16)),
-            table_height as u16,
-        )?;
-        self.write_arrows(scrollable)?;
-        // Draw menu
-        self.menu
-            .write(&mut self.screen, &Clip(1, screen_height, screen_width, 1))?;
-        self.screen.cursor_hide()?.flush()?;
+        });
+        let widths = (0..ncols)
+            .map(|_| Constraint::Length(cw.length as u16))
+            .collect::<Vec<Constraint>>();
+        let table = Table::new(rows.drain(..).map(|r| Row::new::<Vec<Cell>>(r)))
+            .block(Block::default().borders(Borders::ALL).title(title))
+            .header(Row::new(titles).height(2))
+            .widths(&widths);
+        let menu = self.menu.clone();
+        self.terminal.draw(|f| {
+            let screen = f.size();
+            let rects = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(screen.height - 1), Constraint::Min(0)].as_ref())
+                .split(screen);
+            f.render_widget(table, rects[0]);
+            f.render_widget(menu, rects[1]);
+        })?;
+        self.terminal.hide_cursor()?;
         Ok(())
     }
 
@@ -427,7 +344,7 @@ impl DisplayDevice for TerminalDevice {
     fn pause(&mut self, timer: &mut Timer) -> anyhow::Result<PauseStatus> {
         if let Some(timeout) = timer.remaining() {
             if let Some(evt) = self.events.receive_timeout(timeout)? {
-                let action = self.menu.action(&evt);
+                let action = Action::from(evt);
                 if !self.react(action, timer) {
                     Ok(PauseStatus::Quit)
                 } else {

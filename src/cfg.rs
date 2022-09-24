@@ -103,7 +103,6 @@ pub struct DisplaySettings {
     pub count: Option<u64>,
     pub format: MetricFormat,
     pub theme: Option<BuiltinTheme>,
-    pub border: bool,
 }
 
 impl DisplaySettings {
@@ -114,7 +113,6 @@ impl DisplaySettings {
             count: None,
             format: MetricFormat::Raw,
             theme: None,
-            border: true,
         }
     }
 }
@@ -254,7 +252,6 @@ impl<'a> IniHandler for ConfigHandler<'a> {
                     "every" => settings.every = from_param!(key, value.parse::<f64>())?,
                     "format" => settings.format = from_param!(MetricFormat, key, value)?,
                     "theme" => settings.theme = Some(from_param!(BuiltinTheme, key, value)?),
-                    "border" => settings.border = ConfigHandler::parse_bool(key, value)?,
                     _ => return Err(ConfigError::InvalidOption(key.to_string())),
                 }
             }

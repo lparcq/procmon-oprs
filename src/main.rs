@@ -98,9 +98,6 @@ struct Opt {
     )]
     display: Option<DisplayMode>,
 
-    #[argh(switch, short = 'B', description = "don't show table borders.")]
-    no_border: bool,
-
     #[argh(
         option,
         short = 'X',
@@ -177,17 +174,24 @@ fn convert_log_level(log_level: LoggingLevel) -> simplelog::LevelFilter {
 }
 
 fn configure_logging(settings: &LoggingSettings) {
-    fn configure_console_logging(log_level: LoggingLevel) -> anyhow::Result<()> {
+    fn configure_console_logging(
+        config: simplelog::Config,
+        log_level: LoggingLevel,
+    ) -> anyhow::Result<()> {
         TermLogger::init(
             convert_log_level(log_level),
-            simplelog::Config::default(),
+            config,
             simplelog::TerminalMode::Mixed,
             simplelog::ColorChoice::Auto,
         )?;
         Ok(())
     }
 
-    fn configure_file_logging(log_file: &Path, log_level: LoggingLevel) -> anyhow::Result<()> {
+    fn configure_file_logging(
+        config: simplelog::Config,
+        log_file: &Path,
+        log_level: LoggingLevel,
+    ) -> anyhow::Result<()> {
         if log_file.exists() {
             let mut backup_file = log_file.to_path_buf();
             if backup_file.set_extension("log.0") {
@@ -196,14 +200,20 @@ fn configure_logging(settings: &LoggingSettings) {
         }
         WriteLogger::init(
             convert_log_level(log_level),
-            simplelog::Config::default(),
+            config,
             File::create(log_file)?,
         )?;
         Ok(())
     }
+
+    let config = simplelog::ConfigBuilder::new()
+        .set_time_offset_to_local()
+        .unwrap_or_else(|c| c)
+        .build();
+
     match &settings.file {
-        Some(ref file) => configure_file_logging(file, settings.level),
-        None => configure_console_logging(settings.level),
+        Some(ref file) => configure_file_logging(config, file, settings.level),
+        None => configure_console_logging(config, settings.level),
     }
     .unwrap_or_else(|_| {
         SimpleLogger::init(
@@ -242,10 +252,6 @@ fn start(opt: Opt) -> anyhow::Result<()> {
     override_parameter!(settings.display.format, opt.format);
     override_parameter!(settings.display.count, opt.count, count, Some(count));
     override_parameter!(settings.display.theme, opt.color_theme, theme, Some(theme));
-    if opt.no_border {
-        settings.display.border = false;
-    }
-
     override_parameter!(settings.export.kind, opt.export_type);
     override_parameter!(settings.export.dir, opt.export_dir, dir, PathBuf::from(dir));
     override_parameter!(

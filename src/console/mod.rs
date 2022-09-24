@@ -14,11 +14,18 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use strum_macros::EnumString;
+
 pub use self::input::{is_tty, Event, EventChannel, Key};
-pub use self::output::{BuiltinTheme, Clip, Origin, RenderFlags, Screen, Size};
 
 pub mod charset;
 
 mod input;
-mod output;
-mod themes;
+
+#[derive(Clone, Copy, Debug, EnumString, PartialEq)]
+pub enum BuiltinTheme {
+    #[strum(serialize = "light")]
+    Light,
+    #[strum(serialize = "dark")]
+    Dark,
+}
