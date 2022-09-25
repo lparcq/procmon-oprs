@@ -182,6 +182,62 @@ impl TerminalDevice {
         is_tty(&io::stdin())
     }
 
+    /// Title of the outter box
+    fn title(&self) -> String {
+        let time_string = format!("{}", Local::now().format("%X"));
+        let delay = human_duration(self.every);
+        format!(" {} / {} ", time_string, delay)
+    }
+
+    /// Table headers and body
+    ///
+    /// Return (headers, rows, column_width)
+    fn draw(
+        &mut self,
+        headers: Vec<Cell>,
+        mut rows: Vec<Vec<Cell>>,
+        nrows: usize,
+        ncols: usize,
+        col_width: u16,
+    ) -> anyhow::Result<()> {
+        let mut widths = Vec::with_capacity(ncols);
+        widths.push(self.metric_width as u16);
+        (0..ncols).for_each(|_| widths.push(col_width));
+        let table_witdh: u16 = widths.iter().sum::<u16>() + (widths.len() - 1) as u16;
+        let table_height: u16 = 2 + nrows as u16;
+        let widths = widths
+            .iter()
+            .map(|w| Constraint::Length(*w))
+            .collect::<Vec<Constraint>>();
+        let table = Table::new(rows.drain(..).map(|r| Row::new::<Vec<Cell>>(r)))
+            .block(Block::default().borders(Borders::ALL).title(self.title()))
+            .header(Row::new(headers).height(2))
+            .widths(&widths);
+
+        self.terminal.draw(|frame| {
+            let screen = frame.size();
+            let rects = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(screen.height - 1), Constraint::Min(0)].as_ref())
+                .split(screen);
+            frame.render_widget(table, rects[0]);
+
+            let mut menu_entries = vec![
+                (Key::Esc, "Quit"),
+                (Key::PageUp, "Faster"),
+                (Key::PageDown, "Slower"),
+            ];
+            let inner_width = screen.width - 2;
+            if table_witdh > inner_width {
+                menu_entries.push((Key::Left, "Left"));
+                menu_entries.push((Key::Right, "Right"));
+            }
+            let menu = menu_paragraph(&menu_entries);
+            frame.render_widget(menu, rects[1]);
+        })?;
+        Ok(())
+    }
+
     /// Execute an interactive action.
     fn react(&mut self, action: Action, timer: &mut Timer) -> bool {
         const MAX_TIMEOUT_SECS: u64 = 24 * 3_600; // 24 hours
@@ -255,6 +311,7 @@ impl DisplayDevice for TerminalDevice {
             }
         });
         self.metric_width = cw.length as u16;
+        self.terminal.hide_cursor()?;
         Ok(())
     }
 
@@ -265,24 +322,20 @@ impl DisplayDevice for TerminalDevice {
     }
 
     fn render(&mut self, collector: &Collector, _targets_updated: bool) -> anyhow::Result<()> {
-        let (hoffset, voffset) = self.table_offset;
         let nrows = self.metric_names.len();
         let ncols = collector.len() + 1;
 
-        let time_string = format!("{}", Local::now().format("%X"));
-        let delay = human_duration(self.every);
-        let title = format!(" {} / {} ", time_string, delay);
+        let (hoffset, voffset) = self.table_offset;
 
-        let mut titles = Vec::with_capacity(ncols);
-        titles.push(Cell::from(""));
+        let mut headers = Vec::with_capacity(ncols);
+        headers.push(Cell::from(""));
         let mut rows: Vec<Vec<Cell>> = Vec::with_capacity(nrows);
         self.metric_names.iter().skip(voffset).for_each(|name| {
             let mut row = Vec::with_capacity(ncols);
-            row.push(Cell::from(name.as_str()));
+            row.push(Cell::from(name.to_string()));
             rows.push(row);
         });
 
-        // Pre-calculate column width
         let mut cw = MaxLength::new();
         collector.lines().skip(hoffset).for_each(|target| {
             cw.check(target.name());
@@ -301,7 +354,7 @@ impl DisplayDevice for TerminalDevice {
             };
             cw.check(&subtitle);
             title.extend(Text::from(cw.center(&subtitle)));
-            titles.push(Cell::from(title));
+            headers.push(Cell::from(title));
             let mut row_index = 0;
             target.samples().skip(voffset).for_each(|sample| {
                 let changed = sample.changed();
@@ -315,42 +368,8 @@ impl DisplayDevice for TerminalDevice {
                 })
             })
         });
-        let mut widths = Vec::with_capacity(ncols);
-        widths.push(self.metric_width as u16);
-        (0..ncols).for_each(|_| widths.push(cw.length as u16));
-        let table_witdh: u16 = widths.iter().sum::<u16>() + (widths.len() - 1) as u16;
-        let table_height: u16 = 2 + nrows as u16;
-        let widths = widths
-            .iter()
-            .map(|w| Constraint::Length(*w))
-            .collect::<Vec<Constraint>>();
-        let table = Table::new(rows.drain(..).map(|r| Row::new::<Vec<Cell>>(r)))
-            .block(Block::default().borders(Borders::ALL).title(title))
-            .header(Row::new(titles).height(2))
-            .widths(&widths);
 
-        self.terminal.draw(|frame| {
-            let screen = frame.size();
-            let rects = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Length(screen.height - 1), Constraint::Min(0)].as_ref())
-                .split(screen);
-            frame.render_widget(table, rects[0]);
-
-            let mut menu_entries = vec![
-                (Key::Esc, "Quit"),
-                (Key::PageUp, "Faster"),
-                (Key::PageDown, "Slower"),
-            ];
-            let inner_width = screen.width - 2;
-            if table_witdh > inner_width {
-                menu_entries.push((Key::Left, "Left"));
-                menu_entries.push((Key::Right, "Right"));
-            }
-            let menu = menu_paragraph(&menu_entries);
-            frame.render_widget(menu, rects[1]);
-        })?;
-        self.terminal.hide_cursor()?;
+        self.draw(headers, rows, nrows, ncols, cw.length as u16)?;
         Ok(())
     }
 
