@@ -86,7 +86,7 @@ pub struct Application {
     count: Option<u64>,
     metrics: Vec<FormattedMetric>,
     exporter: Option<Box<dyn Exporter>>,
-    theme: Option<BuiltinTheme>,
+    _theme: Option<BuiltinTheme>,
 }
 
 /// Get export type
@@ -109,7 +109,7 @@ impl Application {
             count: settings.display.count,
             metrics: metrics_parser.parse(metric_names)?,
             exporter,
-            theme: settings.display.theme,
+            _theme: settings.display.theme,
         })
     }
 

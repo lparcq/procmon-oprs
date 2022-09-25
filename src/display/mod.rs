@@ -14,8 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::clock::Timer;
-use crate::collector::Collector;
+use crate::{clock::Timer, collector::Collector};
 
 pub mod term;
 pub mod text;

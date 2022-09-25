@@ -30,12 +30,10 @@ use crate::{
 ///
 /// Some metrics always change or almost always change. It's better not to track them.
 fn track_change(id: MetricId) -> bool {
-    match id {
-        MetricId::TimeElapsed | MetricId::TimeCpu | MetricId::TimeSystem | MetricId::TimeUser => {
-            false
-        }
-        _ => true,
-    }
+    matches!(
+        id,
+        MetricId::TimeElapsed | MetricId::TimeCpu | MetricId::TimeSystem | MetricId::TimeUser
+    )
 }
 
 /// The raw sample value and the derived aggregations.
@@ -76,7 +74,7 @@ impl Sample {
     }
 
     /// True if value has changed
-    pub fn changed(&self) -> bool {
+    pub fn _changed(&self) -> bool {
         self.changed
     }
 
@@ -114,9 +112,9 @@ impl Sample {
         if let Some(last_value) = self.values.get_mut(index) {
             self.changed = false;
             match ag {
-                Aggregation::None if value == *last_value => return,
-                Aggregation::Min if value >= *last_value => return,
-                Aggregation::Max if value <= *last_value => return,
+                Aggregation::None if value == *last_value => (),
+                Aggregation::Min if value >= *last_value => (),
+                Aggregation::Max if value <= *last_value => (),
                 _ => {
                     if let Aggregation::None = ag {
                         if track_change {
@@ -131,6 +129,17 @@ impl Sample {
                     };
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+impl From<&[&str]> for Sample {
+    fn from(strings: &[&str]) -> Sample {
+        Sample {
+            values: Vec::new(),
+            strings: strings.iter().map(|s| s.to_string()).collect(),
+            changed: false,
         }
     }
 }
@@ -179,6 +188,18 @@ impl TargetStatus {
 
     fn get_samples_mut(&mut self) -> &mut Vec<Sample> {
         &mut self.samples
+    }
+}
+
+#[cfg(test)]
+impl From<&[Vec<&str>]> for TargetStatus {
+    fn from(samples: &[Vec<&str>]) -> TargetStatus {
+        TargetStatus {
+            name: String::new(),
+            pid: 0,
+            count: None,
+            samples: samples.iter().map(|s| Sample::from(s.as_slice())).collect(),
+        }
     }
 }
 
@@ -359,10 +380,10 @@ impl<'a> Collector<'a> {
     /// Collect a target metrics
     pub fn collect(&mut self, target_name: &str, pid: pid_t, count: Option<usize>, values: &[u64]) {
         let line_pos = self.last_line_pos;
-        while let Some(mut line) = self.lines.get_mut(line_pos) {
+        while let Some(line) = self.lines.get_mut(line_pos) {
             if line.pid() == pid {
                 self.updater
-                    .update_computed_values(count, self.metrics, &mut line, values);
+                    .update_computed_values(count, self.metrics, line, values);
                 self.last_line_pos += 1;
                 return;
             }
@@ -416,5 +437,23 @@ impl<'a> Collector<'a> {
 
     pub fn is_empty(&self) -> bool {
         self.lines.is_empty()
+    }
+}
+
+#[cfg(test)]
+impl<'a> From<&[Vec<Vec<&str>>]> for Collector<'a> {
+    fn from(statuses: &[Vec<Vec<&str>>]) -> Collector<'a> {
+        let lines = VecDeque::from(
+            statuses
+                .iter()
+                .map(|s| TargetStatus::from(s.as_slice()))
+                .collect::<Vec<TargetStatus>>(),
+        );
+        Collector {
+            metrics: &[],
+            lines,
+            updater: Updater::new(),
+            last_line_pos: 0,
+        }
     }
 }

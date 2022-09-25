@@ -152,7 +152,7 @@ impl Exporter for RrdExporter {
     fn open(&mut self, collector: &Collector) -> anyhow::Result<()> {
         let heart_beat = self.interval.as_secs() * 2;
         collector.for_each_computed_metric(|id, agg| {
-            let ds_name = id.as_str().replace(":", "_");
+            let ds_name = id.as_str().replace(':', "_");
             let ds_type = match id.data_type() {
                 MetricDataType::Counter => "COUNTER",
                 MetricDataType::Gauge => "GAUGE",
@@ -203,7 +203,7 @@ impl Exporter for RrdExporter {
                 .checked_sub(self.period)
                 .ok_or(Error::PeriodTooLarge)?;
             for ds_name in &self.variables {
-                let title = ds_name.replace("_", " ");
+                let title = ds_name.replace('_', " ");
                 let filename = format!("{}.png", ds_name);
                 let defs = infos.iter().enumerate().map(|(index, exinfo)| {
                     let def = format!(

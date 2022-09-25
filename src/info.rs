@@ -108,7 +108,7 @@ impl<'a> SystemInfo<'a> {
         if self.cputime.is_none() {
             self.cputime = Some(KernelStats::new().expect("cannot access /proc/stat").total);
         }
-        self.cputime.as_ref().map_or(0, |cputime| func(cputime))
+        self.cputime.as_ref().map_or(0, func)
     }
 
     fn with_meminfo<F>(&mut self, func: F) -> u64
@@ -342,7 +342,7 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
         if self.fd_stats.is_none() {
             self.fd_stats = FdStats::new(self.process).ok();
         }
-        self.fd_stats.as_ref().map_or(0, |stat| func(stat))
+        self.fd_stats.as_ref().map_or(0, func)
     }
 
     fn with_io<F>(&mut self, func: F) -> u64
@@ -352,7 +352,7 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
         if self.io.is_none() {
             self.io = self.process.io().ok();
         }
-        self.io.as_ref().map_or(0, |io| func(io))
+        self.io.as_ref().map_or(0, func)
     }
 
     fn with_maps_stats<F>(&mut self, func: F) -> u64
@@ -362,7 +362,7 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
         if self.maps_stats.is_none() {
             self.maps_stats = MapsStats::new(self.process).ok();
         }
-        self.maps_stats.as_ref().map_or(0, |stat| func(stat))
+        self.maps_stats.as_ref().map_or(0, func)
     }
 
     fn with_stat<F>(&mut self, func: F) -> u64
@@ -372,7 +372,7 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
         if self.stat.is_none() {
             self.stat = self.process.stat().ok();
         }
-        self.stat.as_ref().map_or(0, |stat| func(stat))
+        self.stat.as_ref().map_or(0, func)
     }
 
     fn with_system_stat<F>(&mut self, func: F) -> u64

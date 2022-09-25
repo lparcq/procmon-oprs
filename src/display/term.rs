@@ -23,8 +23,8 @@ use termion::{
 };
 use tui::{
     backend::TermionBackend,
-    layout::{Alignment, Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Modifier, Style},
     text::{Span, Spans, Text},
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
     Terminal,
@@ -107,6 +107,24 @@ fn menu_paragraph(entries: &[(Key, &'static str)]) -> Paragraph<'static> {
     tui::widgets::Paragraph::new(Spans::from(spans)).alignment(Alignment::Left)
 }
 
+/// Change a list of target samples (columns) into rows and flatten the samples.
+fn pivot_flatten<'a>(collector: &'a Collector, nrows: usize, ncols: usize) -> Vec<Vec<&'a str>> {
+    let mut values = Vec::with_capacity(nrows);
+    for _ in 0..nrows {
+        values.push(Vec::with_capacity(ncols));
+    }
+    collector.lines().for_each(|target| {
+        let mut row_index = 0;
+        target.samples().for_each(|sample| {
+            sample.strings().for_each(|value| {
+                values[row_index].push(value.as_str());
+                row_index += 1;
+            });
+        });
+    });
+    values
+}
+
 /// Compute the maximum length of strings
 struct MaxLength {
     length: usize,
@@ -158,6 +176,7 @@ pub struct TerminalDevice {
     events: EventChannel,
     terminal: Terminal<TermionBackend<Box<AlternateScreen<RawTerminal<io::Stdout>>>>>,
     table_offset: (usize, usize),
+    overflow: (bool, bool),
     metric_names: Vec<String>,
     metric_width: u16,
 }
@@ -173,6 +192,7 @@ impl TerminalDevice {
             events: EventChannel::new(),
             terminal,
             table_offset: (0, 0),
+            overflow: (false, false),
             metric_names: Vec::new(),
             metric_width: 0,
         })
@@ -189,52 +209,90 @@ impl TerminalDevice {
         format!(" {} / {} ", time_string, delay)
     }
 
+    /// Navigation arrows
+    fn navigation_arrows(
+        screen: Rect,
+        hoffset: usize,
+        voffset: usize,
+        table_width: u16,
+        table_height: u16,
+        first_col_width: usize,
+    ) -> (Text<'static>, bool, bool) {
+        let (inner_width, inner_height) = (screen.width - 2, screen.height - 3);
+        let up_arrow = if voffset > 0 { "  ⬆  " } else { "   " };
+        let voverflow = table_height > inner_height;
+        let down_arrow = if voverflow { "⬇" } else { " " };
+        let left_arrow = if hoffset > 0 { "⬅" } else { " " };
+        let hoverflow = table_width > inner_width;
+        let right_arrow = if hoverflow { "➡" } else { " " };
+        let mut nav = Text::from(format!("{:^width$}", up_arrow, width = first_col_width));
+        nav.extend(Text::from(format!(
+            "{:^width$}",
+            format!("{} {} {}", left_arrow, down_arrow, right_arrow),
+            width = first_col_width
+        )));
+        (nav, voverflow, hoverflow)
+    }
+
     /// Table headers and body
     ///
     /// Return (headers, rows, column_width)
     fn draw(
         &mut self,
-        headers: Vec<Cell>,
+        mut headers: Vec<Cell>,
         mut rows: Vec<Vec<Cell>>,
         nrows: usize,
         ncols: usize,
         col_width: u16,
     ) -> anyhow::Result<()> {
+        let (hoffset, voffset) = self.table_offset;
         let mut widths = Vec::with_capacity(ncols);
-        widths.push(self.metric_width as u16);
+        widths.push(self.metric_width);
         (0..ncols).for_each(|_| widths.push(col_width));
-        let table_witdh: u16 = widths.iter().sum::<u16>() + (widths.len() - 1) as u16;
+        let table_width: u16 = widths.iter().sum::<u16>() + (widths.len() - 1) as u16;
         let table_height: u16 = 2 + nrows as u16;
         let widths = widths
             .iter()
             .map(|w| Constraint::Length(*w))
             .collect::<Vec<Constraint>>();
-        let table = Table::new(rows.drain(..).map(|r| Row::new::<Vec<Cell>>(r)))
-            .block(Block::default().borders(Borders::ALL).title(self.title()))
-            .header(Row::new(headers).height(2))
-            .widths(&widths);
+        let title = self.title();
+        let first_col_width = self.metric_width as usize;
+        let mut new_voverflow = false;
+        let mut new_hoverflow = false;
 
         self.terminal.draw(|frame| {
             let screen = frame.size();
+            let (nav, voverflow, hoverflow) = TerminalDevice::navigation_arrows(
+                screen,
+                hoffset,
+                voffset,
+                table_width,
+                table_height,
+                first_col_width,
+            );
+            new_voverflow = voverflow;
+            new_hoverflow = hoverflow;
+            headers[0] = Cell::from(nav);
+
+            let table = Table::new(rows.drain(..).map(Row::new::<Vec<Cell>>))
+                .block(Block::default().borders(Borders::ALL).title(title))
+                .header(Row::new(headers).height(2))
+                .widths(&widths);
             let rects = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(screen.height - 1), Constraint::Min(0)].as_ref())
                 .split(screen);
             frame.render_widget(table, rects[0]);
 
-            let mut menu_entries = vec![
+            let menu_entries = vec![
                 (Key::Esc, "Quit"),
                 (Key::PageUp, "Faster"),
                 (Key::PageDown, "Slower"),
             ];
-            let inner_width = screen.width - 2;
-            if table_witdh > inner_width {
-                menu_entries.push((Key::Left, "Left"));
-                menu_entries.push((Key::Right, "Right"));
-            }
             let menu = menu_paragraph(&menu_entries);
             frame.render_widget(menu, rects[1]);
         })?;
+        self.overflow = (new_voverflow, new_hoverflow);
         Ok(())
     }
 
@@ -242,6 +300,7 @@ impl TerminalDevice {
     fn react(&mut self, action: Action, timer: &mut Timer) -> bool {
         const MAX_TIMEOUT_SECS: u64 = 24 * 3_600; // 24 hours
         const MIN_TIMEOUT_MSECS: u128 = 1;
+        let (voverflow, hoverflow) = self.overflow;
         match action {
             Action::Quit => return false,
             Action::MultiplyTimeout(factor) => {
@@ -263,8 +322,10 @@ impl TerminalDevice {
                 }
             }
             Action::ScrollRight => {
-                let (horizontal_offset, vertical_offset) = self.table_offset;
-                self.table_offset = (horizontal_offset + 1, vertical_offset);
+                if hoverflow {
+                    let (horizontal_offset, vertical_offset) = self.table_offset;
+                    self.table_offset = (horizontal_offset + 1, vertical_offset);
+                }
             }
             Action::ScrollUp => {
                 let (horizontal_offset, vertical_offset) = self.table_offset;
@@ -273,8 +334,10 @@ impl TerminalDevice {
                 }
             }
             Action::ScrollDown => {
-                let (horizontal_offset, vertical_offset) = self.table_offset;
-                self.table_offset = (horizontal_offset, vertical_offset + 1);
+                if voverflow {
+                    let (horizontal_offset, vertical_offset) = self.table_offset;
+                    self.table_offset = (horizontal_offset, vertical_offset + 1);
+                }
             }
             Action::ScrollLeft => {
                 let (horizontal_offset, vertical_offset) = self.table_offset;
@@ -322,26 +385,28 @@ impl DisplayDevice for TerminalDevice {
     }
 
     fn render(&mut self, collector: &Collector, _targets_updated: bool) -> anyhow::Result<()> {
+        let (hoffset, voffset) = self.table_offset;
         let nrows = self.metric_names.len();
         let ncols = collector.len() + 1;
+        let nvisible_rows = nrows - voffset;
+        let nvisible_cols = ncols - hoffset;
 
-        let (hoffset, voffset) = self.table_offset;
-
-        let mut headers = Vec::with_capacity(ncols);
+        let mut headers = Vec::with_capacity(nvisible_cols);
         headers.push(Cell::from(""));
-        let mut rows: Vec<Vec<Cell>> = Vec::with_capacity(nrows);
+
+        let mut rows: Vec<Vec<Cell>> = Vec::with_capacity(nvisible_rows);
         self.metric_names.iter().skip(voffset).for_each(|name| {
-            let mut row = Vec::with_capacity(ncols);
+            let mut row = Vec::with_capacity(nvisible_cols);
             row.push(Cell::from(name.to_string()));
             rows.push(row);
         });
 
         let mut cw = MaxLength::new();
+
+        let values = pivot_flatten(collector, nrows, ncols);
+        values.iter().skip(hoffset).for_each(|row| cw.iterate(row));
         collector.lines().skip(hoffset).for_each(|target| {
             cw.check(target.name());
-            target.samples().skip(voffset).for_each(|sample| {
-                cw.iterate(sample.strings());
-            });
         });
         collector.lines().skip(hoffset).for_each(|target| {
             let mut title = Text::styled(
@@ -355,21 +420,26 @@ impl DisplayDevice for TerminalDevice {
             cw.check(&subtitle);
             title.extend(Text::from(cw.center(&subtitle)));
             headers.push(Cell::from(title));
-            let mut row_index = 0;
-            target.samples().skip(voffset).for_each(|sample| {
-                let changed = sample.changed();
-                sample.strings().for_each(|value| {
-                    rows[row_index].push(Cell::from(cw.right(value.as_str())).style(if changed {
-                        Style::default().fg(Color::Blue)
-                    } else {
-                        Style::default()
-                    }));
-                    row_index += 1;
-                })
-            })
         });
-
-        self.draw(headers, rows, nrows, ncols, cw.length as u16)?;
+        values
+            .iter()
+            .skip(voffset)
+            .enumerate()
+            .for_each(|(row_index, samples)| {
+                rows[row_index].extend(
+                    samples
+                        .iter()
+                        .skip(hoffset)
+                        .map(|sample| Cell::from(cw.right(*sample))),
+                );
+            });
+        self.draw(
+            headers,
+            rows,
+            nvisible_rows,
+            nvisible_cols,
+            cw.length as u16,
+        )?;
         Ok(())
     }
 
@@ -394,5 +464,33 @@ impl DisplayDevice for TerminalDevice {
         } else {
             Ok(PauseStatus::TimeOut)
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    use super::{pivot_flatten, Collector};
+
+    #[test]
+    fn test_pivot_flatten() {
+        let empty: &[Vec<Vec<&str>>] = &[];
+        let collector0 = Collector::from(empty);
+        let values0 = pivot_flatten(&collector0, 0, 0);
+        assert_eq!(0, values0.len());
+
+        let statuses1 = vec![
+            vec![vec!["val111", "val112"], vec!["val12"]],
+            vec![vec!["val211", "val212"], vec!["val22"]],
+        ];
+        let expected_values1 = vec![
+            vec!["val111", "val211"],
+            vec!["val112", "val212"],
+            vec!["val12", "val22"],
+        ];
+        let collector1 = Collector::from(statuses1.as_slice());
+        let values1 = pivot_flatten(&collector1, 3, 2);
+        assert_eq!(expected_values1.len(), values1.len());
+        assert_eq!(expected_values1, values1);
     }
 }

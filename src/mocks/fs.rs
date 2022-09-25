@@ -21,10 +21,7 @@ impl File {
             Err(io::Error::new(io::ErrorKind::Other, "invalid test path"))
         } else {
             let content: String = content.chars().skip(PATH_PREFIX.len()).collect();
-            Ok(File {
-                content: String::from(content),
-                pos: 0,
-            })
+            Ok(File { content, pos: 0 })
         }
     }
 }

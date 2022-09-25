@@ -24,7 +24,7 @@ pub use crate::{console::BuiltinTheme, parsers::parse_size};
 pub const DEFAULT_DELAY: f64 = 5.0;
 pub const LOG_FILE_NAME: &str = "settings";
 
-#[derive(Clone, Copy, Debug, PartialEq, EnumString, IntoStaticStr)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, EnumString, IntoStaticStr)]
 pub enum LoggingLevel {
     #[strum(serialize = "error")]
     Error,
@@ -36,7 +36,7 @@ pub enum LoggingLevel {
     Debug,
 }
 
-#[derive(Clone, Copy, Debug, EnumString, IntoStaticStr, PartialEq)]
+#[derive(Clone, Copy, Debug, EnumString, IntoStaticStr, PartialEq, Eq)]
 pub enum DisplayMode {
     #[strum(serialize = "none")]
     None,
@@ -54,7 +54,7 @@ impl DisplayMode {
     }
 }
 
-#[derive(Clone, Copy, Debug, EnumString, IntoStaticStr, PartialEq)]
+#[derive(Clone, Copy, Debug, EnumString, IntoStaticStr, PartialEq, Eq)]
 pub enum ExportType {
     #[strum(serialize = "none")]
     None,
@@ -70,7 +70,7 @@ impl ExportType {
     }
 }
 
-#[derive(Clone, Copy, Debug, EnumString, IntoStaticStr, PartialEq)]
+#[derive(Clone, Copy, Debug, EnumString, IntoStaticStr, PartialEq, Eq)]
 pub enum MetricFormat {
     #[strum(serialize = "raw")]
     Raw,

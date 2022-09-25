@@ -169,7 +169,7 @@ impl Exporter for CsvExporter {
             if !pids.remove(&pid) {
                 self.create_file(pid, pstat.name())?;
             }
-            let samples = pstat.samples().map(|sample| sample.values()).flatten();
+            let samples = pstat.samples().flat_map(|sample| sample.values());
             if let Some(ref mut file) = self.files.get_mut(&pid) {
                 // Necessarily true
                 write!(file, "{:.3}", timestamp.as_secs_f64())?;

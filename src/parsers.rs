@@ -244,7 +244,7 @@ mod tests {
     #[test]
     fn test_syntax_error() {
         for name in &["fault:minor#raw", "fault:minor/km"] {
-            if let Ok(_) = parse_metric_spec(name) {
+            if parse_metric_spec(name).is_ok() {
                 panic!("parsing must fail: {}", name);
             }
         }

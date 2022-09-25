@@ -22,7 +22,7 @@ pub mod charset;
 
 mod input;
 
-#[derive(Clone, Copy, Debug, EnumString, PartialEq)]
+#[derive(Clone, Copy, Debug, EnumString, PartialEq, Eq)]
 pub enum BuiltinTheme {
     #[strum(serialize = "light")]
     Light,

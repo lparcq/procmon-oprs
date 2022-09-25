@@ -227,7 +227,7 @@ impl RrdTool {
     {
         debug!("rrd update {}", dbname);
         try_write!(self.child_in, "update {} {}", dbname, timestamp.as_secs());
-        for value in values.into_iter() {
+        for value in values {
             try_write!(self.child_in, ":{}", value);
         }
         try_writeln!(self.child_in);
