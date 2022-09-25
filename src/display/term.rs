@@ -24,7 +24,7 @@ use termion::{
 use tui::{
     backend::TermionBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Span, Spans, Text},
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
     Terminal,
@@ -34,7 +34,7 @@ use crate::{
     agg::Aggregation,
     clock::Timer,
     collector::Collector,
-    console::{is_tty, Event, EventChannel, Key},
+    console::{is_tty, BuiltinTheme, Event, EventChannel, Key},
     display::{DisplayDevice, PauseStatus},
     format::human_duration,
 };
@@ -179,10 +179,12 @@ pub struct TerminalDevice {
     overflow: (bool, bool),
     metric_names: Vec<String>,
     metric_width: u16,
+    theme: Option<BuiltinTheme>,
+    column_spacing: u16,
 }
 
 impl TerminalDevice {
-    pub fn new(every: Duration) -> anyhow::Result<TerminalDevice> {
+    pub fn new(every: Duration, theme: Option<BuiltinTheme>) -> anyhow::Result<TerminalDevice> {
         let screen = AlternateScreen::from(io::stdout().into_raw_mode()?);
         let backend = TermionBackend::new(Box::new(screen));
         let terminal = Terminal::new(backend)?;
@@ -195,6 +197,8 @@ impl TerminalDevice {
             overflow: (false, false),
             metric_names: Vec::new(),
             metric_width: 0,
+            theme,
+            column_spacing: 2,
         })
     }
 
@@ -247,9 +251,11 @@ impl TerminalDevice {
     ) -> anyhow::Result<()> {
         let (hoffset, voffset) = self.table_offset;
         let mut widths = Vec::with_capacity(ncols);
+        let column_spacing = self.column_spacing;
         widths.push(self.metric_width);
         (0..ncols).for_each(|_| widths.push(col_width));
-        let table_width: u16 = widths.iter().sum::<u16>() + (widths.len() - 1) as u16;
+        let table_width: u16 =
+            widths.iter().sum::<u16>() + ((widths.len() - 1) as u16) * column_spacing;
         let table_height: u16 = 2 + nrows as u16;
         let widths = widths
             .iter()
@@ -259,6 +265,19 @@ impl TerminalDevice {
         let first_col_width = self.metric_width as usize;
         let mut new_voverflow = false;
         let mut new_hoverflow = false;
+        let theme = self.theme;
+        let rows = rows.drain(..).enumerate().map(|(i, r)| {
+            let style = if i % 2 != 0 {
+                Style::default()
+            } else {
+                match theme {
+                    None => Style::default(),
+                    Some(BuiltinTheme::Dark) => Style::default().bg(Color::Rgb(40, 40, 40)),
+                    Some(BuiltinTheme::Light) => Style::default().bg(Color::Rgb(215, 215, 215)),
+                }
+            };
+            Row::new::<Vec<Cell>>(r).style(style)
+        });
 
         self.terminal.draw(|frame| {
             let screen = frame.size();
@@ -274,10 +293,11 @@ impl TerminalDevice {
             new_hoverflow = hoverflow;
             headers[0] = Cell::from(nav);
 
-            let table = Table::new(rows.drain(..).map(Row::new::<Vec<Cell>>))
+            let table = Table::new(rows)
                 .block(Block::default().borders(Borders::ALL).title(title))
                 .header(Row::new(headers).height(2))
-                .widths(&widths);
+                .widths(&widths)
+                .column_spacing(column_spacing);
             let rects = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(screen.height - 1), Constraint::Min(0)].as_ref())

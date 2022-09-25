@@ -86,7 +86,7 @@ pub struct Application {
     count: Option<u64>,
     metrics: Vec<FormattedMetric>,
     exporter: Option<Box<dyn Exporter>>,
-    _theme: Option<BuiltinTheme>,
+    theme: Option<BuiltinTheme>,
 }
 
 /// Get export type
@@ -109,7 +109,7 @@ impl Application {
             count: settings.display.count,
             metrics: metrics_parser.parse(metric_names)?,
             exporter,
-            _theme: settings.display.theme,
+            theme: settings.display.theme,
         })
     }
 
@@ -122,7 +122,7 @@ impl Application {
 
         let mut device: Option<Box<dyn DisplayDevice>> = match self.display_mode {
             DisplayMode::Any => panic!("internal error: must use check_display_mode first"),
-            DisplayMode::Terminal => Some(Box::new(TerminalDevice::new(self.every)?)),
+            DisplayMode::Terminal => Some(Box::new(TerminalDevice::new(self.every, self.theme)?)),
             DisplayMode::Text => Some(Box::new(TextDevice::new())),
             DisplayMode::None => None,
         };
