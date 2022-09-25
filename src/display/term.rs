@@ -23,10 +23,10 @@ use termion::{
 };
 use tui::{
     backend::TermionBackend,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Span, Spans, Text},
-    widgets::{Block, Borders, Cell, Row, Table},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
     Terminal,
 };
 
@@ -70,10 +70,10 @@ impl From<Event> for Action {
 fn key_name(key: Key) -> String {
     match key {
         Key::Backspace => "⌫".to_string(),
-        Key::Left => "⇲".to_string(),
-        Key::Right => "⬅".to_string(),
-        Key::Up => "⬆".to_string(),
-        Key::Down => "⬇".to_string(),
+        Key::Left => "←".to_string(),
+        Key::Right => "→".to_string(),
+        Key::Up => "↑".to_string(),
+        Key::Down => "↓".to_string(),
         Key::Home => "⇱".to_string(),
         Key::End => "⇲".to_string(),
         Key::PageUp => "PgUp".to_string(),
@@ -90,6 +90,21 @@ fn key_name(key: Key) -> String {
         Key::Esc => "Esc".to_string(),
         _ => "?".to_string(),
     }
+}
+
+fn menu_paragraph(entries: &[(Key, &'static str)]) -> Paragraph<'static> {
+    let mut spans = Vec::new();
+    let mut sep = "";
+    entries.iter().for_each(|(key, action)| {
+        spans.push(Span::raw(sep));
+        spans.push(Span::styled(
+            key_name(*key),
+            Style::default().add_modifier(Modifier::REVERSED),
+        ));
+        spans.push(Span::raw(format!(" {}", action)));
+        sep = "  ";
+    });
+    tui::widgets::Paragraph::new(Spans::from(spans)).alignment(Alignment::Left)
 }
 
 /// Compute the maximum length of strings
@@ -144,7 +159,7 @@ pub struct TerminalDevice {
     terminal: Terminal<TermionBackend<Box<AlternateScreen<RawTerminal<io::Stdout>>>>>,
     table_offset: (usize, usize),
     metric_names: Vec<String>,
-    menu: tui::widgets::Paragraph<'static>,
+    metric_width: u16,
 }
 
 impl TerminalDevice {
@@ -152,24 +167,6 @@ impl TerminalDevice {
         let screen = AlternateScreen::from(io::stdout().into_raw_mode()?);
         let backend = TermionBackend::new(Box::new(screen));
         let terminal = Terminal::new(backend)?;
-        let mut sep = "";
-        let mut spans = Vec::new();
-        vec![
-            (key_name(Key::Esc), "Quit"),
-            (key_name(Key::PageUp), "Faster"),
-            (key_name(Key::PageDown), "Slower"),
-        ]
-        .iter()
-        .for_each(|(key, action)| {
-            spans.push(Span::raw(sep));
-            spans.push(Span::styled(
-                key.to_string(),
-                Style::default().add_modifier(Modifier::REVERSED),
-            ));
-            spans.push(Span::raw(format!(" {}", action)));
-            sep = "  ";
-        });
-        let menu = tui::widgets::Paragraph::new(Spans::from(spans)).alignment(Alignment::Left);
 
         Ok(TerminalDevice {
             every,
@@ -177,7 +174,7 @@ impl TerminalDevice {
             terminal,
             table_offset: (0, 0),
             metric_names: Vec::new(),
-            menu,
+            metric_width: 0,
         })
     }
 
@@ -238,10 +235,11 @@ impl TerminalDevice {
 impl DisplayDevice for TerminalDevice {
     fn open(&mut self, collector: &Collector) -> anyhow::Result<()> {
         let mut last_id = None;
+        let mut cw = MaxLength::new();
         collector.for_each_computed_metric(|id, ag| {
             if last_id.is_none() || last_id.unwrap() != id {
                 last_id = Some(id);
-                self.metric_names.push(id.as_str().to_string());
+                self.metric_names.push(cw.as_str(id.as_str()).to_string());
             } else {
                 let name = format!(
                     "{} ({})",
@@ -256,6 +254,7 @@ impl DisplayDevice for TerminalDevice {
                 self.metric_names.push(name);
             }
         });
+        self.metric_width = cw.length as u16;
         Ok(())
     }
 
@@ -266,9 +265,9 @@ impl DisplayDevice for TerminalDevice {
     }
 
     fn render(&mut self, collector: &Collector, _targets_updated: bool) -> anyhow::Result<()> {
+        let (hoffset, voffset) = self.table_offset;
         let nrows = self.metric_names.len();
         let ncols = collector.len() + 1;
-        let mut cw = MaxLength::new();
 
         let time_string = format!("{}", Local::now().format("%X"));
         let delay = human_duration(self.every);
@@ -277,19 +276,21 @@ impl DisplayDevice for TerminalDevice {
         let mut titles = Vec::with_capacity(ncols);
         titles.push(Cell::from(""));
         let mut rows: Vec<Vec<Cell>> = Vec::with_capacity(nrows);
-        self.metric_names.iter().for_each(|name| {
+        self.metric_names.iter().skip(voffset).for_each(|name| {
             let mut row = Vec::with_capacity(ncols);
-            row.push(Cell::from(cw.as_str(name.as_str())));
+            row.push(Cell::from(name.as_str()));
             rows.push(row);
         });
+
         // Pre-calculate column width
-        collector.lines().for_each(|target| {
+        let mut cw = MaxLength::new();
+        collector.lines().skip(hoffset).for_each(|target| {
             cw.check(target.name());
-            target.samples().for_each(|sample| {
+            target.samples().skip(voffset).for_each(|sample| {
                 cw.iterate(sample.strings());
             });
         });
-        collector.lines().for_each(|target| {
+        collector.lines().skip(hoffset).for_each(|target| {
             let mut title = Text::styled(
                 cw.center(target.name()),
                 Style::default().add_modifier(Modifier::BOLD),
@@ -302,7 +303,7 @@ impl DisplayDevice for TerminalDevice {
             title.extend(Text::from(cw.center(&subtitle)));
             titles.push(Cell::from(title));
             let mut row_index = 0;
-            target.samples().for_each(|sample| {
+            target.samples().skip(voffset).for_each(|sample| {
                 let changed = sample.changed();
                 sample.strings().for_each(|value| {
                     rows[row_index].push(Cell::from(cw.right(value.as_str())).style(if changed {
@@ -314,22 +315,40 @@ impl DisplayDevice for TerminalDevice {
                 })
             })
         });
-        let widths = (0..ncols)
-            .map(|_| Constraint::Length(cw.length as u16))
+        let mut widths = Vec::with_capacity(ncols);
+        widths.push(self.metric_width as u16);
+        (0..ncols).for_each(|_| widths.push(cw.length as u16));
+        let table_witdh: u16 = widths.iter().sum::<u16>() + (widths.len() - 1) as u16;
+        let table_height: u16 = 2 + nrows as u16;
+        let widths = widths
+            .iter()
+            .map(|w| Constraint::Length(*w))
             .collect::<Vec<Constraint>>();
         let table = Table::new(rows.drain(..).map(|r| Row::new::<Vec<Cell>>(r)))
             .block(Block::default().borders(Borders::ALL).title(title))
             .header(Row::new(titles).height(2))
             .widths(&widths);
-        let menu = self.menu.clone();
-        self.terminal.draw(|f| {
-            let screen = f.size();
+
+        self.terminal.draw(|frame| {
+            let screen = frame.size();
             let rects = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(screen.height - 1), Constraint::Min(0)].as_ref())
                 .split(screen);
-            f.render_widget(table, rects[0]);
-            f.render_widget(menu, rects[1]);
+            frame.render_widget(table, rects[0]);
+
+            let mut menu_entries = vec![
+                (Key::Esc, "Quit"),
+                (Key::PageUp, "Faster"),
+                (Key::PageDown, "Slower"),
+            ];
+            let inner_width = screen.width - 2;
+            if table_witdh > inner_width {
+                menu_entries.push((Key::Left, "Left"));
+                menu_entries.push((Key::Right, "Right"));
+            }
+            let menu = menu_paragraph(&menu_entries);
+            frame.render_widget(menu, rects[1]);
         })?;
         self.terminal.hide_cursor()?;
         Ok(())
