@@ -1,3 +1,7 @@
+2022-10-02  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
+
+	* Version 0.16.0: Use tui-rs for terminal mode.
+
 2022-08-28  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
 
 	* Version 0.15.3: Update procfs to version 0.14.
