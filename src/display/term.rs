@@ -39,24 +39,38 @@ use crate::{
     format::human_duration,
 };
 
-/// Space between two columns
-const COLUMN_SPACING: u16 = 1;
-
 /// Theme styles
 struct Styles {
     even_row: Style,
     odd_row: Style,
+    column_spacing: u16,
 }
 
 impl Styles {
     fn new(theme: Option<BuiltinTheme>) -> Self {
-        let even_row = Style::default();
-        let odd_row = match theme {
-            None => Style::default(),
-            Some(BuiltinTheme::Dark) => Style::default().bg(Color::Rgb(40, 40, 40)),
-            Some(BuiltinTheme::Light) => Style::default().bg(Color::Rgb(215, 215, 215)),
+        let default_style = Style::default();
+        let (even_row, odd_row, column_spacing) = match theme {
+            Some(BuiltinTheme::Dark) => (
+                default_style,
+                Style::default().bg(Color::Rgb(40, 40, 40)),
+                1,
+            ),
+            Some(BuiltinTheme::Light) => (
+                default_style,
+                Style::default().bg(Color::Rgb(215, 215, 215)),
+                1,
+            ),
+            Some(BuiltinTheme::Dark16) => (default_style, Style::default().fg(Color::LightBlue), 2),
+            Some(BuiltinTheme::Light16) => {
+                (default_style, Style::default().bg(Color::LightBlue), 2)
+            }
+            None => (default_style, default_style, 2),
         };
-        Styles { even_row, odd_row }
+        Styles {
+            even_row,
+            odd_row,
+            column_spacing,
+        }
     }
 }
 
@@ -201,7 +215,6 @@ pub struct TerminalDevice {
     metric_names: Vec<String>,
     metric_width: u16,
     styles: Styles,
-    column_spacing: u16,
 }
 
 impl TerminalDevice {
@@ -219,7 +232,6 @@ impl TerminalDevice {
             metric_names: Vec::new(),
             metric_width: 0,
             styles: Styles::new(theme),
-            column_spacing: COLUMN_SPACING,
         })
     }
 
@@ -272,7 +284,7 @@ impl TerminalDevice {
     ) -> anyhow::Result<()> {
         let (hoffset, voffset) = self.table_offset;
         let mut widths = Vec::with_capacity(ncols);
-        let column_spacing = self.column_spacing;
+        let column_spacing = self.styles.column_spacing;
         widths.push(self.metric_width);
         (0..ncols).for_each(|_| widths.push(col_width));
         let table_width: u16 =

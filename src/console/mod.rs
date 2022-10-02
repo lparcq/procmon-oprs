@@ -28,4 +28,8 @@ pub enum BuiltinTheme {
     Light,
     #[strum(serialize = "dark")]
     Dark,
+    #[strum(serialize = "light16")]
+    Light16,
+    #[strum(serialize = "dark16")]
+    Dark16,
 }

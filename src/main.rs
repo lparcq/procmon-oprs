@@ -76,9 +76,9 @@ struct Opt {
         option,
         short = 'T',
         from_str_fn(BuiltinTheme::from_str),
-        description = "color theme (light, dark)"
+        description = "display theme (light, dark, light16, dark16)"
     )]
-    color_theme: Option<BuiltinTheme>,
+    theme: Option<BuiltinTheme>,
 
     #[argh(option, short = 'c', description = "number of loops")]
     count: Option<u64>,
@@ -251,7 +251,7 @@ fn start(opt: Opt) -> anyhow::Result<()> {
     override_parameter!(settings.display.every, opt.every);
     override_parameter!(settings.display.format, opt.format);
     override_parameter!(settings.display.count, opt.count, count, Some(count));
-    override_parameter!(settings.display.theme, opt.color_theme, theme, Some(theme));
+    override_parameter!(settings.display.theme, opt.theme, theme, Some(theme));
     override_parameter!(settings.export.kind, opt.export_type);
     override_parameter!(settings.export.dir, opt.export_dir, dir, PathBuf::from(dir));
     override_parameter!(
