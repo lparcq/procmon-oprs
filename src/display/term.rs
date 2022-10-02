@@ -39,6 +39,27 @@ use crate::{
     format::human_duration,
 };
 
+/// Space between two columns
+const COLUMN_SPACING: u16 = 1;
+
+/// Theme styles
+struct Styles {
+    even_row: Style,
+    odd_row: Style,
+}
+
+impl Styles {
+    fn new(theme: Option<BuiltinTheme>) -> Self {
+        let even_row = Style::default();
+        let odd_row = match theme {
+            None => Style::default(),
+            Some(BuiltinTheme::Dark) => Style::default().bg(Color::Rgb(40, 40, 40)),
+            Some(BuiltinTheme::Light) => Style::default().bg(Color::Rgb(215, 215, 215)),
+        };
+        Styles { even_row, odd_row }
+    }
+}
+
 /// Action
 pub enum Action {
     None,
@@ -179,7 +200,7 @@ pub struct TerminalDevice {
     overflow: (bool, bool),
     metric_names: Vec<String>,
     metric_width: u16,
-    theme: Option<BuiltinTheme>,
+    styles: Styles,
     column_spacing: u16,
 }
 
@@ -197,8 +218,8 @@ impl TerminalDevice {
             overflow: (false, false),
             metric_names: Vec::new(),
             metric_width: 0,
-            theme,
-            column_spacing: 2,
+            styles: Styles::new(theme),
+            column_spacing: COLUMN_SPACING,
         })
     }
 
@@ -265,16 +286,13 @@ impl TerminalDevice {
         let first_col_width = self.metric_width as usize;
         let mut new_voverflow = false;
         let mut new_hoverflow = false;
-        let theme = self.theme;
+        let style_even_row = self.styles.even_row;
+        let style_odd_row = self.styles.odd_row;
         let rows = rows.drain(..).enumerate().map(|(i, r)| {
             let style = if i % 2 != 0 {
-                Style::default()
+                style_even_row
             } else {
-                match theme {
-                    None => Style::default(),
-                    Some(BuiltinTheme::Dark) => Style::default().bg(Color::Rgb(40, 40, 40)),
-                    Some(BuiltinTheme::Light) => Style::default().bg(Color::Rgb(215, 215, 215)),
-                }
+                style_odd_row
             };
             Row::new::<Vec<Cell>>(r).style(style)
         });
