@@ -15,6 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use chrono::Local;
+use std::cmp::Ordering;
 use std::io;
 use std::time::Duration;
 use termion::{
@@ -43,32 +44,56 @@ use crate::{
 struct Styles {
     even_row: Style,
     odd_row: Style,
+    increase: Style,
+    decrease: Style,
     column_spacing: u16,
 }
 
 impl Styles {
     fn new(theme: Option<BuiltinTheme>) -> Self {
         let default_style = Style::default();
-        let (even_row, odd_row, column_spacing) = match theme {
+        let (even_row, odd_row, increase, decrease, column_spacing) = match theme {
             Some(BuiltinTheme::Dark) => (
                 default_style,
                 Style::default().bg(Color::Rgb(40, 40, 40)),
-                1,
+                Style::default().fg(Color::Rgb(235, 45, 83)),
+                Style::default().fg(Color::Rgb(166, 255, 77)),
+                2,
             ),
             Some(BuiltinTheme::Light) => (
                 default_style,
                 Style::default().bg(Color::Rgb(215, 215, 215)),
-                1,
+                Style::default().fg(Color::Rgb(220, 20, 60)),
+                Style::default().fg(Color::Rgb(102, 204, 00)),
+                2,
             ),
-            Some(BuiltinTheme::Dark16) => (default_style, Style::default().fg(Color::LightBlue), 2),
-            Some(BuiltinTheme::Light16) => {
-                (default_style, Style::default().bg(Color::LightBlue), 2)
-            }
-            None => (default_style, default_style, 2),
+            Some(BuiltinTheme::Dark16) => (
+                default_style,
+                Style::default().fg(Color::LightBlue),
+                Style::default().fg(Color::LightMagenta),
+                Style::default().fg(Color::LightGreen),
+                2,
+            ),
+            Some(BuiltinTheme::Light16) => (
+                default_style,
+                Style::default().bg(Color::Blue),
+                Style::default().fg(Color::Red),
+                Style::default().fg(Color::Green),
+                2,
+            ),
+            None => (
+                default_style,
+                default_style,
+                Style::default().add_modifier(Modifier::BOLD),
+                Style::default().add_modifier(Modifier::BOLD),
+                2,
+            ),
         };
         Styles {
             even_row,
             odd_row,
+            increase,
+            decrease,
             column_spacing,
         }
     }
@@ -143,7 +168,11 @@ fn menu_paragraph(entries: &[(Key, &'static str)]) -> Paragraph<'static> {
 }
 
 /// Change a list of target samples (columns) into rows and flatten the samples.
-fn pivot_flatten<'a>(collector: &'a Collector, nrows: usize, ncols: usize) -> Vec<Vec<&'a str>> {
+fn pivot_flatten<'a>(
+    collector: &'a Collector,
+    nrows: usize,
+    ncols: usize,
+) -> Vec<Vec<(&'a str, Ordering)>> {
     let mut values = Vec::with_capacity(nrows);
     for _ in 0..nrows {
         values.push(Vec::with_capacity(ncols));
@@ -151,10 +180,13 @@ fn pivot_flatten<'a>(collector: &'a Collector, nrows: usize, ncols: usize) -> Ve
     collector.lines().for_each(|target| {
         let mut row_index = 0;
         target.samples().for_each(|sample| {
-            sample.strings().for_each(|value| {
-                values[row_index].push(value.as_str());
-                row_index += 1;
-            });
+            sample
+                .strings()
+                .zip(sample.trends())
+                .for_each(|(value, trend)| {
+                    values[row_index].push((value.as_str(), *trend));
+                    row_index += 1;
+                });
         });
     });
     values
@@ -454,7 +486,10 @@ impl DisplayDevice for TerminalDevice {
         let mut cw = MaxLength::new();
 
         let values = pivot_flatten(collector, nrows, ncols);
-        values.iter().skip(hoffset).for_each(|row| cw.iterate(row));
+        values
+            .iter()
+            .skip(hoffset)
+            .for_each(|row| cw.iterate(row.iter().map(|(val, _)| val)));
         collector.lines().skip(hoffset).for_each(|target| {
             cw.check(target.name());
         });
@@ -471,17 +506,20 @@ impl DisplayDevice for TerminalDevice {
             title.extend(Text::from(cw.center(&subtitle)));
             headers.push(Cell::from(title));
         });
+        let decrease_style = self.styles.decrease;
+        let increase_style = self.styles.increase;
         values
             .iter()
             .skip(voffset)
             .enumerate()
-            .for_each(|(row_index, samples)| {
-                rows[row_index].extend(
-                    samples
-                        .iter()
-                        .skip(hoffset)
-                        .map(|sample| Cell::from(cw.right(*sample))),
-                );
+            .for_each(|(row_index, row_values)| {
+                rows[row_index].extend(row_values.iter().skip(hoffset).map(|(str_val, trend)| {
+                    Cell::from(cw.right(*str_val)).style(match trend {
+                        Ordering::Less => decrease_style,
+                        Ordering::Equal => Style::default(),
+                        Ordering::Greater => increase_style,
+                    })
+                }));
             });
         self.draw(
             headers,
@@ -541,6 +579,10 @@ mod test {
         let collector1 = Collector::from(statuses1.as_slice());
         let values1 = pivot_flatten(&collector1, 3, 2);
         assert_eq!(expected_values1.len(), values1.len());
+        let values1 = values1
+            .iter()
+            .map(|row| row.iter().map(|(val, _trend)| *val).collect::<Vec<&str>>())
+            .collect::<Vec<Vec<&str>>>();
         assert_eq!(expected_values1, values1);
     }
 }

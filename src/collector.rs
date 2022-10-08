@@ -16,6 +16,7 @@
 
 use itertools::izip;
 use libc::pid_t;
+use std::cmp::Ordering;
 use std::collections::{vec_deque, VecDeque};
 use std::slice::Iter;
 use strum::IntoEnumIterator;
@@ -30,7 +31,7 @@ use crate::{
 ///
 /// Some metrics always change or almost always change. It's better not to track them.
 fn track_change(id: MetricId) -> bool {
-    matches!(
+    !matches!(
         id,
         MetricId::TimeElapsed | MetricId::TimeCpu | MetricId::TimeSystem | MetricId::TimeUser
     )
@@ -47,7 +48,7 @@ fn track_change(id: MetricId) -> bool {
 pub struct Sample {
     values: Vec<u64>,
     strings: Vec<String>,
-    changed: bool,
+    trends: Vec<Ordering>,
 }
 
 impl Sample {
@@ -55,7 +56,7 @@ impl Sample {
         Sample {
             values: Vec::new(),
             strings: Vec::new(),
-            changed: false,
+            trends: Vec::new(),
         }
     }
 
@@ -73,9 +74,9 @@ impl Sample {
         self.strings.iter()
     }
 
-    /// True if value has changed
-    pub fn _changed(&self) -> bool {
-        self.changed
+    /// Return the trend of formatted strings
+    pub fn trends(&self) -> Iter<Ordering> {
+        self.trends.iter()
     }
 
     fn push_raw(&mut self, value: u64) {
@@ -89,15 +90,16 @@ impl Sample {
             Aggregation::Ratio => crate::format::ratio(value),
             _ => (metric.format)(value),
         });
+        self.trends.push(Ordering::Equal);
     }
 
     fn update_raw(&mut self, value: u64, track_change: bool) {
-        let changed = self.values[0] != value;
-        if changed {
+        let trend = self.values[0].cmp(&value);
+        if !matches!(trend, Ordering::Equal) {
             self.values[0] = value;
         }
         if track_change {
-            self.changed = changed;
+            self.trends[0] = trend;
         }
     }
 
@@ -110,24 +112,21 @@ impl Sample {
         track_change: bool,
     ) {
         if let Some(last_value) = self.values.get_mut(index) {
-            self.changed = false;
-            match ag {
-                Aggregation::None if value == *last_value => (),
-                Aggregation::Min if value >= *last_value => (),
-                Aggregation::Max if value <= *last_value => (),
-                _ => {
-                    if let Aggregation::None = ag {
-                        if track_change {
-                            self.changed = true;
-                        }
-                    }
-                    *last_value = value;
-                    let offset = self.values.len() - self.strings.len();
-                    self.strings[index - offset] = match ag {
-                        Aggregation::Ratio => crate::format::ratio(value),
-                        _ => (metric.format)(value),
-                    };
-                }
+            let value = match ag {
+                Aggregation::Min if value < *last_value => value,
+                Aggregation::Max if value > *last_value => value,
+                _ => value,
+            };
+            let trend = (*last_value).cmp(&value);
+            *last_value = value;
+            let offset = self.values.len() - self.strings.len();
+            let index = index - offset;
+            self.strings[index] = match ag {
+                Aggregation::Ratio => crate::format::ratio(value),
+                _ => (metric.format)(value),
+            };
+            if track_change {
+                self.trends[index] = trend;
             }
         }
     }
@@ -139,7 +138,7 @@ impl From<&[&str]> for Sample {
         Sample {
             values: Vec::new(),
             strings: strings.iter().map(|s| s.to_string()).collect(),
-            changed: false,
+            trends: vec![Ordering::Equal; strings.len()],
         }
     }
 }
