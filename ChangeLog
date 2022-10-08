@@ -1,3 +1,7 @@
+2022-10-08  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
+
+	* Version 0.17.0: Highlight value changes with colors.
+
 2022-10-02  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
 
 	* Version 0.16.0: Use tui-rs for terminal mode.
