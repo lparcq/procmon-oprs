@@ -15,9 +15,11 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use chrono::Local;
+use itertools::izip;
 use std::cmp::Ordering;
 use std::io;
 use std::time::Duration;
+use strum::IntoEnumIterator;
 use termion::{
     raw::{IntoRawMode, RawTerminal},
     screen::AlternateScreen,
@@ -34,7 +36,7 @@ use tui::{
 use crate::{
     agg::Aggregation,
     clock::Timer,
-    collector::Collector,
+    collector::{Collector, LimitKind},
     console::{is_tty, BuiltinTheme, Event, EventChannel, Key},
     display::{DisplayDevice, PauseStatus},
     format::human_duration,
@@ -99,25 +101,33 @@ impl Styles {
     }
 }
 
+/// Standard keys
+const KEY_QUIT: Key = Key::Esc;
+const KEY_FASTER: Key = Key::PageUp;
+const KEY_SLOWER: Key = Key::PageDown;
+const KEY_LIMITS: Key = Key::Char('l');
+
 /// Action
 pub enum Action {
     None,
-    Quit,
-    MultiplyTimeout(u16),
     DivideTimeout(u16),
-    ScrollRight,
-    ScrollUp,
+    MultiplyTimeout(u16),
+    ToggleLimits,
     ScrollDown,
     ScrollLeft,
+    ScrollRight,
+    ScrollUp,
+    Quit,
 }
 
 impl From<Event> for Action {
     fn from(evt: Event) -> Self {
         match evt {
-            Event::Key(Key::Esc) => Action::Quit,
+            Event::Key(KEY_QUIT) => Action::Quit,
             Event::Key(Key::Ctrl('c')) => Action::Quit,
-            Event::Key(Key::PageUp) => Action::DivideTimeout(2),
-            Event::Key(Key::PageDown) => Action::MultiplyTimeout(2),
+            Event::Key(KEY_FASTER) => Action::DivideTimeout(2),
+            Event::Key(KEY_SLOWER) => Action::MultiplyTimeout(2),
+            Event::Key(KEY_LIMITS) => Action::ToggleLimits,
             Event::Key(Key::Right) => Action::ScrollRight,
             Event::Key(Key::Up) => Action::ScrollUp,
             Event::Key(Key::Down) => Action::ScrollDown,
@@ -136,8 +146,8 @@ fn key_name(key: Key) -> String {
         Key::Down => "↓".to_string(),
         Key::Home => "⇱".to_string(),
         Key::End => "⇲".to_string(),
-        Key::PageUp => "PgUp".to_string(),
-        Key::PageDown => "PgDn".to_string(),
+        KEY_FASTER => "PgUp".to_string(),
+        KEY_SLOWER => "PgDn".to_string(),
         Key::BackTab => "⇤".to_string(),
         Key::Delete => "⌧".to_string(),
         Key::Insert => "Ins".to_string(),
@@ -147,7 +157,7 @@ fn key_name(key: Key) -> String {
         Key::Alt(ch) => format!("M-{}", ch),
         Key::Ctrl(ch) => format!("C-{}", ch),
         Key::Null => "\\0".to_string(),
-        Key::Esc => "Esc".to_string(),
+        KEY_QUIT => "Esc".to_string(),
         _ => "?".to_string(),
     }
 }
@@ -167,11 +177,12 @@ fn menu_paragraph(entries: &[(Key, &'static str)]) -> Paragraph<'static> {
     tui::widgets::Paragraph::new(Spans::from(spans)).alignment(Alignment::Left)
 }
 
-/// Change a list of target samples (columns) into rows and flatten the samples.
 fn pivot_flatten<'a>(
     collector: &'a Collector,
     nrows: usize,
     ncols: usize,
+    display_limits: LimitKind,
+    rows_with_limit: &[bool],
 ) -> Vec<Vec<(&'a str, Ordering)>> {
     let mut values = Vec::with_capacity(nrows);
     for _ in 0..nrows {
@@ -180,13 +191,16 @@ fn pivot_flatten<'a>(
     collector.lines().for_each(|target| {
         let mut row_index = 0;
         target.samples().for_each(|sample| {
-            sample
-                .strings()
-                .zip(sample.trends())
-                .for_each(|(value, trend)| {
-                    values[row_index].push((value.as_str(), *trend));
+            izip!(sample.strings(), sample.trends()).for_each(|(value, trend)| {
+                let with_limit = rows_with_limit[row_index];
+                values[row_index].push((value.as_str(), *trend));
+                row_index += 1;
+                if with_limit {
+                    let limit = sample.limit(display_limits.clone()).unwrap_or("");
+                    values[row_index].push((limit, Ordering::Equal));
                     row_index += 1;
-                });
+                }
+            });
         });
     });
     values
@@ -246,6 +260,7 @@ pub struct TerminalDevice {
     overflow: (bool, bool),
     metric_names: Vec<String>,
     metric_width: u16,
+    display_limits: LimitKind,
     styles: Styles,
 }
 
@@ -263,6 +278,7 @@ impl TerminalDevice {
             overflow: (false, false),
             metric_names: Vec::new(),
             metric_width: 0,
+            display_limits: LimitKind::None,
             styles: Styles::new(theme),
         })
     }
@@ -301,6 +317,23 @@ impl TerminalDevice {
             width = first_col_width
         )));
         (nav, voverflow, hoverflow)
+    }
+
+    /// Change a list of target samples (columns) into rows and flatten the samples.
+    fn pivot_flatten<'a>(
+        &self,
+        collector: &'a Collector,
+        nrows: usize,
+        ncols: usize,
+        rows_with_limit: &[bool],
+    ) -> Vec<Vec<(&'a str, Ordering)>> {
+        pivot_flatten(
+            collector,
+            nrows,
+            ncols,
+            self.display_limits.clone(),
+            rows_with_limit,
+        )
     }
 
     /// Table headers and body
@@ -367,9 +400,10 @@ impl TerminalDevice {
             frame.render_widget(table, rects[0]);
 
             let menu_entries = vec![
-                (Key::Esc, "Quit"),
-                (Key::PageUp, "Faster"),
-                (Key::PageDown, "Slower"),
+                (KEY_QUIT, "Quit"),
+                (KEY_FASTER, "Faster"),
+                (KEY_SLOWER, "Slower"),
+                (KEY_LIMITS, "Limits"),
             ];
             let menu = menu_paragraph(&menu_entries);
             frame.render_widget(menu, rects[1]);
@@ -401,6 +435,13 @@ impl TerminalDevice {
                         timer.set_delay(delay);
                         self.every = delay;
                     }
+                }
+            }
+            Action::ToggleLimits => {
+                self.display_limits = match self.display_limits {
+                    LimitKind::None => LimitKind::Soft,
+                    LimitKind::Soft => LimitKind::Hard,
+                    LimitKind::Hard => LimitKind::None,
                 }
             }
             Action::ScrollRight => {
@@ -468,7 +509,34 @@ impl DisplayDevice for TerminalDevice {
 
     fn render(&mut self, collector: &Collector, _targets_updated: bool) -> anyhow::Result<()> {
         let (hoffset, voffset) = self.table_offset;
-        let nrows = self.metric_names.len();
+        let nmetrics = self.metric_names.len();
+        let mut metric_names_with_limit = Vec::new();
+        let rows_with_limit = match self.display_limits {
+            LimitKind::None => {
+                metric_names_with_limit = vec![false; nmetrics];
+                vec![false; nmetrics]
+            }
+            _ => {
+                let mut rows_with_limit = Vec::new();
+                collector.metrics().for_each(|metric| {
+                    let has_limit = metric.has_limit();
+                    if has_limit {
+                        rows_with_limit.push(true);
+                    };
+                    metric_names_with_limit.push(has_limit);
+                    for variant in Aggregation::iter() {
+                        if metric.aggregations.has(variant) {
+                            if !matches!(variant, Aggregation::None) {
+                                metric_names_with_limit.push(false);
+                            }
+                            rows_with_limit.push(false);
+                        }
+                    }
+                });
+                rows_with_limit
+            }
+        };
+        let nrows = rows_with_limit.len();
         let ncols = collector.len() + 1;
         let nvisible_rows = nrows - voffset;
         let nvisible_cols = ncols - hoffset;
@@ -477,15 +545,23 @@ impl DisplayDevice for TerminalDevice {
         headers.push(Cell::from(""));
 
         let mut rows: Vec<Vec<Cell>> = Vec::with_capacity(nvisible_rows);
-        self.metric_names.iter().skip(voffset).for_each(|name| {
-            let mut row = Vec::with_capacity(nvisible_cols);
-            row.push(Cell::from(name.to_string()));
-            rows.push(row);
-        });
+        let display_limits = self.display_limits.to_string();
+        izip!(self.metric_names.iter(), metric_names_with_limit.iter())
+            .skip(voffset)
+            .for_each(|(name, with_limit)| {
+                let mut row = Vec::with_capacity(nvisible_cols);
+                row.push(Cell::from(name.to_string()));
+                rows.push(row);
+                if *with_limit {
+                    let mut row = Vec::with_capacity(nvisible_cols);
+                    row.push(Cell::from(display_limits.to_string()));
+                    rows.push(row);
+                }
+            });
 
         let mut cw = MaxLength::new();
 
-        let values = pivot_flatten(collector, nrows, ncols);
+        let values = self.pivot_flatten(collector, nrows, ncols, &rows_with_limit);
         values
             .iter()
             .skip(hoffset)
@@ -558,13 +634,14 @@ impl DisplayDevice for TerminalDevice {
 #[cfg(test)]
 mod test {
 
-    use super::{pivot_flatten, Collector};
+    use super::{pivot_flatten, Collector, LimitKind};
 
     #[test]
     fn test_pivot_flatten() {
         let empty: &[Vec<Vec<&str>>] = &[];
         let collector0 = Collector::from(empty);
-        let values0 = pivot_flatten(&collector0, 0, 0);
+        let rows_with_limit = vec![false; 3];
+        let values0 = pivot_flatten(&collector0, 0, 0, LimitKind::None, &rows_with_limit);
         assert_eq!(0, values0.len());
 
         let statuses1 = vec![
@@ -577,7 +654,7 @@ mod test {
             vec!["val12", "val22"],
         ];
         let collector1 = Collector::from(statuses1.as_slice());
-        let values1 = pivot_flatten(&collector1, 3, 2);
+        let values1 = pivot_flatten(&collector1, 3, 2, LimitKind::None, &rows_with_limit);
         assert_eq!(expected_values1.len(), values1.len());
         let values1 = values1
             .iter()

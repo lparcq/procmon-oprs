@@ -15,12 +15,13 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use std::collections::HashSet;
+use std::fmt;
 use std::hash::Hash;
 use std::result;
 use strum_macros::{EnumIter, EnumMessage, EnumString, IntoStaticStr};
 
 use crate::{
-    agg::AggregationSet,
+    agg::{Aggregation, AggregationSet},
     format::{self, Formatter},
     parsers::parse_metric_spec,
 };
@@ -345,6 +346,12 @@ impl MetricId {
     }
 }
 
+impl fmt::Display for MetricId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
 /// Metric with associated aggregations and a formatter function
 pub struct FormattedMetric {
     pub id: MetricId,
@@ -359,6 +366,21 @@ impl FormattedMetric {
             aggregations,
             format,
         }
+    }
+
+    /// Return true if it exists a limit associated to the metric for a given process
+    ///
+    /// A limit makes sense only for the raw value, not aggregations.
+    pub fn has_limit(&self) -> bool {
+        matches!(
+            self.id,
+            MetricId::FdAll
+                | MetricId::MapStackSize
+                | MetricId::MemRss
+                | MetricId::MemVm
+                | MetricId::ThreadCount
+                | MetricId::TimeCpu
+        ) && self.aggregations.has(Aggregation::None)
     }
 }
 

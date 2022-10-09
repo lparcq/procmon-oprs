@@ -23,6 +23,7 @@ use argh::FromArgs;
 use log::{error, warn};
 use simplelog::{self, SimpleLogger, TermLogger, WriteLogger};
 use std::fs::{self, File};
+use std::panic;
 use std::path::{Path, PathBuf};
 
 mod agg;
@@ -304,6 +305,20 @@ fn start(opt: Opt) -> anyhow::Result<()> {
     } else {
         let mut app = Application::new(&settings, &opt.metric)?;
         configure_logging(&settings.logging);
+
+        panic::set_hook(Box::new(|panic_info| {
+            if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+                error!("panic occurred: {s:?}");
+            } else if let Some(location) = panic_info.location() {
+                error!(
+                    "panic occurred in file '{}' at line {}",
+                    location.file(),
+                    location.line(),
+                );
+            } else {
+                error!("panic occurred but can't get location information...");
+            }
+        }));
         let system_conf = info::SystemConf::new()?;
         if let Err(err) = app.run(&target_ids, &system_conf) {
             error!("{}", err);

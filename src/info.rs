@@ -502,7 +502,12 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
                     MetricId::MemVm => Some(limits.max_address_space),
                     MetricId::ThreadCount => Some(limits.max_processes),
                     MetricId::TimeCpu => Some(map_limit(limits.max_cpu_time, |value| value * 1000)),
-                    _ => None,
+                    _ => {
+                        if cfg!(debug_assertions) && metric.has_limit() {
+                            panic!("internal error: metric {} should have a limit", metric.id);
+                        }
+                        None
+                    }
                 })
                 .collect(),
             Err(_) => vec![None; metrics.len()],

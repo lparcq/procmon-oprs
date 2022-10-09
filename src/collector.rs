@@ -20,9 +20,11 @@ use std::cmp::Ordering;
 use std::collections::{vec_deque, VecDeque};
 use std::slice::Iter;
 use strum::IntoEnumIterator;
+use strum_macros::Display;
 
 use crate::{
     agg::Aggregation,
+    format::Formatter,
     info::{Limit, LimitValue, SystemInfo},
     metrics::{FormattedMetric, MetricId},
 };
@@ -37,6 +39,44 @@ fn track_change(id: MetricId) -> bool {
     )
 }
 
+const UNLIMITED: &str = "∞";
+
+#[derive(Clone, Display, Debug)]
+pub enum LimitKind {
+    #[strum(serialize = "no limit")]
+    None,
+    #[strum(serialize = "soft limit")]
+    Soft,
+    #[strum(serialize = "hard limit")]
+    Hard,
+}
+
+/// Limit formatted like the corresponding metric
+struct FormattedLimit {
+    pub _limit: Limit,
+    pub soft: String,
+    pub hard: String,
+}
+
+impl FormattedLimit {
+    fn new(metric: &FormattedMetric, limit: Limit) -> Self {
+        let soft = FormattedLimit::limit_to_string(limit.soft_limit, metric.format);
+        let hard = FormattedLimit::limit_to_string(limit.hard_limit, metric.format);
+        Self {
+            _limit: limit,
+            soft,
+            hard,
+        }
+    }
+
+    fn limit_to_string(value: LimitValue, fmt: Formatter) -> String {
+        match value {
+            LimitValue::Unlimited => UNLIMITED.to_string(),
+            LimitValue::Value(value) => fmt(value),
+        }
+    }
+}
+
 /// The raw sample value and the derived aggregations.
 ///
 /// The first value in _values_ is the raw value from the system. The following
@@ -49,11 +89,11 @@ pub struct Sample {
     values: Vec<u64>,
     strings: Vec<String>,
     trends: Vec<Ordering>,
-    limit: Option<Limit>,
+    limit: Option<FormattedLimit>,
 }
 
 impl Sample {
-    fn new(limit: Option<Limit>) -> Sample {
+    fn new(limit: Option<FormattedLimit>) -> Sample {
         Sample {
             values: Vec::new(),
             strings: Vec::new(),
@@ -82,8 +122,26 @@ impl Sample {
     }
 
     /// Return the limit for this metric
-    pub fn limit<'a>(&'a self) -> Option<&'a Limit> {
-        self.limit.as_ref()
+    pub fn _limits(&'_ self) -> Option<&'_ Limit> {
+        self.limit.as_ref().map(|fl| &fl._limit)
+    }
+
+    /// Return the soft limit for this metric as string
+    pub fn soft_limit(&'_ self) -> Option<&'_ str> {
+        self.limit.as_ref().map(|fl| fl.soft.as_str())
+    }
+
+    /// Return the hard limit for this metric as string
+    pub fn hard_limit(&'_ self) -> Option<&'_ str> {
+        self.limit.as_ref().map(|fl| fl.hard.as_str())
+    }
+
+    pub fn limit(&'_ self, kind: LimitKind) -> Option<&'_ str> {
+        match kind {
+            LimitKind::None => None,
+            LimitKind::Soft => self.soft_limit(),
+            LimitKind::Hard => self.hard_limit(),
+        }
     }
 
     fn push_raw(&mut self, value: u64) {
@@ -256,7 +314,8 @@ impl Updater {
             .iter()
             .zip(values.iter().zip(limits.iter()))
             .map(|(metric, (value_ref, limit_ref))| {
-                let mut sample = Sample::new(*limit_ref);
+                let flimit = limit_ref.map(|limit| FormattedLimit::new(metric, limit));
+                let mut sample = Sample::new(flimit);
                 if !metric.aggregations.has(Aggregation::None) {
                     sample.push_raw(*value_ref);
                 }
