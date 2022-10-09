@@ -23,7 +23,7 @@ use strum::IntoEnumIterator;
 
 use crate::{
     agg::Aggregation,
-    info::SystemInfo,
+    info::{Limit, LimitValue, SystemInfo},
     metrics::{FormattedMetric, MetricId},
 };
 
@@ -49,14 +49,16 @@ pub struct Sample {
     values: Vec<u64>,
     strings: Vec<String>,
     trends: Vec<Ordering>,
+    limit: Option<Limit>,
 }
 
 impl Sample {
-    fn new() -> Sample {
+    fn new(limit: Option<Limit>) -> Sample {
         Sample {
             values: Vec::new(),
             strings: Vec::new(),
             trends: Vec::new(),
+            limit,
         }
     }
 
@@ -77,6 +79,11 @@ impl Sample {
     /// Return the trend of formatted strings
     pub fn trends(&self) -> Iter<Ordering> {
         self.trends.iter()
+    }
+
+    /// Return the limit for this metric
+    pub fn limit<'a>(&'a self) -> Option<&'a Limit> {
+        self.limit.as_ref()
     }
 
     fn push_raw(&mut self, value: u64) {
@@ -139,6 +146,7 @@ impl From<&[&str]> for Sample {
             values: Vec::new(),
             strings: strings.iter().map(|s| s.to_string()).collect(),
             trends: vec![Ordering::Equal; strings.len()],
+            limit: None,
         }
     }
 }
@@ -242,12 +250,13 @@ impl Updater {
         count: Option<usize>,
         metrics: &[FormattedMetric],
         values: &[u64],
+        limits: &[Option<Limit>],
     ) -> TargetStatus {
         let samples = metrics
             .iter()
-            .zip(values.iter())
-            .map(|(metric, value_ref)| {
-                let mut sample = Sample::new();
+            .zip(values.iter().zip(limits.iter()))
+            .map(|(metric, (value_ref, limit_ref))| {
+                let mut sample = Sample::new(*limit_ref);
                 if !metric.aggregations.has(Aggregation::None) {
                     sample.push_raw(*value_ref);
                 }
@@ -377,7 +386,14 @@ impl<'a> Collector<'a> {
     }
 
     /// Collect a target metrics
-    pub fn collect(&mut self, target_name: &str, pid: pid_t, count: Option<usize>, values: &[u64]) {
+    pub fn collect(
+        &mut self,
+        target_name: &str,
+        pid: pid_t,
+        count: Option<usize>,
+        values: &[u64],
+        limits: &[Option<Limit>],
+    ) {
         let line_pos = self.last_line_pos;
         while let Some(line) = self.lines.get_mut(line_pos) {
             if line.pid() == pid {
@@ -394,9 +410,9 @@ impl<'a> Collector<'a> {
                 break;
             }
         }
-        let line = self
-            .updater
-            .new_computed_values(target_name, pid, count, self.metrics, values);
+        let line =
+            self.updater
+                .new_computed_values(target_name, pid, count, self.metrics, values, limits);
         if line_pos >= self.lines.len() {
             self.lines.push_back(line);
         } else {

@@ -23,7 +23,7 @@ use std::result;
 
 use crate::{
     collector::Collector,
-    info::{ProcessInfo, SystemConf, SystemInfo},
+    info::{Limit, ProcessInfo, SystemConf, SystemInfo},
     metrics::MetricDataType,
     proc_dir::{PidFinder, ProcessDir},
     utils::*,
@@ -55,11 +55,16 @@ trait Target {
 /// The system itself
 struct SystemTarget<'a> {
     system_conf: &'a SystemConf,
+    limits: Vec<Option<Limit>>,
 }
 
 impl<'a> SystemTarget<'a> {
     fn new(system_conf: &'a SystemConf) -> anyhow::Result<SystemTarget<'a>> {
-        Ok(SystemTarget { system_conf })
+        let limits = Vec::new();
+        Ok(SystemTarget {
+            system_conf,
+            limits,
+        })
     }
 }
 
@@ -68,7 +73,9 @@ impl<'a> Target for SystemTarget<'a> {
         "system"
     }
 
-    fn initialize(&mut self, _: &Collector) {}
+    fn initialize(&mut self, collector: &Collector) {
+        self.limits = vec![None; collector.metrics().len()];
+    }
 
     fn collect(&self, collector: &mut Collector) {
         let mut system = SystemInfo::new(self.system_conf);
@@ -78,6 +85,7 @@ impl<'a> Target for SystemTarget<'a> {
             0,
             None,
             &system.extract_metrics(collector.metrics()),
+            &self.limits,
         );
     }
 }
@@ -149,6 +157,7 @@ impl<'a> StaticTarget<'a> {
                 process.pid(),
                 None,
                 &proc_info.extract_metrics(collector.metrics()),
+                &proc_info.extract_limits(collector.metrics()),
             )
         }
     }
@@ -393,6 +402,7 @@ struct MergedTargets<'a> {
     group_id: pid_t,
     targets: TargetSet<'a>,
     cache: RefCell<SampleCache>,
+    limits: Vec<Option<Limit>>,
 }
 
 impl<'a> MergedTargets<'a> {
@@ -402,6 +412,7 @@ impl<'a> MergedTargets<'a> {
             group_id,
             targets: TargetSet::new(system_conf),
             cache: RefCell::new(SampleCache::new()),
+            limits: Vec::new(),
         }
     }
 }
@@ -417,6 +428,7 @@ impl<'a> Target for MergedTargets<'a> {
             .map(|metric| std::matches!(metric.id.data_type(), MetricDataType::Counter))
             .collect::<Vec<bool>>();
         self.cache.borrow_mut().set_cached(&are_counters);
+        self.limits = vec![None; collector.metrics().len()];
     }
 
     fn collect(&self, collector: &mut Collector) {
@@ -449,6 +461,7 @@ impl<'a> Target for MergedTargets<'a> {
             self.group_id,
             Some(self.targets.len()),
             &merged_samples,
+            &self.limits,
         )
     }
 }
