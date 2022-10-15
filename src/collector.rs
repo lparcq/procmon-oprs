@@ -159,7 +159,7 @@ impl Sample {
     }
 
     fn update_raw(&mut self, value: u64, track_change: bool) {
-        let trend = self.values[0].cmp(&value);
+        let trend = value.cmp(&self.values[0]);
         if !matches!(trend, Ordering::Equal) {
             self.values[0] = value;
         }
@@ -182,7 +182,7 @@ impl Sample {
                 Aggregation::Max if value > *last_value => value,
                 _ => value,
             };
-            let trend = (*last_value).cmp(&value);
+            let trend = value.cmp(last_value);
             *last_value = value;
             let offset = self.values.len() - self.strings.len();
             let index = index - offset;

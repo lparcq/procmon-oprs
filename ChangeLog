@@ -1,3 +1,9 @@
+2022-10-15  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
+
+	* Version 0.18.0: Add format TSV.
+	* Fix CSV export.
+	* Fix color of increased or decreased values.
+
 2022-10-08  Laurent Pelecq  <lpelecq+oprs@circoise.eu>
 
 	* Version 0.17.0: Highlight value changes with colors.
