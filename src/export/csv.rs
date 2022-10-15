@@ -15,6 +15,8 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use libc::pid_t;
+use memchr::memchr;
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::fs::{self, File};
@@ -32,8 +34,72 @@ pub enum Error {
     MissingCount,
 }
 
+trait ToStr {
+    fn to_str(&self) -> Cow<String>;
+}
+
+impl ToStr for &String {
+    fn to_str(&self) -> Cow<String> {
+        Cow::Borrowed(self)
+    }
+}
+
+impl ToStr for &u64 {
+    fn to_str(&self) -> Cow<String> {
+        Cow::Owned(format!("{}", self))
+    }
+}
+
+/// Print a line of CSV
+struct CsvLineOutput<'a> {
+    out: &'a mut dyn Write,
+    separator: char,
+}
+
+impl<'a> CsvLineOutput<'a> {
+    fn new(out: &'a mut dyn Write, separator: char) -> Self {
+        Self { out, separator }
+    }
+
+    /// Quote value if required. Assume there is no quote in the value.
+    fn write_value(&mut self, value: &str) -> io::Result<()> {
+        match memchr(self.separator as u8, value.as_bytes()) {
+            None => write!(self.out, "{}", value),
+            _ => write!(self.out, "\"{}\"", value),
+        }
+    }
+
+    /// Write the end of CSV line
+    fn write_line_rest<I, D: ToStr>(&mut self, row: I) -> io::Result<()>
+    where
+        I: IntoIterator<Item = D>,
+        D: Display,
+    {
+        for value in row.into_iter() {
+            write!(self.out, "{}", self.separator)?;
+            self.write_value(value.to_str().as_str())?;
+        }
+        writeln!(self.out)?;
+        Ok(())
+    }
+
+    /// Write a CSV line
+    fn write_line<I, D: ToStr>(&mut self, row: I) -> io::Result<()>
+    where
+        I: IntoIterator<Item = D>,
+        D: Display,
+    {
+        let mut iter = row.into_iter();
+        if let Some(first) = iter.next() {
+            self.write_value(first.to_str().as_str())?;
+            self.write_line_rest(iter)?;
+        }
+        Ok(())
+    }
+}
+
 pub struct CsvExporter {
-    separator: &'static str,
+    separator: char,
     dir: PathBuf,
     count: Option<usize>,
     size: Option<u64>,
@@ -49,40 +115,13 @@ impl CsvExporter {
             None
         };
         Ok(CsvExporter {
-            separator: ",",
+            separator: ',',
             dir: settings.dir.clone(),
             count,
             size: settings.size,
             files: HashMap::new(),
             header: Vec::new(),
         })
-    }
-
-    /// Write the end of CSV line
-    fn write_line_rest<I, D>(out: &mut dyn Write, row: I, separator: &str) -> io::Result<()>
-    where
-        I: IntoIterator<Item = D>,
-        D: Display,
-    {
-        for value in row.into_iter() {
-            write!(out, "{}{}", separator, value)?;
-        }
-        writeln!(out)?;
-        Ok(())
-    }
-
-    /// Write a CSV line
-    fn write_line<I, D>(out: &mut dyn Write, row: I, separator: &str) -> io::Result<()>
-    where
-        I: IntoIterator<Item = D>,
-        D: Display,
-    {
-        let mut iter = row.into_iter();
-        if let Some(first) = iter.next() {
-            write!(out, "{}", first)?;
-            CsvExporter::write_line_rest(out, iter, separator)?;
-        }
-        Ok(())
     }
 
     /// Create a file and write the header
@@ -92,7 +131,8 @@ impl CsvExporter {
             self.shift_file(&filename, 0)?;
         }
         let mut file = File::create(filename)?;
-        CsvExporter::write_line(&mut file, self.header.iter(), self.separator)?;
+        let mut lout = CsvLineOutput::new(&mut file, self.separator);
+        lout.write_line(self.header.iter())?;
         self.files.insert(pid, file);
         Ok(())
     }
@@ -173,7 +213,8 @@ impl Exporter for CsvExporter {
             if let Some(ref mut file) = self.files.get_mut(&pid) {
                 // Necessarily true
                 write!(file, "{:.3}", timestamp.as_secs_f64())?;
-                CsvExporter::write_line_rest(file, samples, self.separator)?;
+                let mut lout = CsvLineOutput::new(file, self.separator);
+                lout.write_line_rest(samples)?;
                 if let Some(size) = self.size {
                     let written = file.seek(io::SeekFrom::End(0))?;
                     if written >= size {
@@ -192,14 +233,26 @@ impl Exporter for CsvExporter {
 #[cfg(test)]
 mod test {
 
+    use std::borrow::Cow;
     use std::fmt::Display;
     use std::io::{self, BufRead, Seek};
 
-    use super::CsvExporter;
+    use super::{CsvLineOutput, ToStr};
 
-    fn write_csv_line<D: Display>(values: &[D]) -> io::Result<String> {
+    impl ToStr for &str {
+        fn to_str(&self) -> Cow<String> {
+            Cow::Owned(self.to_string())
+        }
+    }
+
+    fn write_csv_line<I, D: ToStr>(values: I) -> io::Result<String>
+    where
+        I: IntoIterator<Item = D>,
+        D: Display,
+    {
         let mut buf = io::Cursor::new(Vec::<u8>::new());
-        CsvExporter::write_line(&mut buf, values.iter(), ",")?;
+        let mut lout = CsvLineOutput::new(&mut buf, ',');
+        lout.write_line(values.into_iter())?;
         buf.seek(io::SeekFrom::Start(0))?;
         let mut line = String::new();
         buf.read_line(&mut line)?;
@@ -208,15 +261,25 @@ mod test {
 
     #[test]
     fn write_csv_line_of_string() -> io::Result<()> {
-        let line = write_csv_line(&["abc", "def"])?;
+        let values = ["abc", "def"];
+        let line = write_csv_line(values.iter().map(|v| *v))?;
         assert_eq!("abc,def\n", line);
         Ok(())
     }
 
     #[test]
     fn write_csv_line_of_integer() -> io::Result<()> {
-        let line = write_csv_line(&[123, 456])?;
+        let values = [123u64, 456u64];
+        let line = write_csv_line(values.iter())?;
         assert_eq!("123,456\n", line);
+        Ok(())
+    }
+
+    #[test]
+    fn write_quoted_csv() -> io::Result<()> {
+        let values = ["123,4", "567,5"];
+        let line = write_csv_line(values.iter().map(|v| *v))?;
+        assert_eq!("\"123,4\",\"567,5\"\n", line);
         Ok(())
     }
 }
