@@ -24,7 +24,11 @@ use std::io::{self, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::{agg::Aggregation, cfg::ExportSettings, collector::Collector};
+use crate::{
+    agg::Aggregation,
+    cfg::{ExportSettings, ExportType},
+    collector::Collector,
+};
 
 use super::Exporter;
 
@@ -100,6 +104,7 @@ impl<'a> CsvLineOutput<'a> {
 
 pub struct CsvExporter {
     separator: char,
+    extension: &'static str,
     dir: PathBuf,
     count: Option<usize>,
     size: Option<u64>,
@@ -109,13 +114,19 @@ pub struct CsvExporter {
 
 impl CsvExporter {
     pub fn new(settings: &ExportSettings) -> anyhow::Result<CsvExporter> {
+        let (separator, extension) = match settings.kind {
+            ExportType::Csv => (',', "csv"),
+            ExportType::Tsv => ('\t', "tsv"),
+            _ => panic!("internal error: kind should be csv or tsv"),
+        };
         let count = if settings.size.is_some() {
             Some(settings.count.ok_or(Error::MissingCount)?)
         } else {
             None
         };
         Ok(CsvExporter {
-            separator: ',',
+            separator,
+            extension,
             dir: settings.dir.clone(),
             count,
             size: settings.size,
@@ -126,7 +137,9 @@ impl CsvExporter {
 
     /// Create a file and write the header
     fn create_file(&mut self, pid: pid_t, name: &str) -> io::Result<()> {
-        let filename = self.dir.join(format!("{}_{}.csv", name, pid));
+        let filename = self
+            .dir
+            .join(format!("{}_{}.{}", name, pid, self.extension));
         if filename.exists() {
             self.shift_file(&filename, 0)?;
         }

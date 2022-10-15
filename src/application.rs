@@ -98,7 +98,9 @@ impl Application {
             MetricNamesParser::new(matches!(settings.display.format, MetricFormat::Human));
         let display_mode = resolve_display_mode(settings.display.mode)?;
         let exporter: Option<Box<dyn Exporter>> = match settings.export.kind {
-            ExportType::Csv => Some(Box::new(CsvExporter::new(&settings.export)?)),
+            ExportType::Csv | ExportType::Tsv => {
+                Some(Box::new(CsvExporter::new(&settings.export)?))
+            }
             ExportType::Rrd => Some(Box::new(RrdExporter::new(&settings.export, every)?)),
             ExportType::None => None,
         };

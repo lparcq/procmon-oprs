@@ -60,6 +60,8 @@ pub enum ExportType {
     None,
     #[strum(serialize = "csv")]
     Csv,
+    #[strum(serialize = "tsv")]
+    Tsv,
     #[strum(serialize = "rrd")]
     Rrd,
 }
