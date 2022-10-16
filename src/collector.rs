@@ -52,6 +52,7 @@ pub enum LimitKind {
 }
 
 /// Limit formatted like the corresponding metric
+#[derive(Debug)]
 struct FormattedLimit {
     pub _limit: Limit,
     pub soft: String,
@@ -253,6 +254,20 @@ impl TargetStatus {
 
     fn get_samples_mut(&mut self) -> &mut Vec<Sample> {
         &mut self.samples
+    }
+
+    #[cfg(debug_assertions)]
+    fn _to_debug_string(&self) -> String {
+        format!(
+            "{}: [{}]",
+            self.name(),
+            self.samples
+                .iter()
+                .flat_map(|s| s.strings())
+                .map(|s| s.as_str())
+                .collect::<Vec<&str>>()
+                .join(", ")
+        )
     }
 }
 

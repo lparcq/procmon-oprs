@@ -275,7 +275,7 @@ mod test {
     #[test]
     fn write_csv_line_of_string() -> io::Result<()> {
         let values = ["abc", "def"];
-        let line = write_csv_line(values.iter().map(|v| *v))?;
+        let line = write_csv_line(values.iter().copied())?;
         assert_eq!("abc,def\n", line);
         Ok(())
     }
@@ -291,7 +291,7 @@ mod test {
     #[test]
     fn write_quoted_csv() -> io::Result<()> {
         let values = ["123,4", "567,5"];
-        let line = write_csv_line(values.iter().map(|v| *v))?;
+        let line = write_csv_line(values.iter().copied())?;
         assert_eq!("\"123,4\",\"567,5\"\n", line);
         Ok(())
     }

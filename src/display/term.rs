@@ -105,7 +105,8 @@ impl Styles {
 const KEY_QUIT: Key = Key::Esc;
 const KEY_FASTER: Key = Key::PageUp;
 const KEY_SLOWER: Key = Key::PageDown;
-const KEY_LIMITS: Key = Key::Char('l');
+const KEY_LIMITS_UPPER: Key = Key::Char('L');
+const KEY_LIMITS_LOWER: Key = Key::Char('l');
 
 /// Action
 pub enum Action {
@@ -127,7 +128,7 @@ impl From<Event> for Action {
             Event::Key(Key::Ctrl('c')) => Action::Quit,
             Event::Key(KEY_FASTER) => Action::DivideTimeout(2),
             Event::Key(KEY_SLOWER) => Action::MultiplyTimeout(2),
-            Event::Key(KEY_LIMITS) => Action::ToggleLimits,
+            Event::Key(KEY_LIMITS_UPPER) | Event::Key(KEY_LIMITS_LOWER) => Action::ToggleLimits,
             Event::Key(Key::Right) => Action::ScrollRight,
             Event::Key(Key::Up) => Action::ScrollUp,
             Event::Key(Key::Down) => Action::ScrollDown,
@@ -403,7 +404,7 @@ impl TerminalDevice {
                 (KEY_QUIT, "Quit"),
                 (KEY_FASTER, "Faster"),
                 (KEY_SLOWER, "Slower"),
-                (KEY_LIMITS, "Limits"),
+                (KEY_LIMITS_UPPER, "Limits"),
             ];
             let menu = menu_paragraph(&menu_entries);
             frame.render_widget(menu, rects[1]);

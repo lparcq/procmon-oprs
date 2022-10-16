@@ -526,6 +526,9 @@ impl<'a> TargetContainer<'a> {
     }
 
     pub fn initialize(&mut self, collector: &Collector) {
+        if let Some(system) = &mut self.system {
+            system.initialize(collector);
+        }
         self.singles
             .iter_mut()
             .for_each(|target| target.initialize(collector));

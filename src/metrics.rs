@@ -353,6 +353,7 @@ impl fmt::Display for MetricId {
 }
 
 /// Metric with associated aggregations and a formatter function
+#[derive(Debug)]
 pub struct FormattedMetric {
     pub id: MetricId,
     pub aggregations: AggregationSet,
