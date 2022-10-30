@@ -22,7 +22,7 @@ use std::time::Duration;
 use strum::IntoEnumIterator;
 use termion::{
     raw::{IntoRawMode, RawTerminal},
-    screen::AlternateScreen,
+    screen::{AlternateScreen, IntoAlternateScreen},
 };
 use tui::{
     backend::TermionBackend,
@@ -267,7 +267,7 @@ pub struct TerminalDevice {
 
 impl TerminalDevice {
     pub fn new(every: Duration, theme: Option<BuiltinTheme>) -> anyhow::Result<TerminalDevice> {
-        let screen = AlternateScreen::from(io::stdout().into_raw_mode()?);
+        let screen = io::stdout().into_raw_mode()?.into_alternate_screen()?;
         let backend = TermionBackend::new(Box::new(screen));
         let terminal = Terminal::new(backend)?;
 

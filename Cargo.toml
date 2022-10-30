@@ -30,7 +30,7 @@ procfs = "0.14"
 simplelog = "0.12"
 strum = "0.24"
 strum_macros = "0.24"
-termion = "1.5"
+termion = "2"
 tui = { version = "0.19", default-features = false, features = ['termion'] }
 thiserror = "1.0"
 xdg = "2"
