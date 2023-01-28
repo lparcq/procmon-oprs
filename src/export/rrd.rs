@@ -116,7 +116,7 @@ impl RrdExporter {
 
     /// File name of a RRD.
     fn filename(pid: pid_t, name: &str) -> String {
-        format!("{}_{}.rrd", name, pid)
+        format!("{name}_{pid}.rrd")
     }
 
     /// Create process info.
@@ -204,7 +204,7 @@ impl Exporter for RrdExporter {
                 .ok_or(Error::PeriodTooLarge)?;
             for ds_name in &self.variables {
                 let title = ds_name.replace('_', " ");
-                let filename = format!("{}.png", ds_name);
+                let filename = format!("{ds_name}.png");
                 let defs = infos.iter().enumerate().map(|(index, exinfo)| {
                     let def = format!(
                         "DEF:v{}={}:{}:AVERAGE LINE1:v{}#{:0>6x}:\"{}\"",

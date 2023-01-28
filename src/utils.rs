@@ -83,11 +83,11 @@ mod tests {
     fn test_basename() {
         assert_eq!(
             "file.pid",
-            super::basename(&PathBuf::from("/a/file.pid"), false).unwrap()
+            super::basename(PathBuf::from("/a/file.pid"), false).unwrap()
         );
         assert_eq!(
             "file",
-            super::basename(&PathBuf::from("/a/file.pid"), true).unwrap()
+            super::basename(PathBuf::from("/a/file.pid"), true).unwrap()
         );
     }
 

@@ -88,9 +88,9 @@ impl SystemConf {
         let max_pid = read_pid_file(Path::new("/proc/sys/kernel/pid_max")).unwrap_or(MAX_LINUX_PID);
 
         Ok(SystemConf {
-            ticks_per_second: ticks_per_second as u64,
+            ticks_per_second,
             boot_time_seconds: kstat.btime,
-            page_size: page_size as u64,
+            page_size,
             max_pid,
         })
     }

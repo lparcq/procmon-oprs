@@ -127,9 +127,9 @@ impl Table {
                 } else {
                     middle_subtitle
                 };
-                print!("{}{}", separator, column_rule);
+                print!("{separator}{column_rule}");
             }
-            println!("{}", right);
+            println!("{right}");
         }
     }
 
@@ -162,7 +162,7 @@ impl Table {
             );
         }
         let vline = self.charset.get(TableChar::VerticalInner);
-        println!("{}", vline);
+        println!("{vline}");
         self.horizontal_rule(
             self.charset.get(TableChar::VerticalRight),
             self.charset.get(TableChar::VerticalHorizontal),
@@ -188,7 +188,7 @@ impl Table {
                 );
             }
         }
-        println!("{}", vline);
+        println!("{vline}");
     }
 
     fn print_footer(&self) {

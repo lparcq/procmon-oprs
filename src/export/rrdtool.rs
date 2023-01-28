@@ -43,7 +43,7 @@ mod process {
 
 #[cfg(test)]
 mod process {
-    use std::io::{self, Cursor, Result, Seek, Write};
+    use std::io::{Cursor, Result, Seek, Write};
     use std::path::Path;
 
     pub struct ChildStdin {}
@@ -74,8 +74,8 @@ mod process {
         P: AsRef<Path>,
     {
         let mut buf = Cursor::new(Vec::<u8>::new());
-        writeln!(buf, "{}", output)?;
-        buf.seek(io::SeekFrom::Start(0))?;
+        writeln!(buf, "{output}")?;
+        buf.rewind()?;
         Ok(Child {
             stdin: Some(ChildStdin {}),
             stdout: Some(buf),
@@ -216,7 +216,7 @@ impl RrdTool {
         for ds in ds.into_iter() {
             try_io!(write!(self.child_in, " {}", ds.as_ref()));
         }
-        try_io!(writeln!(self.child_in, " RRA:AVERAGE:0.5:1:{}", rows));
+        try_io!(writeln!(self.child_in, " RRA:AVERAGE:0.5:1:{rows}"));
         self.read_answer(None)
     }
 
@@ -321,7 +321,7 @@ mod test {
             Err(err) => {
                 assert_eq!(
                     "rrdtool: you must define at least one Round Robin Archive",
-                    format!("{}", err)
+                    format!("{err}")
                 );
                 assert!(lines_err.is_empty());
             }

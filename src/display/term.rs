@@ -152,11 +152,11 @@ fn key_name(key: Key) -> String {
         Key::BackTab => "⇤".to_string(),
         Key::Delete => "⌧".to_string(),
         Key::Insert => "Ins".to_string(),
-        Key::F(num) => format!("F{}", num),
+        Key::F(num) => format!("F{num}"),
         Key::Char('\t') => "⇥".to_string(),
-        Key::Char(ch) => format!("{}", ch),
-        Key::Alt(ch) => format!("M-{}", ch),
-        Key::Ctrl(ch) => format!("C-{}", ch),
+        Key::Char(ch) => format!("{ch}"),
+        Key::Alt(ch) => format!("M-{ch}"),
+        Key::Ctrl(ch) => format!("C-{ch}"),
         Key::Null => "\\0".to_string(),
         KEY_QUIT => "Esc".to_string(),
         _ => "?".to_string(),
@@ -172,7 +172,7 @@ fn menu_paragraph(entries: &[(Key, &'static str)]) -> Paragraph<'static> {
             key_name(*key),
             Style::default().add_modifier(Modifier::REVERSED),
         ));
-        spans.push(Span::raw(format!(" {}", action)));
+        spans.push(Span::raw(format!(" {action}")));
         sep = "  ";
     });
     tui::widgets::Paragraph::new(Spans::from(spans)).alignment(Alignment::Left)
@@ -292,7 +292,7 @@ impl TerminalDevice {
     fn title(&self) -> String {
         let time_string = format!("{}", Local::now().format("%X"));
         let delay = human_duration(self.every);
-        format!(" {} / {} ", time_string, delay)
+        format!(" {time_string} / {delay} ")
     }
 
     /// Navigation arrows
@@ -311,11 +311,10 @@ impl TerminalDevice {
         let left_arrow = if hoffset > 0 { "⬅" } else { " " };
         let hoverflow = table_width > inner_width;
         let right_arrow = if hoverflow { "➡" } else { " " };
-        let mut nav = Text::from(format!("{:^width$}", up_arrow, width = first_col_width));
+        let mut nav = Text::from(format!("{up_arrow:^first_col_width$}"));
         nav.extend(Text::from(format!(
-            "{:^width$}",
-            format!("{} {} {}", left_arrow, down_arrow, right_arrow),
-            width = first_col_width
+            "{:^first_col_width$}",
+            format!("{left_arrow} {down_arrow} {right_arrow}",)
         )));
         (nav, voverflow, hoverflow)
     }
@@ -576,7 +575,7 @@ impl DisplayDevice for TerminalDevice {
                 Style::default().add_modifier(Modifier::BOLD),
             );
             let subtitle = match target.count() {
-                Some(count) => format!("({})", count),
+                Some(count) => format!("({count})"),
                 None => format!("{}", target.pid()),
             };
             cw.check(&subtitle);
@@ -591,7 +590,7 @@ impl DisplayDevice for TerminalDevice {
             .enumerate()
             .for_each(|(row_index, row_values)| {
                 rows[row_index].extend(row_values.iter().skip(hoffset).map(|(str_val, trend)| {
-                    Cell::from(cw.right(*str_val)).style(match trend {
+                    Cell::from(cw.right(str_val)).style(match trend {
                         Ordering::Less => decrease_style,
                         Ordering::Equal => Style::default(),
                         Ordering::Greater => increase_style,

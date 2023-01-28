@@ -31,7 +31,7 @@ const TERA_F: f64 = GIGA_F * KILO_F;
 
 /// Value unchanged
 pub fn identity(value: u64) -> String {
-    format!("{}", value)
+    format!("{value}")
 }
 
 /// Value in Kibi
@@ -116,34 +116,34 @@ pub fn size(value: u64) -> String {
 pub fn seconds(millis: u64) -> String {
     let seconds = millis / 1000;
     let remaining_millis = millis - seconds * 1000;
-    format!("{}.{}", seconds, remaining_millis)
+    format!("{seconds}.{remaining_millis}")
 }
 
 /// Number of milliseconds formatted in human readable format (hms).
 pub fn human_milliseconds(millis: u64) -> String {
     if millis < 1000 {
-        format!("{}ms", millis)
+        format!("{millis}ms")
     } else {
         let seconds = millis / 1000;
         let remaining_millis = millis - seconds * 1000;
         if seconds < 60 {
             if remaining_millis > 0 {
-                format!("{}s {}ms", seconds, remaining_millis)
+                format!("{seconds}s {remaining_millis}ms")
             } else {
-                format!("{}s", seconds)
+                format!("{seconds}s")
             }
         } else {
             let minutes = seconds / 60;
             let remaining_seconds = seconds - minutes * 60;
             if minutes < 60 {
-                format!("{}m {}s", minutes, remaining_seconds)
+                format!("{minutes}m {remaining_seconds}s")
             } else {
                 let hours = minutes / 60;
                 let remaining_minutes = minutes - hours * 60;
                 if hours < 24 {
-                    format!("{}h {}m {}s", hours, remaining_minutes, remaining_seconds)
+                    format!("{hours}h {remaining_minutes}m {remaining_seconds}s")
                 } else {
-                    format!("{}h {}m", hours, remaining_minutes)
+                    format!("{hours}h {remaining_minutes}m")
                 }
             }
         }

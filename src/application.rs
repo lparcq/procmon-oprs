@@ -115,10 +115,10 @@ impl Application {
         })
     }
 
-    pub fn run<'a>(
+    pub fn run(
         &mut self,
         target_ids: &[TargetId],
-        system_conf: &'a SystemConf,
+        system_conf: &'_ SystemConf,
     ) -> anyhow::Result<()> {
         info!("starting");
 

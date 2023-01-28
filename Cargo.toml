@@ -22,7 +22,7 @@ console = "0"
 ctrlc = { version = "3.0", features = ["termination"] }
 itertools = "0.10"
 libc = "0.2"
-light-ini = "0.1"
+light-ini = "0.2"
 log = "0"
 memchr = "2"
 nom = "7"

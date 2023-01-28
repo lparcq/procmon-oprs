@@ -463,7 +463,7 @@ impl MetricNamesParser {
                     }
                     Ok(())
                 }
-                Err(_) => Err(Error::InvalidSyntax(format!("{}: invalid metric", name))),
+                Err(_) => Err(Error::InvalidSyntax(format!("{name}: invalid metric"))),
             })?;
         Ok(metrics)
     }

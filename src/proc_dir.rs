@@ -35,7 +35,7 @@ impl<'a> ProcessDir<'a> {
     }
 
     pub fn path(pid: pid_t) -> PathBuf {
-        PathBuf::from("/proc").join(format!("{}", pid))
+        PathBuf::from("/proc").join(format!("{pid}"))
     }
 
     /// Name from the process command line first argument
@@ -66,7 +66,7 @@ impl<'a> ProcessDir<'a> {
 
     /// Name identifying a process if only the pid is known
     pub fn process_name_from_pid(pid: pid_t) -> String {
-        format!("[{}]", pid)
+        format!("[{pid}]")
     }
 }
 

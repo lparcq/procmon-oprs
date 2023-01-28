@@ -306,7 +306,7 @@ impl Directories {
 
     /// Return the first config file in the path
     fn first_config_file(&self, name: &str) -> Option<PathBuf> {
-        let basename = format!("{}.ini", name);
+        let basename = format!("{name}.ini");
         self.xdg_dirs.find_config_file(basename)
     }
 
@@ -358,8 +358,8 @@ myself = yes
     #[test]
     fn parse_valid_ini() -> io::Result<()> {
         let mut buf = io::Cursor::new(Vec::<u8>::new());
-        write!(buf, "{}", VALID_INI)?;
-        buf.seek(io::SeekFrom::Start(0))?;
+        write!(buf, "{VALID_INI}")?;
+        buf.rewind()?;
         let mut settings = Settings::new();
         assert_eq!(DisplayMode::Any, settings.display.mode);
         assert_eq!(super::DEFAULT_DELAY, settings.display.every);

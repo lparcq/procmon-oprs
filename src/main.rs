@@ -323,7 +323,7 @@ fn start(opt: Opt) -> anyhow::Result<()> {
         if let Err(err) = app.run(&target_ids, &system_conf) {
             error!("{}", err);
             if settings.logging.file.is_some() {
-                eprintln!("{}", err);
+                eprintln!("{err}");
             }
         }
     }
@@ -335,7 +335,7 @@ fn main() {
     if opt.metric.is_empty() {
         application::list_metrics();
     } else if let Err(err) = start(opt) {
-        eprintln!("{}", err);
+        eprintln!("{err}");
         std::process::exit(1);
     }
 }

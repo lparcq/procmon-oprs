@@ -50,7 +50,7 @@ impl ToStr for &String {
 
 impl ToStr for &u64 {
     fn to_str(&self) -> Cow<String> {
-        Cow::Owned(format!("{}", self))
+        Cow::Owned(format!("{self}"))
     }
 }
 
@@ -68,8 +68,8 @@ impl<'a> CsvLineOutput<'a> {
     /// Quote value if required. Assume there is no quote in the value.
     fn write_value(&mut self, value: &str) -> io::Result<()> {
         match memchr(self.separator as u8, value.as_bytes()) {
-            None => write!(self.out, "{}", value),
-            _ => write!(self.out, "\"{}\"", value),
+            None => write!(self.out, "{value}"),
+            _ => write!(self.out, "\"{value}\""),
         }
     }
 
@@ -155,7 +155,7 @@ impl CsvExporter {
         P: AsRef<Path>,
     {
         let mut name = filename.as_ref().as_os_str().to_os_string();
-        let ext = format!(".{}", rank);
+        let ext = format!(".{rank}");
         name.push(ext.as_str());
         PathBuf::from(name)
     }
@@ -266,7 +266,7 @@ mod test {
         let mut buf = io::Cursor::new(Vec::<u8>::new());
         let mut lout = CsvLineOutput::new(&mut buf, ',');
         lout.write_line(values.into_iter())?;
-        buf.seek(io::SeekFrom::Start(0))?;
+        buf.rewind()?;
         let mut line = String::new();
         buf.read_line(&mut line)?;
         Ok(line)
