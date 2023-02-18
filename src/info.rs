@@ -82,9 +82,9 @@ pub struct SystemConf {
 
 impl SystemConf {
     pub fn new() -> anyhow::Result<SystemConf> {
-        let ticks_per_second = procfs::ticks_per_second()?;
+        let ticks_per_second = procfs::ticks_per_second();
         let kstat = KernelStats::new()?;
-        let page_size = procfs::page_size()?;
+        let page_size = procfs::page_size();
         let max_pid = read_pid_file(Path::new("/proc/sys/kernel/pid_max")).unwrap_or(MAX_LINUX_PID);
 
         Ok(SystemConf {
@@ -246,7 +246,8 @@ macro_rules! maps_count_key {
             MMapPath::Vvar => MetricId::MapVvarCount,
             MMapPath::Vsyscall => MetricId::MapVsyscallCount,
             MMapPath::Anonymous => MetricId::MapAnonCount,
-            MMapPath::Other(_) => MetricId::MapOtherCount,
+            // Rollup is in smaps_rollup only. No need to have a metric when reading maps.
+            MMapPath::Rollup | MMapPath::Other(_) => MetricId::MapOtherCount,
         }
     };
 }
@@ -264,7 +265,8 @@ macro_rules! maps_size_key {
             MMapPath::Vvar => MetricId::MapVvarSize,
             MMapPath::Vsyscall => MetricId::MapVsyscallSize,
             MMapPath::Anonymous => MetricId::MapAnonSize,
-            MMapPath::Other(_) => MetricId::MapOtherSize,
+            // Rollup is in smaps_rollup only. No need to have a metric when reading maps.
+            MMapPath::Rollup | MMapPath::Other(_) => MetricId::MapOtherSize,
         }
     };
 }
