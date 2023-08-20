@@ -1,6 +1,6 @@
 [package]
 name = "procmon-oprs"
-version = "0.18.2"
+version = "0.18.3"
 authors = ["Laurent Pelecq <lpelecq+rust@circoise.eu>"]
 description = "A process monitor for Linux"
 readme = "README.md"
@@ -8,7 +8,7 @@ homepage = "https://github.com/lparcq/procmon-oprs"
 keywords = ["proc", "linux", "process", "monitor"]
 categories = ["command-line-utilities"]
 license = "GPL-3.0-or-later"
-edition = "2018"
+edition = "2021"
 
 [[bin]]
 name = "oprs"
@@ -20,16 +20,16 @@ argh = "0.1"
 chrono = "0.4"
 console = "0"
 ctrlc = { version = "3.0", features = ["termination"] }
-itertools = "0.10"
+itertools = "0.11"
 libc = "0.2"
-light-ini = "0.2"
+light-ini = "0.3"
 log = "0"
 memchr = "2"
 nom = "7"
 procfs = "0.15"
 simplelog = "0.12"
-strum = "0.24"
-strum_macros = "0.24"
+strum = "0.25"
+strum_macros = "0.25"
 termion = "2"
 tui = { version = "0.19", default-features = false, features = ['termion'] }
 thiserror = "1.0"

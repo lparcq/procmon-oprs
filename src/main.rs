@@ -22,9 +22,12 @@ extern crate libc;
 use argh::FromArgs;
 use log::{error, warn};
 use simplelog::{self, SimpleLogger, TermLogger, WriteLogger};
-use std::fs::{self, File};
-use std::panic;
-use std::path::{Path, PathBuf};
+use std::{
+    fs::{self, File},
+    panic,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 mod agg;
 mod application;
@@ -60,6 +63,19 @@ const APP_NAME: &str = "oprs";
 // Options
 //
 
+macro_rules! make_arg_converter {
+    ($func:ident, $type:ty) => {
+        fn $func(arg: &str) -> Result<$type, String> {
+            <$type>::from_str(arg).map_err(|err| err.to_string())
+        }
+    };
+}
+
+make_arg_converter!(theme_from_str, BuiltinTheme);
+make_arg_converter!(export_type_from_str, ExportType);
+make_arg_converter!(display_mode_from_str, DisplayMode);
+make_arg_converter!(metric_format_from_str, MetricFormat);
+
 #[derive(FromArgs, PartialEq, Debug)]
 /// Display metrics of processes.
 /// Without argument, the command prints the available metrics.
@@ -76,7 +92,7 @@ struct Opt {
     #[argh(
         option,
         short = 'T',
-        from_str_fn(BuiltinTheme::from_str),
+        from_str_fn(theme_from_str),
         description = "display theme (light, dark, light16, dark16)"
     )]
     theme: Option<BuiltinTheme>,
@@ -94,7 +110,7 @@ struct Opt {
     #[argh(
         option,
         short = 'd',
-        from_str_fn(DisplayMode::from_str),
+        from_str_fn(display_mode_from_str),
         description = "display mode, if unset uses terminal in priority (none, any, text, term)"
     )]
     display: Option<DisplayMode>,
@@ -102,7 +118,7 @@ struct Opt {
     #[argh(
         option,
         short = 'X',
-        from_str_fn(ExportType::from_str),
+        from_str_fn(export_type_from_str),
         description = "export type (none, csv, rrd)"
     )]
     export_type: Option<ExportType>,
@@ -127,7 +143,7 @@ struct Opt {
     #[argh(
         option,
         short = 'F',
-        from_str_fn(MetricFormat::from_str),
+        from_str_fn(metric_format_from_str),
         description = "format to display metrics (raw, human)"
     )]
     format: Option<MetricFormat>,

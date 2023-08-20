@@ -99,7 +99,7 @@ fn expand_metric_name(metric_ids: &mut Vec<MetricId>, name: &str) {
 
 /// parse a metric name or pattern
 fn parse_metric_pattern(input: &str) -> IResult<&str, &str> {
-    take_while(|c| c == ':' || c == '*' || ('a'..='z').contains(&c))(input)
+    take_while(|c: char| c == ':' || c == '*' || c.is_ascii_lowercase())(input)
 }
 
 /// Parse metric name such as abc:def

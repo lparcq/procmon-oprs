@@ -248,7 +248,7 @@ impl<'a> IniHandler for ConfigHandler<'a> {
         match &self.section {
             None => return Err(ConfigError::InvalidOption(key.to_string())),
             Some(ConfigSection::Display) => {
-                let mut settings = &mut self.settings.display;
+                let settings = &mut self.settings.display;
                 match key {
                     "mode" => settings.mode = from_param!(DisplayMode, key, value)?,
                     "every" => settings.every = from_param!(key, value.parse::<f64>())?,
@@ -258,7 +258,7 @@ impl<'a> IniHandler for ConfigHandler<'a> {
                 }
             }
             Some(ConfigSection::Export) => {
-                let mut settings = &mut self.settings.export;
+                let settings = &mut self.settings.export;
                 match key {
                     "kind" => {
                         settings.kind = ExportType::from_str(value)
@@ -272,7 +272,7 @@ impl<'a> IniHandler for ConfigHandler<'a> {
                 }
             }
             Some(ConfigSection::Logging) => {
-                let mut settings = &mut self.settings.logging;
+                let settings = &mut self.settings.logging;
                 match key {
                     "file" => settings.file = Some(PathBuf::from(value)),
                     "level" => settings.level = from_param!(LoggingLevel, key, value)?,
@@ -280,7 +280,7 @@ impl<'a> IniHandler for ConfigHandler<'a> {
                 }
             }
             Some(ConfigSection::Targets) => {
-                let mut settings = &mut self.settings.targets;
+                let settings = &mut self.settings.targets;
                 match key {
                     "system" => settings.system = ConfigHandler::parse_bool(key, value)?,
                     "myself" => settings.myself = ConfigHandler::parse_bool(key, value)?,
