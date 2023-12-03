@@ -19,7 +19,7 @@
 use libc::pid_t;
 use procfs::{
     process::{FDTarget, Io, MMapPath, Process, Stat, StatM},
-    CpuTime, KernelStats, Meminfo, ProcResult,
+    CpuTime, Current, CurrentSI, KernelStats, Meminfo, ProcResult,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -83,7 +83,7 @@ pub struct SystemConf {
 impl SystemConf {
     pub fn new() -> anyhow::Result<SystemConf> {
         let ticks_per_second = procfs::ticks_per_second();
-        let kstat = KernelStats::new()?;
+        let kstat = KernelStats::current()?;
         let page_size = procfs::page_size();
         let max_pid = read_pid_file(Path::new("/proc/sys/kernel/pid_max")).unwrap_or(MAX_LINUX_PID);
 
@@ -128,7 +128,11 @@ impl<'a> SystemInfo<'a> {
         F: Fn(&CpuTime) -> u64,
     {
         if self.cputime.is_none() {
-            self.cputime = Some(KernelStats::new().expect("cannot access /proc/stat").total);
+            self.cputime = Some(
+                KernelStats::current()
+                    .expect("cannot access /proc/stat")
+                    .total,
+            );
         }
         self.cputime.as_ref().map_or(0, func)
     }
@@ -138,7 +142,7 @@ impl<'a> SystemInfo<'a> {
         F: Fn(&Meminfo) -> u64,
     {
         if self.meminfo.is_none() {
-            self.meminfo = Some(Meminfo::new().expect("cannot access /proc/meminfo"));
+            self.meminfo = Some(Meminfo::current().expect("cannot access /proc/meminfo"));
         }
         match self.meminfo {
             Some(ref meminfo) => func(meminfo),

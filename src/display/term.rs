@@ -16,6 +16,14 @@
 
 use chrono::Local;
 use itertools::izip;
+use ratatui::{
+    backend::TermionBackend,
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span, Text},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    Terminal,
+};
 use std::cmp::Ordering;
 use std::io;
 use std::time::Duration;
@@ -23,14 +31,6 @@ use strum::IntoEnumIterator;
 use termion::{
     raw::{IntoRawMode, RawTerminal},
     screen::{AlternateScreen, IntoAlternateScreen},
-};
-use tui::{
-    backend::TermionBackend,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
-    text::{Span, Spans, Text},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
-    Terminal,
 };
 
 use crate::{
@@ -175,7 +175,7 @@ fn menu_paragraph(entries: &[(Key, &'static str)]) -> Paragraph<'static> {
         spans.push(Span::raw(format!(" {action}")));
         sep = "  ";
     });
-    tui::widgets::Paragraph::new(Spans::from(spans)).alignment(Alignment::Left)
+    Paragraph::new(Line::from(spans)).alignment(Alignment::Left)
 }
 
 fn pivot_flatten<'a>(
