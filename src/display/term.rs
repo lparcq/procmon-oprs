@@ -249,7 +249,7 @@ fn style_rows<'a>(
                 odd_row_style
             };
             log::debug!("styling row of length {} from 0 to {}", r.len(), ncols);
-            Row::new(r.drain(0..ncols).into_iter()).style(style)
+            Row::new(r.drain(0..ncols)).style(style)
         })
         .collect::<Vec<Row>>()
 }

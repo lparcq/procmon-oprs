@@ -18,7 +18,6 @@ use libc::pid_t;
 use memchr::memchr;
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
-use std::fmt::Display;
 use std::fs::{self, File};
 use std::io::{self, Seek, Write};
 use std::path::{Path, PathBuf};
@@ -74,10 +73,10 @@ impl<'a> CsvLineOutput<'a> {
     }
 
     /// Write the end of CSV line
-    fn write_line_rest<I, D: ToStr>(&mut self, row: I) -> io::Result<()>
+    fn write_line_rest<I, D>(&mut self, row: I) -> io::Result<()>
     where
         I: IntoIterator<Item = D>,
-        D: Display,
+        D: ToStr,
     {
         for value in row.into_iter() {
             write!(self.out, "{}", self.separator)?;
@@ -88,10 +87,10 @@ impl<'a> CsvLineOutput<'a> {
     }
 
     /// Write a CSV line
-    fn write_line<I, D: ToStr>(&mut self, row: I) -> io::Result<()>
+    fn write_line<I, D>(&mut self, row: I) -> io::Result<()>
     where
         I: IntoIterator<Item = D>,
-        D: Display,
+        D: ToStr,
     {
         let mut iter = row.into_iter();
         if let Some(first) = iter.next() {

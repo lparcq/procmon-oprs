@@ -152,16 +152,17 @@ impl Table {
             self.charset.get(TableChar::DownLeft),
         );
         // Titles
+        let vline = self.charset.get(TableChar::VerticalInner);
         for title in &self.titles {
             print!(
-                "|{}{:^width$}{}",
+                "{}{}{:^width$}{}",
+                vline,
                 self.vertical_padding,
                 title,
                 self.vertical_padding,
                 width = self.title_width
             );
         }
-        let vline = self.charset.get(TableChar::VerticalInner);
         println!("{vline}");
         self.horizontal_rule(
             self.charset.get(TableChar::VerticalRight),
@@ -201,16 +202,18 @@ impl Table {
     }
 
     fn print_values(&self) {
+        let vline = self.charset.get(TableChar::VerticalInner);
         for value in &self.values {
             print!(
-                "|{}{:^width$}{}",
+                "{}{}{:^width$}{}",
+                vline,
                 self.vertical_padding,
                 value,
                 self.vertical_padding,
                 width = self.column_width
             );
         }
-        println!("|");
+        println!("{}", vline);
     }
 
     /// Calculate the column width

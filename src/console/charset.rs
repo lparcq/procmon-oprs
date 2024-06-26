@@ -51,26 +51,21 @@ pub enum TableChar {
 }
 
 /// Characters to draw a table.
-pub struct TableCharSet {
-    chars: &'static [&'static str; 13],
-    pub border_width: usize,
-}
+pub struct TableCharSet(&'static [&'static str; 13]);
 
 impl TableCharSet {
     pub fn new() -> TableCharSet {
-        TableCharSet {
-            chars: if is_unicode() {
-                &UTF8_TABLE_CHARS_
-            } else {
-                &ASCII_TABLE_CHARS_
-            },
-            border_width: 1,
-        }
+        TableCharSet(if is_unicode() {
+            &UTF8_TABLE_CHARS_
+        } else {
+            &ASCII_TABLE_CHARS_
+        })
     }
 
     /// Get a specific character to draw a table
     pub fn get(&self, kind: TableChar) -> &'static str {
-        self.chars[match kind {
+        let Self(chars) = self;
+        chars[match kind {
             TableChar::Horizontal => 0usize,
             TableChar::_Vertical => 1usize,
             TableChar::DownRight => 2usize,
