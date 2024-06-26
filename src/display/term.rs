@@ -207,6 +207,86 @@ fn pivot_flatten<'a>(
     values
 }
 
+/// Navigation arrows dependending on table overflows
+fn navigation_arrows(
+    screen: Rect,
+    hoffset: usize,
+    voffset: usize,
+    table_width: u16,
+    table_height: u16,
+    first_col_width: usize,
+) -> (Text<'static>, bool, bool) {
+    let (inner_width, inner_height) = (screen.width - 2, screen.height - 3);
+    let up_arrow = if voffset > 0 { "  ⬆  " } else { "   " };
+    let voverflow = table_height > inner_height;
+    let down_arrow = if voverflow { "⬇" } else { " " };
+    let left_arrow = if hoffset > 0 { "⬅" } else { " " };
+    let hoverflow = table_width > inner_width;
+    let right_arrow = if hoverflow { "➡" } else { " " };
+    let mut nav = Text::from(format!("{up_arrow:^first_col_width$}"));
+    nav.extend(Text::from(format!(
+        "{:^first_col_width$}",
+        format!("{left_arrow} {down_arrow} {right_arrow}",)
+    )));
+    (nav, voverflow, hoverflow)
+}
+
+/// Apply style to rows
+///
+/// The table is truncated to keep only `ncols` column.
+fn style_rows<'a>(
+    rows: &mut Vec<Vec<Cell<'a>>>,
+    ncols: usize,
+    even_row_style: Style,
+    odd_row_style: Style,
+) -> Vec<Row<'a>> {
+    rows.drain(..)
+        .enumerate()
+        .map(|(i, mut r)| {
+            let style = if i % 2 != 0 {
+                even_row_style
+            } else {
+                odd_row_style
+            };
+            log::debug!("styling row of length {} from 0 to {}", r.len(), ncols);
+            Row::new(r.drain(0..ncols).into_iter()).style(style)
+        })
+        .collect::<Vec<Row>>()
+}
+
+/// Calculate widths constraints to avoid an overflow
+fn width_constraints(
+    screen_width: u16,
+    first_column_width: u16,
+    column_width: u16,
+    column_spacing: u16,
+    ncols: usize,
+) -> (u16, Vec<Constraint>) {
+    let mut widths = Vec::with_capacity(ncols);
+    let ncols = (ncols - 1) as u16; // Number of columns without the first one.
+    widths.push(first_column_width);
+    let remaining = screen_width - first_column_width;
+    let spaced_column_width = column_spacing + column_width;
+    let nvisible_cols = std::cmp::min(remaining.saturating_div(spaced_column_width), ncols);
+    (0..nvisible_cols).for_each(|_| widths.push(column_width));
+    let mut total_width = first_column_width + spaced_column_width * nvisible_cols;
+    if nvisible_cols < ncols {
+        let remaining = remaining - nvisible_cols * spaced_column_width;
+        if remaining > column_spacing {
+            let last_col_width = remaining - column_spacing;
+            widths.push(last_col_width);
+            total_width += remaining;
+        }
+    }
+    (
+        total_width,
+        widths
+            .iter()
+            .map(|w| Constraint::Length(*w))
+            .collect::<Vec<Constraint>>(),
+    )
+}
+
 /// Compute the maximum length of strings
 struct MaxLength {
     length: usize,
@@ -295,30 +375,6 @@ impl TerminalDevice {
         format!(" {time_string} / {delay} ")
     }
 
-    /// Navigation arrows
-    fn navigation_arrows(
-        screen: Rect,
-        hoffset: usize,
-        voffset: usize,
-        table_width: u16,
-        table_height: u16,
-        first_col_width: usize,
-    ) -> (Text<'static>, bool, bool) {
-        let (inner_width, inner_height) = (screen.width - 2, screen.height - 3);
-        let up_arrow = if voffset > 0 { "  ⬆  " } else { "   " };
-        let voverflow = table_height > inner_height;
-        let down_arrow = if voverflow { "⬇" } else { " " };
-        let left_arrow = if hoffset > 0 { "⬅" } else { " " };
-        let hoverflow = table_width > inner_width;
-        let right_arrow = if hoverflow { "➡" } else { " " };
-        let mut nav = Text::from(format!("{up_arrow:^first_col_width$}"));
-        nav.extend(Text::from(format!(
-            "{:^first_col_width$}",
-            format!("{left_arrow} {down_arrow} {right_arrow}",)
-        )));
-        (nav, voverflow, hoverflow)
-    }
-
     /// Change a list of target samples (columns) into rows and flatten the samples.
     fn pivot_flatten<'a>(
         &self,
@@ -348,56 +404,47 @@ impl TerminalDevice {
         col_width: u16,
     ) -> anyhow::Result<()> {
         let (hoffset, voffset) = self.table_offset;
-        let mut widths = Vec::with_capacity(ncols);
-        let column_spacing = self.styles.column_spacing;
-        widths.push(self.metric_width);
-        (0..ncols).for_each(|_| widths.push(col_width));
-        let table_width: u16 =
-            widths.iter().sum::<u16>() + ((widths.len() - 1) as u16) * column_spacing;
-        let table_height: u16 = 2 + nrows as u16;
-        let widths = widths
-            .iter()
-            .map(|w| Constraint::Length(*w))
-            .collect::<Vec<Constraint>>();
         let title = self.title();
-        let first_col_width = self.metric_width as usize;
         let mut new_voverflow = false;
         let mut new_hoverflow = false;
-        let style_even_row = self.styles.even_row;
-        let style_odd_row = self.styles.odd_row;
-        let rows = rows.drain(..).enumerate().map(|(i, r)| {
-            let style = if i % 2 != 0 {
-                style_even_row
-            } else {
-                style_odd_row
-            };
-            Row::new::<Vec<Cell>>(r).style(style)
-        });
+        let even_row_style = self.styles.even_row;
+        let odd_row_style = self.styles.odd_row;
 
         self.terminal.draw(|frame| {
             let screen = frame.size();
-            let (nav, voverflow, hoverflow) = TerminalDevice::navigation_arrows(
-                screen,
-                hoffset,
-                voffset,
-                table_width,
-                table_height,
-                first_col_width,
-            );
-            new_voverflow = voverflow;
-            new_hoverflow = hoverflow;
-            headers[0] = Cell::from(nav);
-
-            let table = Table::new(rows)
-                .block(Block::default().borders(Borders::ALL).title(title))
-                .header(Row::new(headers).height(2))
-                .widths(&widths)
-                .column_spacing(column_spacing);
             let rects = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(screen.height - 1), Constraint::Min(0)].as_ref())
                 .split(screen);
-            frame.render_widget(table, rects[0]);
+            if self.metric_width < screen.width {
+                let column_spacing = self.styles.column_spacing;
+                let (table_width, widths) = width_constraints(
+                    screen.width,
+                    self.metric_width,
+                    col_width,
+                    self.styles.column_spacing,
+                    ncols,
+                );
+                let table_height: u16 = 2 + nrows as u16;
+                let (nav, voverflow, hoverflow) = navigation_arrows(
+                    screen,
+                    hoffset,
+                    voffset,
+                    table_width,
+                    table_height,
+                    self.metric_width as usize,
+                );
+                new_voverflow = voverflow;
+                new_hoverflow = hoverflow;
+                headers[0] = Cell::from(nav);
+
+                let rows = style_rows(&mut rows, widths.len(), even_row_style, odd_row_style);
+                let table = Table::new(rows, widths)
+                    .block(Block::default().borders(Borders::ALL).title(title))
+                    .header(Row::new(headers).height(2))
+                    .column_spacing(column_spacing);
+                frame.render_widget(table, rects[0]);
+            }
 
             let menu_entries = vec![
                 (KEY_QUIT, "Quit"),
@@ -634,7 +681,9 @@ impl DisplayDevice for TerminalDevice {
 #[cfg(test)]
 mod test {
 
-    use super::{pivot_flatten, Collector, LimitKind};
+    use ratatui::layout::Constraint;
+
+    use super::{pivot_flatten, width_constraints, Collector, LimitKind};
 
     #[test]
     fn test_pivot_flatten() {
@@ -661,5 +710,80 @@ mod test {
             .map(|row| row.iter().map(|(val, _trend)| *val).collect::<Vec<&str>>())
             .collect::<Vec<Vec<&str>>>();
         assert_eq!(expected_values1, values1);
+    }
+
+    #[test]
+    fn test_width_constraints_underflow() {
+        // 0         1
+        // 01234567890123456789
+        // aaaaa bbbb bbbb
+        const SCREEN_WIDTH: u16 = 20;
+        const FIRST_COLUMN_WIDTH: u16 = 5;
+        const COLUMN_WIDTH: u16 = 4;
+        const COLUMN_SPACING: u16 = 1;
+        const NCOLS: usize = 3;
+        let (table_width, widths) = width_constraints(
+            SCREEN_WIDTH,
+            FIRST_COLUMN_WIDTH,
+            COLUMN_WIDTH,
+            COLUMN_SPACING,
+            NCOLS,
+        );
+        const SPACED_COLUMN_WIDTH: u16 = COLUMN_WIDTH + COLUMN_SPACING;
+        const EXPECTED_WIDTH: u16 = FIRST_COLUMN_WIDTH + (NCOLS as u16 - 1) * SPACED_COLUMN_WIDTH;
+        assert_eq!(EXPECTED_WIDTH, table_width);
+        assert_eq!(NCOLS, widths.len());
+        assert_eq!(Constraint::Length(FIRST_COLUMN_WIDTH), widths[0]);
+        assert_eq!(Constraint::Length(COLUMN_WIDTH), widths[1]);
+    }
+
+    #[test]
+    fn test_width_constraints_exact() {
+        // 0         1
+        // 01234567890123456789
+        // aaaaa bbbb bbbb bbbb
+        const SCREEN_WIDTH: u16 = 20;
+        const FIRST_COLUMN_WIDTH: u16 = 5;
+        const COLUMN_WIDTH: u16 = 4;
+        const COLUMN_SPACING: u16 = 1;
+        const NCOLS: usize = 4;
+        let (table_width, widths) = width_constraints(
+            SCREEN_WIDTH,
+            FIRST_COLUMN_WIDTH,
+            COLUMN_WIDTH,
+            COLUMN_SPACING,
+            NCOLS,
+        );
+        const SPACED_COLUMN_WIDTH: u16 = COLUMN_WIDTH + COLUMN_SPACING;
+        const EXPECTED_WIDTH: u16 = FIRST_COLUMN_WIDTH + (NCOLS as u16 - 1) * SPACED_COLUMN_WIDTH;
+        assert_eq!(EXPECTED_WIDTH, table_width);
+        assert_eq!(NCOLS, widths.len());
+        assert_eq!(Constraint::Length(FIRST_COLUMN_WIDTH), widths[0]);
+        assert_eq!(Constraint::Length(COLUMN_WIDTH), widths[1]);
+    }
+
+    #[test]
+    fn test_width_constraints_overflow() {
+        // 0         1
+        // 01234567890123456789
+        // aaaaa bbb bbb bbb bbb bbb
+        const SCREEN_WIDTH: u16 = 20;
+        const FIRST_COLUMN_WIDTH: u16 = 5;
+        const COLUMN_WIDTH: u16 = 3;
+        const COLUMN_SPACING: u16 = 1;
+        const NCOLS: usize = 6;
+        let (table_width, widths) = width_constraints(
+            SCREEN_WIDTH,
+            FIRST_COLUMN_WIDTH,
+            COLUMN_WIDTH,
+            COLUMN_SPACING,
+            NCOLS,
+        );
+        const EXPECTED_NCOLS: usize = 5;
+        assert_eq!(SCREEN_WIDTH, table_width);
+        assert_eq!(EXPECTED_NCOLS, widths.len());
+        assert_eq!(Constraint::Length(FIRST_COLUMN_WIDTH), widths[0]);
+        assert_eq!(Constraint::Length(COLUMN_WIDTH), widths[1]);
+        assert_eq!(Constraint::Length(2), widths[4]);
     }
 }

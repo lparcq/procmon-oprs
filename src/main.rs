@@ -321,8 +321,9 @@ fn start(opt: Opt) -> anyhow::Result<()> {
     } else {
         let mut app = Application::new(&settings, &opt.metric)?;
         configure_logging(&settings.logging);
+        let must_print_backtrace = opt.debug;
 
-        panic::set_hook(Box::new(|panic_info| {
+        panic::set_hook(Box::new(move |panic_info| {
             if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
                 error!("panic occurred: {s:?}");
             } else if let Some(location) = panic_info.location() {
@@ -333,6 +334,10 @@ fn start(opt: Opt) -> anyhow::Result<()> {
                 );
             } else {
                 error!("panic occurred but can't get location information...");
+            }
+            if must_print_backtrace {
+                let bcktrc = std::backtrace::Backtrace::force_capture();
+                log::debug!("{}", bcktrc);
             }
         }));
         let system_conf = info::SystemConf::new()?;
