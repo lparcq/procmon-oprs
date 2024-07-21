@@ -36,11 +36,13 @@ thiserror = "1.0"
 xdg = "2"
 
 [profile.release]
-lto = 'thin'
+lto = true
 panic = 'abort'
-opt-level = 3
+opt-level = "z"
 debug = false
+strip = true
+codegen-units = 1
 
 [profile.dev]
 opt-level = 0
-debug = true
+debug = 0
