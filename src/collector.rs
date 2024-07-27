@@ -54,20 +54,15 @@ pub enum LimitKind {
 /// Limit formatted like the corresponding metric
 #[derive(Debug)]
 struct FormattedLimit {
-    pub _limit: Limit,
-    pub soft: String,
-    pub hard: String,
+    soft: String,
+    hard: String,
 }
 
 impl FormattedLimit {
     fn new(metric: &FormattedMetric, limit: Limit) -> Self {
         let soft = FormattedLimit::limit_to_string(limit.soft_limit, metric.format);
         let hard = FormattedLimit::limit_to_string(limit.hard_limit, metric.format);
-        Self {
-            _limit: limit,
-            soft,
-            hard,
-        }
+        Self { soft, hard }
     }
 
     fn limit_to_string(value: LimitValue, fmt: Formatter) -> String {
@@ -120,11 +115,6 @@ impl Sample {
     /// Return the trend of formatted strings
     pub fn trends(&self) -> Iter<Ordering> {
         self.trends.iter()
-    }
-
-    /// Return the limit for this metric
-    pub fn _limits(&'_ self) -> Option<&'_ Limit> {
-        self.limit.as_ref().map(|fl| &fl._limit)
     }
 
     /// Return the soft limit for this metric as string

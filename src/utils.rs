@@ -41,7 +41,7 @@ where
 }
 
 /// Read file content
-pub fn read_file_content(filename: &Path) -> anyhow::Result<String> {
+fn read_file_content(filename: &Path) -> anyhow::Result<String> {
     let mut file = fs::File::open(filename)
         .with_context(|| format!("{}: cannot open file", filename.display()))?;
     let mut content = String::new();

@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use crate::{
     agg::Aggregation,
-    cfg::ExportSettings,
+    cfg::{ExportSettings, ExportType},
     collector::{Collector, TargetStatus},
     metrics::MetricDataType,
 };
@@ -109,7 +109,7 @@ impl RrdExporter {
                 skip: Vec::new(),
                 pids: HashMap::new(),
                 color_bucket: COLORS.to_vec(),
-                graph: settings.graph,
+                graph: matches!(settings.kind, ExportType::RrdGraph),
             })
         }
     }

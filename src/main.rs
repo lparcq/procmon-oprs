@@ -148,9 +148,6 @@ struct Opt {
     )]
     format: Option<MetricFormat>,
 
-    #[argh(switch, short = 'g', description = "show or export graph if possible.")]
-    graph: bool,
-
     #[argh(switch, short = 's', description = "monitor system")]
     system: bool,
 
@@ -278,9 +275,6 @@ fn start(opt: Opt) -> anyhow::Result<()> {
         Some(parse_size(&size)?)
     );
     override_parameter!(settings.export.count, opt.export_count, count, Some(count));
-    if opt.graph {
-        settings.export.graph = true;
-    }
 
     override_parameter!(
         settings.logging.file,

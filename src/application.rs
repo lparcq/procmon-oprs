@@ -101,7 +101,9 @@ impl Application {
             ExportType::Csv | ExportType::Tsv => {
                 Some(Box::new(CsvExporter::new(&settings.export)?))
             }
-            ExportType::Rrd => Some(Box::new(RrdExporter::new(&settings.export, every)?)),
+            ExportType::Rrd | ExportType::RrdGraph => {
+                Some(Box::new(RrdExporter::new(&settings.export, every)?))
+            }
             ExportType::None => None,
         };
 
