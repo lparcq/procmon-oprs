@@ -20,6 +20,7 @@ argh = "0.1"
 chrono = "0.4"
 console = "0"
 ctrlc = { version = "3.0", features = ["termination"] }
+indextree = "4"
 itertools = "0.13"
 libc = "0.2"
 light-ini = "0.3"

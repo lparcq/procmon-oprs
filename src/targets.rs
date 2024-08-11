@@ -15,24 +15,25 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use libc::pid_t;
-use procfs::process::Process;
-use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
-use std::result;
+use log::error;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::{Path, PathBuf},
+};
 
 use crate::{
     collector::Collector,
     info::{Limit, ProcessInfo, SystemConf, SystemInfo},
-    metrics::MetricDataType,
-    proc_dir::{PidFinder, ProcessDir},
+    process::Process,
     utils::*,
 };
 
 #[derive(thiserror::Error, Debug)]
-enum Error {
+pub enum CollectorError {
     #[error("{0}: invalid process id")]
     InvalidProcessId(pid_t),
+    #[error("{0}: invalid path")]
+    InvalidPath(PathBuf),
 }
 
 /// Different way of identifying processes
@@ -40,107 +41,87 @@ enum Error {
 pub enum TargetId {
     Pid(pid_t),
     PidFile(PathBuf),
+    ParentPid(pid_t),
+    ParentPidFile(PathBuf),
     ProcessName(String),
-    ProcessGroup(String),
     System,
-}
-
-/// Target process
-trait Target {
-    fn name(&self) -> &str;
-    fn initialize(&mut self, collector: &Collector);
-    fn collect(&self, collector: &mut Collector);
-}
-
-/// The system itself
-struct SystemTarget<'a> {
-    system_conf: &'a SystemConf,
-    limits: Vec<Option<Limit>>,
-}
-
-impl<'a> SystemTarget<'a> {
-    fn new(system_conf: &'a SystemConf) -> anyhow::Result<SystemTarget<'a>> {
-        let limits = Vec::new();
-        Ok(SystemTarget {
-            system_conf,
-            limits,
-        })
-    }
-}
-
-impl<'a> Target for SystemTarget<'a> {
-    fn name(&self) -> &str {
-        "system"
-    }
-
-    fn initialize(&mut self, collector: &Collector) {
-        self.limits = vec![None; collector.metrics().len()];
-    }
-
-    fn collect(&self, collector: &mut Collector) {
-        let mut system = SystemInfo::new(self.system_conf);
-        collector.collect_system(&mut system);
-        collector.collect(
-            self.name(),
-            0,
-            None,
-            &system.extract_metrics(collector.metrics()),
-            &self.limits,
-        );
-    }
-}
-
-/// Target that holds a single process
-trait SingleTarget: Target {
-    fn refresh(&mut self) -> bool;
 }
 
 /// Process defined by a pid.
 ///
 /// Once the process is gone, the target returns no metrics.
-struct StaticTarget<'a> {
+struct Target<'a> {
     name: String,
-    proc_dir: PathBuf,
     process: Option<Process>,
+    pid_file: Option<PathBuf>,
+    replaceable: bool,
     system_conf: &'a SystemConf,
 }
 
-impl<'a> StaticTarget<'a> {
-    fn new(pid: pid_t, system_conf: &'a SystemConf) -> StaticTarget<'a> {
-        let proc_path = ProcessDir::path(pid);
-        let proc_dir = ProcessDir::new(proc_path.as_path());
-        StaticTarget {
-            name: proc_dir
-                .process_name()
-                .unwrap_or_else(|| ProcessDir::process_name_from_pid(pid)),
-            proc_dir: proc_path,
-            process: Process::new(pid).ok(),
+impl<'a> Target<'a> {
+    fn new(process: Process, system_conf: &'a SystemConf) -> Self {
+        let name = crate::process::process_identifier(&process);
+        Self {
+            name,
+            process: Some(process),
+            pid_file: None,
+            replaceable: false,
             system_conf,
         }
     }
 
-    fn new_existing(
-        pid: pid_t,
-        system_conf: &'a SystemConf,
-    ) -> result::Result<StaticTarget<'a>, Error> {
-        let target = StaticTarget::new(pid, system_conf);
-        if target.has_process() {
-            Ok(target)
-        } else {
-            Err(Error::InvalidProcessId(pid))
+    fn with_pid_file<P>(pid_file: P, system_conf: &'a SystemConf) -> Result<Self, CollectorError>
+    where
+        P: AsRef<Path>,
+    {
+        let pid_file = pid_file.as_ref();
+        Ok(Self {
+            name: basename(pid_file, true)
+                .ok_or_else(|| CollectorError::InvalidPath(pid_file.to_path_buf()))?,
+            process: None,
+            pid_file: Some(pid_file.to_path_buf()),
+            replaceable: true,
+            system_conf,
+        })
+    }
+
+    fn with_name(name: &str, system_conf: &'a SystemConf) -> Self {
+        Self {
+            name: name.to_string(),
+            process: None,
+            pid_file: None,
+            replaceable: true,
+            system_conf,
         }
     }
 
-    fn has_process(&self) -> bool {
-        self.process.is_some()
+    fn is_alive(&self) -> bool {
+        self.process
+            .as_ref()
+            .map(|proc| proc.is_alive())
+            .unwrap_or(false)
     }
 
-    fn is_alive(&self) -> bool {
-        self.proc_dir.exists()
+    fn is_replaceable(&self) -> bool {
+        self.replaceable
+    }
+
+    fn set_process(&mut self, process: Process) {
+        self.process = Some(process);
+    }
+
+    fn clear_process(&mut self) -> bool {
+        let changed = self.process.is_some();
+        self.process = None;
+        changed
     }
 
     fn pid(&self) -> Option<pid_t> {
         self.process.as_ref().map(|proc| proc.pid())
+    }
+
+    fn pid_file<'b>(&'b self) -> Option<&'b PathBuf> {
+        self.pid_file.as_ref()
     }
 
     fn process_info(&self) -> Option<ProcessInfo> {
@@ -149,186 +130,17 @@ impl<'a> StaticTarget<'a> {
             .map(|process| ProcessInfo::new(process, self.system_conf))
     }
 
-    fn collect_with_name(&self, name: &str, collector: &mut Collector) {
+    fn collect(&self, collector: &mut Collector) {
         if let Some(ref process) = self.process {
             let mut proc_info = ProcessInfo::new(process, self.system_conf);
             collector.collect(
-                name,
+                &self.name,
                 process.pid(),
                 None,
                 &proc_info.extract_metrics(collector.metrics()),
                 &proc_info.extract_limits(collector.metrics()),
             )
         }
-    }
-}
-
-impl<'a> Target for StaticTarget<'a> {
-    fn name(&self) -> &str {
-        self.name.as_str()
-    }
-
-    fn initialize(&mut self, _: &Collector) {}
-
-    fn collect(&self, collector: &mut Collector) {
-        self.collect_with_name(self.name(), collector);
-    }
-}
-
-impl<'a> SingleTarget for StaticTarget<'a> {
-    fn refresh(&mut self) -> bool {
-        if self.has_process() && !self.is_alive() {
-            self.process = None;
-            return true;
-        }
-        false
-    }
-}
-
-/// Process defined by a pid file.
-///
-/// The pid can change over the time.
-struct DynamicTarget<'a> {
-    name: Option<String>,
-    target: Option<StaticTarget<'a>>,
-    pid_file: PathBuf,
-    system_conf: &'a SystemConf,
-}
-
-impl<'a> DynamicTarget<'a> {
-    fn new(pid_file: &Path, system_conf: &'a SystemConf) -> DynamicTarget<'a> {
-        DynamicTarget {
-            name: basename(pid_file, true),
-            target: read_pid_file(pid_file)
-                .map_or(None, |pid| Some(StaticTarget::new(pid, system_conf))),
-            pid_file: pid_file.to_path_buf(),
-            system_conf,
-        }
-    }
-}
-
-impl<'a> Target for DynamicTarget<'a> {
-    fn name(&self) -> &str {
-        match &self.name {
-            Some(name) => name.as_str(),
-            None => match &self.target {
-                Some(target) => target.name(),
-                None => "<unknown>",
-            },
-        }
-    }
-
-    fn initialize(&mut self, _: &Collector) {}
-
-    fn collect(&self, collector: &mut Collector) {
-        if let Some(target) = &self.target {
-            target.collect_with_name(self.name(), collector);
-        }
-    }
-}
-
-impl<'a> SingleTarget for DynamicTarget<'a> {
-    fn refresh(&mut self) -> bool {
-        match &mut self.target {
-            Some(target) => target.refresh(),
-            None => {
-                if let Ok(pid) = read_pid_file(self.pid_file.as_path()) {
-                    self.target = Some(StaticTarget::new(pid, self.system_conf));
-                    true
-                } else {
-                    false
-                }
-            }
-        }
-    }
-}
-
-/// Manage a set of static targets
-struct TargetSet<'a> {
-    set: Vec<StaticTarget<'a>>,
-    system_conf: &'a SystemConf,
-}
-
-impl<'a> TargetSet<'a> {
-    fn new(system_conf: &'a SystemConf) -> TargetSet<'a> {
-        TargetSet {
-            set: Vec::new(),
-            system_conf,
-        }
-    }
-
-    fn len(&self) -> usize {
-        self.set.len()
-    }
-
-    fn refresh(&mut self, current_pids: &[pid_t]) -> bool {
-        let mut previous_pids = BTreeSet::new();
-        let mut updated = false;
-        self.set.retain(|target| {
-            if let Some(pid) = target.pid() {
-                previous_pids.insert(pid);
-                let alive = target.is_alive();
-                if !alive {
-                    updated = true;
-                }
-                alive
-            } else {
-                updated = true;
-                false
-            }
-        });
-        for pid in current_pids {
-            if !previous_pids.contains(pid) {
-                let target = StaticTarget::new(*pid, self.system_conf);
-                if target.has_process() {
-                    self.set.push(target);
-                    updated = true;
-                }
-            }
-        }
-        updated
-    }
-}
-
-/// Container of static targets.
-trait MultiTargets<'a>: Target {
-    fn targets_mut<'t>(&'t mut self) -> &'t mut TargetSet<'a>;
-}
-
-/// Distinct processes with the same name.
-///
-/// Metrics are collected separately for each process.
-struct DistinctTargets<'a> {
-    name: String,
-    targets: TargetSet<'a>,
-}
-
-impl<'a> DistinctTargets<'a> {
-    fn new(name: &str, system_conf: &'a SystemConf) -> DistinctTargets<'a> {
-        DistinctTargets {
-            name: name.to_string(),
-            targets: TargetSet::new(system_conf),
-        }
-    }
-}
-
-impl<'a> Target for DistinctTargets<'a> {
-    fn name(&self) -> &str {
-        self.name.as_str()
-    }
-
-    fn initialize(&mut self, _: &Collector) {}
-
-    fn collect(&self, collector: &mut Collector) {
-        for target in self.targets.set.iter() {
-            target.collect(collector);
-        }
-    }
-}
-
-impl<'a> MultiTargets<'a> for DistinctTargets<'a> {
-    fn targets_mut<'t>(&'t mut self) -> &'t mut TargetSet<'a> {
-        &mut self.targets
     }
 }
 
@@ -390,198 +202,103 @@ impl SampleCache {
     }
 }
 
-/// Processes with the same name as a single target.
-///
-/// The metrics are the sum of all the process values.
-///
-/// As metrics of type counters are accumulated over the lifetime of the target. It's
-/// necessary to remember the values of the processes that have died. Otherwise metrics
-/// like the number of IO read could decrease from time to time.
-struct MergedTargets<'a> {
-    name: String,
-    group_id: pid_t,
-    targets: TargetSet<'a>,
-    cache: RefCell<SampleCache>,
-    limits: Vec<Option<Limit>>,
-}
-
-impl<'a> MergedTargets<'a> {
-    fn new(name: &str, group_id: pid_t, system_conf: &'a SystemConf) -> MergedTargets<'a> {
-        MergedTargets {
-            name: name.to_string(),
-            group_id,
-            targets: TargetSet::new(system_conf),
-            cache: RefCell::new(SampleCache::new()),
-            limits: Vec::new(),
-        }
-    }
-}
-
-impl<'a> Target for MergedTargets<'a> {
-    fn name(&self) -> &str {
-        self.name.as_str()
-    }
-
-    fn initialize(&mut self, collector: &Collector) {
-        let are_counters = collector
-            .metrics()
-            .map(|metric| std::matches!(metric.id.data_type(), MetricDataType::Counter))
-            .collect::<Vec<bool>>();
-        self.cache.borrow_mut().set_cached(&are_counters);
-        self.limits = vec![None; collector.metrics().len()];
-    }
-
-    fn collect(&self, collector: &mut Collector) {
-        let mut merged_samples: Vec<u64> = collector.metrics().map(|_| 0_u64).collect();
-        let mut cache = self.cache.borrow_mut();
-        let mut old_pids = BTreeSet::new();
-        cache.pids_set(&mut old_pids);
-        for target in self.targets.set.iter() {
-            if let Some(mut proc_info) = target.process_info() {
-                let samples = proc_info.extract_metrics(collector.metrics());
-                samples
-                    .iter()
-                    .enumerate()
-                    .for_each(|(index, value)| merged_samples[index] += value);
-                let pid = proc_info.pid();
-                cache.insert(pid, &samples);
-                old_pids.remove(&pid);
-            }
-        }
-        old_pids.iter().for_each(|pid| cache.remove(*pid));
-        cache
-            .dead_samples()
-            .iter()
-            .enumerate()
-            .for_each(|(index, value)| {
-                merged_samples[index] += value;
-            });
-        collector.collect(
-            self.name(),
-            self.group_id,
-            Some(self.targets.len()),
-            &merged_samples,
-            &self.limits,
-        )
-    }
-}
-
-impl<'a> MultiTargets<'a> for MergedTargets<'a> {
-    fn targets_mut<'t>(&'t mut self) -> &'t mut TargetSet<'a> {
-        &mut self.targets
-    }
-}
-
 /// Target container
 pub struct TargetContainer<'a> {
-    system: Option<SystemTarget<'a>>,
-    singles: Vec<Box<dyn SingleTarget + 'a>>,
-    multis: Vec<Box<dyn MultiTargets<'a> + 'a>>,
+    targets: Vec<Box<Target<'a>>>,
     system_conf: &'a SystemConf,
+    system_limits: Option<Vec<Option<Limit>>>,
     current_group_id: pid_t,
+    with_system: bool,
 }
 
 impl<'a> TargetContainer<'a> {
     pub fn new(system_conf: &'a SystemConf) -> TargetContainer<'a> {
         TargetContainer {
-            system: None,
-            singles: Vec::new(),
-            multis: Vec::new(),
+            targets: Vec::new(),
             system_conf,
+            system_limits: None,
             current_group_id: system_conf.max_pid(),
+            with_system: false,
         }
     }
 
     pub fn has_system(&self) -> bool {
-        self.system.is_some()
+        self.system_limits.is_some()
     }
 
     pub fn refresh(&mut self) -> bool {
-        let mut changed = false;
-        self.singles.iter_mut().for_each(|target| {
-            if target.refresh() {
-                changed = true;
-            }
-        });
-
-        if !self.multis.is_empty() {
-            let mut pids = Vec::new();
-            {
-                let mut pid_finder = PidFinder::new(&mut pids);
-                self.multis
-                    .iter()
-                    .for_each(|target| pid_finder.register(target.name()));
-                pid_finder.fill();
-            }
-            self.multis
-                .iter_mut()
-                .enumerate()
-                .for_each(|(index, target)| {
-                    if target.targets_mut().refresh(pids[index].as_slice()) {
-                        changed = true;
-                    }
-                });
-        }
-        changed
+        //let mut changed = false;
+        // let mut forest = ProcessForest::new();
+        // forest.refresh(|_| false);
+        // self.targets.iter_mut().for_each(|target| {
+        //     if !target.is_alive() && target.clear_process() {
+        //         changed = true;
+        //     }
+        //     if target.is_replaceable() {
+        //         if let Some(pid_file) = target.pid_file() {
+        //             match read_pid_file(pid_file) {
+        //                 Ok(pid) => {
+        //                     if let Ok(process) = Process::new(pid) {
+        //                         target.set_process(process);
+        //                         changed = true;
+        //                     }
+        //                 }
+        //                 Err(err) => error!("{:?}", err),
+        //             }
+        //         } else if let Some(process) = process_finder.remove(&target.name) {
+        //             target.set_process(process);
+        //             changed = true;
+        //         }
+        //     }
+        // });
+        //changed
+        false
     }
 
     pub fn initialize(&mut self, collector: &Collector) {
-        if let Some(system) = &mut self.system {
-            system.initialize(collector);
+        if self.with_system {
+            self.system_limits = Some(vec![None; collector.metrics().len()]);
         }
-        self.singles
-            .iter_mut()
-            .for_each(|target| target.initialize(collector));
-        self.multis
-            .iter_mut()
-            .for_each(|target| target.initialize(collector));
     }
 
     pub fn collect(&self, collector: &mut Collector) {
         collector.rewind();
-        if let Some(system) = &self.system {
-            system.collect(collector);
+        if let Some(ref limits) = self.system_limits {
+            let mut system = SystemInfo::new(self.system_conf);
+            collector.collect_system(&mut system);
+            collector.collect(
+                "system",
+                0,
+                None,
+                &system.extract_metrics(collector.metrics()),
+                &limits,
+            );
         }
-        self.singles
-            .iter()
-            .for_each(|target| target.collect(collector));
-        self.multis
+        self.targets
             .iter()
             .for_each(|target| target.collect(collector));
         collector.finish();
     }
 
-    pub fn push(&mut self, target_id: &TargetId) -> anyhow::Result<()> {
+    pub fn push(&mut self, target_id: &TargetId) -> Result<(), CollectorError> {
         match target_id {
             TargetId::System => {
-                if self.system.is_none() {
-                    self.system = Some(SystemTarget::new(self.system_conf)?)
-                }
+                self.with_system = true;
             }
-            TargetId::Pid(pid) => self.singles.push(Box::new(StaticTarget::new_existing(
-                *pid,
-                self.system_conf,
-            )?)),
-            TargetId::PidFile(pid_file) => self
-                .singles
-                .push(Box::new(DynamicTarget::new(pid_file, self.system_conf))),
-            TargetId::ProcessName(name) => self.multis.push(Box::new(DistinctTargets::new(
-                name.as_str(),
-                self.system_conf,
-            ))),
-            TargetId::ProcessGroup(name) => {
-                self.current_group_id += 1;
-                self.multis.push(Box::new(MergedTargets::new(
-                    name.as_str(),
-                    self.current_group_id,
+            _ => self.targets.push(Box::new(match target_id {
+                TargetId::Pid(pid) => Target::new(
+                    Process::new(*pid).map_err(|_| CollectorError::InvalidProcessId(*pid))?,
                     self.system_conf,
-                )));
-            }
+                ),
+                TargetId::PidFile(pid_file) => Target::with_pid_file(pid_file, self.system_conf)?,
+                TargetId::ProcessName(name) => Target::with_name(name, self.system_conf),
+                _ => panic!("already matched"),
+            })),
         };
         Ok(())
     }
 
-    pub fn push_all(&mut self, target_ids: &[TargetId]) -> anyhow::Result<()> {
+    pub fn push_all(&mut self, target_ids: &[TargetId]) -> Result<(), CollectorError> {
         for target_id in target_ids {
             self.push(target_id)?;
         }

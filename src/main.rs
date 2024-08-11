@@ -41,7 +41,7 @@ mod format;
 mod info;
 mod metrics;
 mod parsers;
-mod proc_dir;
+mod process;
 mod sighdr;
 mod targets;
 mod utils;
@@ -142,9 +142,9 @@ struct Opt {
 
     #[argh(
         option,
-        short = 'F',
+        short = 'U',
         from_str_fn(metric_format_from_str),
-        description = "format to display metrics (raw, human)"
+        description = "units format to display metrics (raw, human)"
     )]
     format: Option<MetricFormat>,
 
@@ -160,15 +160,14 @@ struct Opt {
     #[argh(option, short = 'f', description = "process id file")]
     file: Vec<String>,
 
+    #[argh(option, short = 'P', description = "parent process id")]
+    parent_pid: Vec<i32>,
+
+    #[argh(option, short = 'F', description = "parent process id file")]
+    parent_file: Vec<String>,
+
     #[argh(option, short = 'n', description = "process name")]
     name: Vec<String>,
-
-    #[argh(
-        option,
-        short = 'm',
-        description = "group of processes with the same name"
-    )]
-    merged: Vec<String>,
 
     #[argh(positional, description = "metric to monitor")]
     metric: Vec<String>,
@@ -304,11 +303,15 @@ fn start(opt: Opt) -> anyhow::Result<()> {
         let path = PathBuf::from(pid_file.as_str());
         target_ids.push(TargetId::PidFile(path));
     }
+    for pid in opt.parent_pid {
+        target_ids.push(TargetId::ParentPid(pid));
+    }
+    for pid_file in opt.parent_file {
+        let path = PathBuf::from(pid_file.as_str());
+        target_ids.push(TargetId::ParentPidFile(path));
+    }
     for name in opt.name {
         target_ids.push(TargetId::ProcessName(name));
-    }
-    for name in opt.merged {
-        target_ids.push(TargetId::ProcessGroup(name));
     }
     if target_ids.is_empty() {
         warn!("no process to monitor, exiting.");

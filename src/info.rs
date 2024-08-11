@@ -17,16 +17,19 @@
 // Extract metrics from procfs interface.
 
 use libc::pid_t;
-use procfs::{
-    process::{FDTarget, Io, MMapPath, Process, Stat, StatM},
-    CpuTime, Current, CurrentSI, KernelStats, Meminfo, ProcResult,
-};
 use std::collections::HashMap;
 use std::path::Path;
 use std::slice::Iter;
 use std::time::SystemTime;
 
+use procfs::{
+    process::{FDTarget, Io, MMapPath, Stat, StatM},
+    CpuTime, Current, CurrentSI, KernelStats, Meminfo, ProcResult,
+};
+
 pub use procfs::process::{Limit, LimitValue};
+
+use crate::process::Process;
 
 use crate::{
     metrics::{FormattedMetric, MetricId},
