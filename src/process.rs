@@ -363,6 +363,16 @@ mod tests {
 
     use super::*;
 
+    fn sorted<T: Clone, I>(input: I) -> Vec<T>
+    where
+        T: Clone + Ord,
+        I: std::iter::IntoIterator<Item = T>,
+    {
+        let mut v = input.into_iter().collect::<Vec<T>>();
+        v.sort();
+        v
+    }
+
     #[derive(Debug)]
     struct ProcessBuilder {
         pid: pid_t,
@@ -422,14 +432,21 @@ mod tests {
     }
 
     impl ProcessFactory {
-        /// Return a default builder with predefined name and parent pid is the last pid.
-        fn builder(&mut self) -> ProcessBuilder {
+        /// Return a builder with predefined name and pid and parent pid is the last pid.
+        fn builder_with_pid(&mut self, pid: pid_t) -> ProcessBuilder {
             let name = format!("proc{}", self.count);
             let parent_pid = self.pid;
-            self.pid += 1;
+            if self.pid < pid {
+                self.pid = pid;
+            }
             self.count += 1;
             let start_time = self.start_time.elapsed().as_millis() as u64;
             ProcessBuilder::new(self.pid, parent_pid, &name, start_time)
+        }
+
+        /// Return a default builder with predefined name and parent pid is the last pid.
+        fn builder(&mut self) -> ProcessBuilder {
+            self.builder_with_pid(self.pid + 1)
         }
 
         fn last_pid(&self) -> pid_t {
@@ -521,10 +538,10 @@ mod tests {
         let mut factory = ProcessFactory::default();
         let mut forest = Forest::new();
         let mut processes = Vec::new();
-        let proc_root = factory.builder().name("root").build();
-        let root_pid = proc_root.pid();
+        let root = factory.builder().name("root").build();
+        let root_pid = root.pid();
         factory.branch(&mut processes, root_pid, "child1_", 3);
-        processes.push(proc_root);
+        processes.push(root);
         factory.branch(&mut processes, root_pid, "child2_", 2);
         forest.refresh_from(processes.drain(..), |_| true);
         assert_eq!(vec![root_pid], forest.root_pids());
@@ -538,5 +555,36 @@ mod tests {
             .map(|p| p.name().unwrap_or("<unknown>").to_string())
             .collect::<Vec<String>>();
         assert!(exe_tree.iter().eq(expected_exe_tree.iter()));
+    }
+
+    #[test]
+    fn test_multi_trees() {
+        let mut factory = ProcessFactory::default();
+        let mut forest = Forest::new();
+        let mut processes = Vec::new();
+        // First tree (root first)
+        let root1 = factory.builder_with_pid(5).name("root1").build();
+        let root1_pid = root1.pid();
+        processes.push(root1);
+        factory.branch(&mut processes, root1_pid, "child1_", 2);
+        // First tree (root last)
+        let root2 = factory
+            .builder_with_pid(10)
+            .parent_pid(0)
+            .name("root2")
+            .build();
+        let root2_pid = root2.pid();
+        factory.branch(&mut processes, root2_pid, "child2_", 1);
+        processes.push(root2);
+
+        forest.refresh_from(dbg!(processes).drain(..), |_| true);
+
+        let expected_pids = {
+            let mut pids = vec![root1_pid, root2_pid];
+            pids.sort();
+            pids
+        };
+        let pids = sorted(forest.root_pids());
+        assert_eq!(expected_pids, pids);
     }
 }

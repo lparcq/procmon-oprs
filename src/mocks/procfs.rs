@@ -29,7 +29,6 @@ pub(crate) mod process {
         pid: pid_t,
         parent_pid: pid_t,
         exe: Option<String>,
-        path: Option<PathBuf>,
         start_time: u64,
         ttl: Option<RefCell<u16>>,
     }
@@ -40,7 +39,6 @@ pub(crate) mod process {
                 pid,
                 parent_pid: 0,
                 exe: None,
-                path: None,
                 start_time: 0,
                 ttl: None,
             })
@@ -53,12 +51,10 @@ pub(crate) mod process {
             start_time: u64,
             ttl: Option<u16>,
         ) -> Self {
-            let path = PathBuf::from(exe);
             Self {
                 pid,
                 parent_pid,
                 exe: Some(exe.to_string()),
-                path: Some(path),
                 start_time,
                 ttl: ttl.map(RefCell::new),
             }
@@ -119,29 +115,25 @@ pub(crate) mod process {
         }
 
         pub(crate) fn stat(&self) -> ProcResult<Stat> {
-            match self.path.as_ref() {
-                Some(path) => {
-                    let mut st: Stat = procfs::FromRead::from_read(io::Cursor::new(format!(
-                        "{} ({}) S {} {}",
-                        self.pid,
-                        path.file_name()
-                            .expect("Process::stat: exe has no file name")
-                            .to_str()
-                            .expect("Process::stat: unprintable file name"),
-                        self.parent_pid,
-                        (0..50)
-                            .map(|i| i.to_string())
-                            .collect::<Vec<String>>()
-                            .join(" "),
-                        //self.start_time
-                    )))
-                    .expect("Process::stat: cannot decode fake stat");
-                    st.starttime = self.start_time;
+            let mut st: Stat = procfs::FromRead::from_read(io::Cursor::new(format!(
+                "{} ({}) S {} {}",
+                self.pid,
+                self.exe()?
+                    .file_name()
+                    .expect("Process::stat: exe has no file name")
+                    .to_str()
+                    .expect("Process::stat: unprintable file name"),
+                self.parent_pid,
+                (0..50)
+                    .map(|i| i.to_string())
+                    .collect::<Vec<String>>()
+                    .join(" "),
+                //self.start_time
+            )))
+            .expect("Process::stat: cannot decode fake stat");
+            st.starttime = self.start_time;
 
-                    Ok(st)
-                }
-                None => Err(new_error("no stat")),
-            }
+            Ok(st)
         }
 
         pub(crate) fn statm(&self) -> ProcResult<StatM> {
