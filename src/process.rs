@@ -558,6 +558,7 @@ mod tests {
     }
 
     #[test]
+    /// Build a forest of two trees and check that there are two roots.
     fn test_multi_trees() {
         let mut factory = ProcessFactory::default();
         let mut forest = Forest::new();
@@ -586,5 +587,49 @@ mod tests {
         };
         let pids = sorted(forest.root_pids());
         assert_eq!(expected_pids, pids);
+    }
+
+    #[test]
+    /// Build a tree with a predicate.
+    ///
+    /// - Unselected process must be hidden.
+    /// - Selected process must not be hidden.
+    /// - Only selected processes and their parents are in the tree.
+    fn test_predicate() {
+        panic!("test_predicate: unimplemented");
+    }
+
+    #[test]
+    /// Refresh a tree with new processes.
+    fn test_refresh_with_new_processes() {
+        panic!("test_refresh_with_new_processes: unimplemented");
+    }
+
+    #[test]
+    /// Refresh a tree with processes that die.
+    fn test_refresh_with_old_processes() {
+        panic!("test_refresh_with_old_processes: unimplemented");
+    }
+
+    #[test]
+    /// Refresh a tree where the root process dies.
+    ///
+    /// - The tree must have multiple roots
+    fn test_refresh_with_root_stopped() {
+        panic!("test_refresh_with_root_stopped: unimplemented");
+    }
+
+    #[test]
+    /// Refresh a tree with a process that is reparented (parent died).
+    fn test_refresh_reparent() {
+        panic!("test_refresh_reparent: unimplemented");
+    }
+
+    #[test]
+    /// Refresh a tree with a PID reused.
+    ///
+    /// - A process dies and another process gets the same PID.
+    fn test_refresh_pid_reused() {
+        panic!("test_refresh_pid_reused: unimplemented");
     }
 }
