@@ -76,7 +76,7 @@ pub struct ProcessInstance {
 }
 
 impl ProcessInstance {
-    fn new(process: Process, hidden: bool) -> Result<Self, ProcessError> {
+    fn new(process: Process) -> Result<Self, ProcessError> {
         let pid = process.pid();
         let stat = process
             .stat()
@@ -88,7 +88,7 @@ impl ProcessInstance {
             start_time: stat.starttime,
             name,
             process,
-            hidden,
+            hidden: true,
         })
     }
 
@@ -230,6 +230,11 @@ impl Forest {
         }
     }
 
+    /// Number of processes
+    pub fn count(&self) -> usize {
+        self.arena.count()
+    }
+
     /// Get process with a given PID if it exists.
     pub fn get_process<'a>(&'a self, pid: pid_t) -> Option<&'a ProcessInstance> {
         self.processes
@@ -293,7 +298,7 @@ impl Forest {
         }
         for process in processes {
             let pid = process.pid();
-            match ProcessInstance::new(process, false) {
+            match ProcessInstance::new(process) {
                 Ok(mut info) => {
                     if predicate(&info) {
                         info.show();
@@ -578,7 +583,7 @@ mod tests {
         factory.branch(&mut processes, root2_pid, "child2_", 1);
         processes.push(root2);
 
-        forest.refresh_from(dbg!(processes).drain(..), |_| true);
+        forest.refresh_from(processes.drain(..), |_| true);
 
         let expected_pids = {
             let mut pids = vec![root1_pid, root2_pid];
@@ -595,8 +600,55 @@ mod tests {
     /// - Unselected process must be hidden.
     /// - Selected process must not be hidden.
     /// - Only selected processes and their parents are in the tree.
+    ///
+    /// Tree:
+    /// 1
+    /// |_2_3_4
+    /// |   \_[5]
+    /// \_6_[7]_8
+    ///
+    /// - Processes 5 and 7 are selected.
+    /// - Processes 4 and 8 must not be in the tree.
+    /// - Other processes are hidden.
     fn test_predicate() {
-        panic!("test_predicate: unimplemented");
+        let mut factory = ProcessFactory::default();
+        // First tree (root first)
+        let root = factory.builder().name("root").build();
+        let root_pid = root.pid();
+        let proc2 = factory.builder().name("proc2").build();
+        let proc3 = factory.builder().name("proc3").build();
+        let proc3_pid = proc3.pid();
+        let proc4 = factory.builder().name("proc4").build();
+        let proc4_pid = proc4.pid();
+        let proc5 = factory
+            .builder()
+            .name("proc5")
+            .parent_pid(proc3_pid)
+            .build();
+        let proc5_pid = proc5.pid();
+        let proc6 = factory.builder().name("proc6").parent_pid(root_pid).build();
+        let proc7 = factory.builder().name("proc7").build();
+        let proc7_pid = proc7.pid();
+        let proc8 = factory.builder().name("proc8").build();
+        let proc8_pid = proc8.pid();
+        let mut processes = vec![root, proc2, proc3, proc4, proc5, proc6, proc7, proc8];
+
+        let mut forest = Forest::new();
+        let predicate = |p: &ProcessInstance| p.pid() == proc5_pid || p.pid() == proc7_pid;
+        forest.refresh_from(processes.drain(..), predicate);
+
+        assert_eq!(6, forest.count());
+        for instance in forest.descendants(root_pid).unwrap() {
+            assert_eq!(predicate(instance), !instance.hidden());
+            assert_ne!(proc4_pid, instance.pid());
+            assert_ne!(proc8_pid, instance.pid());
+        }
+    }
+
+    #[test]
+    /// Refresh multiple times with different predicates.
+    fn test_refresh_different_predicates() {
+        panic!("test_refresh_different_predicates: unimplemented");
     }
 
     #[test]
