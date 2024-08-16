@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020  Laurent Pelecq
+// Copyright (C) 2024 Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -18,4 +18,4 @@ mod forest;
 mod stat;
 
 pub(crate) use self::forest::{process_identifier, Process};
-pub(crate) use self::stat::{Limit, LimitValue, ProcessInfo, SystemConf, SystemInfo};
+pub(crate) use self::stat::{Limit, LimitValue, ProcessStat, SystemConf, SystemStat};

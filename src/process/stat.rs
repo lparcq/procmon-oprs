@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020  Laurent Pelecq
+// Copyright (C) 2020-2024 Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -29,7 +29,7 @@ use procfs::{
 
 pub use procfs::process::{Limit, LimitValue};
 
-use crate::process::Process;
+use super::Process;
 
 use crate::{
     metrics::{FormattedMetric, MetricId},
@@ -111,15 +111,15 @@ impl SystemConf {
 }
 
 /// System info
-pub struct SystemInfo<'a> {
+pub struct SystemStat<'a> {
     system_conf: &'a SystemConf,
     cputime: Option<CpuTime>,
     meminfo: Option<Meminfo>,
 }
 
-impl<'a> SystemInfo<'a> {
-    pub fn new(system_conf: &'a SystemConf) -> SystemInfo<'a> {
-        SystemInfo {
+impl<'a> SystemStat<'a> {
+    pub fn new(system_conf: &'a SystemConf) -> SystemStat<'a> {
+        SystemStat {
             system_conf,
             cputime: None,
             meminfo: None,
@@ -339,7 +339,7 @@ impl MapsStats {
 /// Elapsed time is returned as a number of ticks since boot time. And boot time is given
 /// as a number of seconds since the Epoch. Elapsed time is returned as milliseconds also
 /// even if it's only precise in seconds.
-pub struct ProcessInfo<'a, 'b> {
+pub struct ProcessStat<'a, 'b> {
     process: &'a Process,
     system_conf: &'b SystemConf,
     fd_stats: Option<FdStats>,
@@ -349,9 +349,9 @@ pub struct ProcessInfo<'a, 'b> {
     statm: Option<StatM>,
 }
 
-impl<'a, 'b> ProcessInfo<'a, 'b> {
-    pub fn new(process: &'a Process, system_conf: &'b SystemConf) -> ProcessInfo<'a, 'b> {
-        ProcessInfo {
+impl<'a, 'b> ProcessStat<'a, 'b> {
+    pub fn new(process: &'a Process, system_conf: &'b SystemConf) -> ProcessStat<'a, 'b> {
+        ProcessStat {
             process,
             system_conf,
             fd_stats: None,
@@ -483,7 +483,7 @@ impl<'a, 'b> ProcessInfo<'a, 'b> {
                 MetricId::MemRss => self.with_system_stat(|stat, sc| stat.rss * sc.page_size),
                 MetricId::MemText => self.with_system_statm(|statm, sc| statm.text * sc.page_size),
                 MetricId::MemData => self.with_system_statm(|statm, sc| statm.data * sc.page_size),
-                MetricId::TimeElapsed => self.with_system_stat(ProcessInfo::elapsed_seconds) * 1000,
+                MetricId::TimeElapsed => self.with_system_stat(ProcessStat::elapsed_seconds) * 1000,
                 MetricId::TimeCpu => self
                     .system_conf
                     .ticks_to_millis(self.with_stat(|stat| stat.stime + stat.utime)),

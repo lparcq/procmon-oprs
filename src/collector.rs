@@ -26,7 +26,7 @@ use crate::{
     agg::Aggregation,
     format::Formatter,
     metrics::{FormattedMetric, MetricId},
-    process::{Limit, LimitValue, SystemInfo},
+    process::{Limit, LimitValue, SystemStat},
 };
 
 /// Tell if it makes sense to track metric changes
@@ -445,7 +445,7 @@ impl<'a> Collector<'a> {
     }
 
     /// Set idle system time
-    pub fn collect_system(&mut self, system: &mut SystemInfo) {
+    pub fn collect_system(&mut self, system: &mut SystemStat) {
         self.updater.push_system_time(system.total_time());
     }
 

@@ -23,7 +23,7 @@ use std::{
 
 use crate::{
     collector::Collector,
-    process::{Limit, Process, ProcessInfo, SystemConf, SystemInfo},
+    process::{Limit, Process, ProcessStat, SystemConf, SystemStat},
     utils::*,
 };
 
@@ -123,15 +123,15 @@ impl<'a> Target<'a> {
         self.pid_file.as_ref()
     }
 
-    fn process_info(&self) -> Option<ProcessInfo> {
+    fn process_stat(&self) -> Option<ProcessStat> {
         self.process
             .as_ref()
-            .map(|process| ProcessInfo::new(process, self.system_conf))
+            .map(|process| ProcessStat::new(process, self.system_conf))
     }
 
     fn collect(&self, collector: &mut Collector) {
         if let Some(ref process) = self.process {
-            let mut proc_info = ProcessInfo::new(process, self.system_conf);
+            let mut proc_info = ProcessStat::new(process, self.system_conf);
             collector.collect(
                 &self.name,
                 process.pid(),
@@ -263,7 +263,7 @@ impl<'a> TargetContainer<'a> {
     pub fn collect(&self, collector: &mut Collector) {
         collector.rewind();
         if let Some(ref limits) = self.system_limits {
-            let mut system = SystemInfo::new(self.system_conf);
+            let mut system = SystemStat::new(self.system_conf);
             collector.collect_system(&mut system);
             collector.collect(
                 "system",
