@@ -25,8 +25,8 @@ use strum_macros::Display;
 use crate::{
     agg::Aggregation,
     format::Formatter,
-    info::{Limit, LimitValue, SystemInfo},
     metrics::{FormattedMetric, MetricId},
+    process::{Limit, LimitValue, SystemInfo},
 };
 
 /// Tell if it makes sense to track metric changes

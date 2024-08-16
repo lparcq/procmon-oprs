@@ -28,8 +28,8 @@ use crate::{
     console::BuiltinTheme,
     display::{DisplayDevice, PauseStatus, TerminalDevice, TextDevice},
     export::{CsvExporter, Exporter, RrdExporter},
-    info::SystemConf,
     metrics::{FormattedMetric, MetricDataType, MetricId, MetricNamesParser},
+    process::SystemConf,
     sighdr::SignalHandler,
     targets::{TargetContainer, TargetId},
 };

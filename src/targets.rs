@@ -23,8 +23,7 @@ use std::{
 
 use crate::{
     collector::Collector,
-    info::{Limit, ProcessInfo, SystemConf, SystemInfo},
-    process::Process,
+    process::{Limit, Process, ProcessInfo, SystemConf, SystemInfo},
     utils::*,
 };
 

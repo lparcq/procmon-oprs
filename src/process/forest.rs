@@ -605,7 +605,6 @@ mod tests {
 
         let mut forest = Forest::new();
         forest.refresh_from(processes.drain(..), |_| true);
-        let root_pids = forest.root_pids();
 
         let expected_pids = vec![1, 5];
         let pids = sorted(forest.root_pids());

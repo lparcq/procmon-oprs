@@ -38,7 +38,6 @@ mod console;
 mod display;
 mod export;
 mod format;
-mod info;
 mod metrics;
 mod parsers;
 mod process;
@@ -337,7 +336,7 @@ fn start(opt: Opt) -> anyhow::Result<()> {
                 log::debug!("{}", bcktrc);
             }
         }));
-        let system_conf = info::SystemConf::new()?;
+        let system_conf = process::SystemConf::new()?;
         if let Err(err) = app.run(&target_ids, &system_conf) {
             error!("{}", err);
             if settings.logging.file.is_some() {
