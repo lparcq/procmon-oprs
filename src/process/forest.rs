@@ -66,8 +66,8 @@ pub fn process_identifier(process: &Process) -> String {
 }
 
 #[derive(Debug)]
-/// A slot for an existing or past process.
-pub struct ProcessInstance {
+/// Information about for an existing or past process.
+pub struct ProcessInfo {
     pid: pid_t,
     parent_pid: pid_t,
     start_time: u64,
@@ -76,7 +76,7 @@ pub struct ProcessInstance {
     hidden: bool,
 }
 
-impl ProcessInstance {
+impl ProcessInfo {
     fn new(process: Process) -> Result<Self, ProcessError> {
         let pid = process.pid();
         let stat = process
@@ -121,7 +121,7 @@ impl ProcessInstance {
         self.hidden = false;
     }
 
-    pub fn same_as(&self, other: &ProcessInstance) -> bool {
+    pub fn same_as(&self, other: &ProcessInfo) -> bool {
         self.pid == other.pid && self.start_time == other.start_time
     }
 }
@@ -133,7 +133,7 @@ pub struct RootIter<'a, 'b> {
 }
 
 impl<'a, 'b> Iterator for RootIter<'a, 'b> {
-    type Item = &'a ProcessInstance;
+    type Item = &'a ProcessInfo;
     fn next(&mut self) -> Option<Self::Item> {
         self.inner
             .next()
@@ -143,11 +143,11 @@ impl<'a, 'b> Iterator for RootIter<'a, 'b> {
 
 pub struct Descendants<'a, 'b> {
     forest: &'a Forest,
-    inner: indextree::Descendants<'b, ProcessInstance>,
+    inner: indextree::Descendants<'b, ProcessInfo>,
 }
 
 impl<'a, 'b> Iterator for Descendants<'a, 'b> {
-    type Item = &'a ProcessInstance;
+    type Item = &'a ProcessInfo;
     fn next(&mut self) -> Option<Self::Item> {
         self.inner
             .next()
@@ -161,7 +161,7 @@ impl<'a, 'b> Iterator for Descendants<'a, 'b> {
 /// are in the forest.
 #[derive(Debug)]
 pub struct Forest {
-    arena: Arena<ProcessInstance>,
+    arena: Arena<ProcessInfo>,
     roots: BTreeSet<NodeId>,
     processes: BTreeMap<pid_t, NodeId>,
 }
@@ -176,7 +176,7 @@ impl Forest {
     }
 
     /// Get a process that is known to be in the arena.
-    fn get_known_info<'a>(&'a self, node_id: NodeId) -> &'a ProcessInstance {
+    fn get_known_info<'a>(&'a self, node_id: NodeId) -> &'a ProcessInfo {
         self.arena
             .get(node_id)
             .expect("Internal error: dangling root in tree.")
@@ -207,8 +207,8 @@ impl Forest {
         }
     }
 
-    /// Add a process instance in the tree
-    fn add_node(&mut self, info: ProcessInstance) {
+    /// Add a process in the tree
+    fn add_node(&mut self, info: ProcessInfo) {
         let pid = info.pid();
         let parent_pid = info.parent_pid();
         let node_id = self.arena.new_node(info);
@@ -237,7 +237,7 @@ impl Forest {
     }
 
     /// Get process with a given PID if it exists.
-    pub fn get_process<'a>(&'a self, pid: pid_t) -> Option<&'a ProcessInstance> {
+    pub fn get_process<'a>(&'a self, pid: pid_t) -> Option<&'a ProcessInfo> {
         self.processes
             .get(&pid)
             .map(|node_id| self.get_known_info(*node_id))
@@ -278,9 +278,9 @@ impl Forest {
     pub fn refresh_from<I, P>(&mut self, processes: I, predicate: P) -> bool
     where
         I: Iterator<Item = Process>,
-        P: Fn(&ProcessInstance) -> bool,
+        P: Fn(&ProcessInfo) -> bool,
     {
-        let mut other_processes: BTreeMap<pid_t, ProcessInstance> = BTreeMap::new();
+        let mut other_processes: BTreeMap<pid_t, ProcessInfo> = BTreeMap::new();
         let invalid_pids = self
             .arena
             .iter()
@@ -299,7 +299,7 @@ impl Forest {
         }
         for process in processes {
             let pid = process.pid();
-            match ProcessInstance::new(process) {
+            match ProcessInfo::new(process) {
                 Ok(mut info) => {
                     if predicate(&info) {
                         info.show();
@@ -351,7 +351,7 @@ impl Forest {
     #[cfg(not(test))]
     pub fn refresh<P>(&mut self, predicate: P) -> Result<bool, ProcessError>
     where
-        P: Fn(&ProcessInstance) -> bool,
+        P: Fn(&ProcessInfo) -> bool,
     {
         Ok(self.refresh_from(
             all_processes()
@@ -559,9 +559,9 @@ mod tests {
         let mut processes = vec![factory.builder().name(NAME).build()];
         let first_pid = factory.last_pid();
         forest.refresh_from(processes.drain(..), |info| info.pid() == first_pid);
-        let instance = forest.get_process(first_pid).unwrap();
-        assert_eq!(first_pid, instance.pid());
-        assert_eq!(NAME, instance.name().unwrap());
+        let pinfo = forest.get_process(first_pid).unwrap();
+        assert_eq!(first_pid, pinfo.pid());
+        assert_eq!(NAME, pinfo.name().unwrap());
     }
 
     /// Create a forest with a single tree.
@@ -636,7 +636,7 @@ mod tests {
         let proc7_pid = processes[7].pid();
 
         let mut forest = Forest::new();
-        let predicate = |p: &ProcessInstance| p.pid() == proc4_pid || p.pid() == proc6_pid;
+        let predicate = |p: &ProcessInfo| p.pid() == proc4_pid || p.pid() == proc6_pid;
         forest.refresh_from(processes.drain(..), predicate);
 
         let root_pid = forest.root_pids()[0];
