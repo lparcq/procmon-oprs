@@ -36,6 +36,9 @@ ratatui = { version = "0.27", default-features = false, features = ["termion"] }
 thiserror = "1.0"
 xdg = "2"
 
+[dev-dependencies]
+rand = "0.8"
+
 [profile.release]
 lto = true
 panic = 'abort'
@@ -43,7 +46,3 @@ opt-level = "z"
 debug = false
 strip = true
 codegen-units = 1
-
-[profile.dev]
-opt-level = 0
-debug = 0

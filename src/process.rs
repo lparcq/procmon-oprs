@@ -66,6 +66,7 @@ pub fn process_identifier(process: &Process) -> String {
 }
 
 #[derive(Debug)]
+/// A slot for an existing or past process.
 pub struct ProcessInstance {
     pid: pid_t,
     parent_pid: pid_t,
@@ -185,22 +186,22 @@ impl Forest {
     /// Attach a node in the tree.
     fn attach_node(&mut self, node_id: NodeId, pid: pid_t, parent_pid: pid_t) {
         self.processes.insert(pid, node_id);
+        // It may be a parent of a root
+        let adopted_ids = self
+            .roots
+            .iter()
+            .filter(|root_id| self.get_known_info(**root_id).parent_pid() == pid)
+            .copied()
+            .collect::<Vec<NodeId>>();
+        for root_id in adopted_ids {
+            self.roots.remove(&root_id);
+            node_id.append(root_id, &mut self.arena);
+        }
         match self.processes.get(&parent_pid) {
             Some(parent_node_id) => {
                 parent_node_id.append(node_id, &mut self.arena);
             }
             None => {
-                // No parent but it may be a parent of a root
-                let adopted_ids = self
-                    .roots
-                    .iter()
-                    .filter(|root_id| self.get_known_info(**root_id).parent_pid() == pid)
-                    .copied()
-                    .collect::<Vec<NodeId>>();
-                for root_id in adopted_ids {
-                    self.roots.remove(&root_id);
-                    node_id.append(root_id, &mut self.arena);
-                }
                 self.roots.insert(node_id); // This node is a root
             }
         }
@@ -364,7 +365,8 @@ impl Forest {
 #[cfg(test)]
 mod tests {
 
-    use std::time::Instant;
+    use rand::seq::SliceRandom;
+    use std::{collections::HashMap, time::Instant};
 
     use super::*;
 
@@ -458,20 +460,35 @@ mod tests {
             self.pid
         }
 
-        fn branch(
+        /// Builds a forest based on constraits on parent pids.
+        ///
+        /// The vector `parents` gives the index of some parent of process.
+        ///
+        /// The first process has no parent. By default, process parent is the last process.
+        ///
+        /// Ex: [ (2, Some(0)), (3, None) ] means that the parent of process #2 is
+        /// process #0 (the root) and that process #3 has no parent. It describes a
+        /// forest of two trees.
+        fn from_parent_pids(
             &mut self,
-            processes: &mut Vec<Process>,
-            parent_pid: pid_t,
-            basename: &str,
+            constraints: &[(usize, Option<usize>)],
             count: usize,
-        ) {
-            let mut parent_pid = parent_pid;
-            for n in 0..count {
-                let name = format!("{basename}{n}");
-                let proc = self.builder().name(&name).parent_pid(parent_pid).build();
-                processes.push(proc);
-                parent_pid = self.pid;
-            }
+        ) -> Vec<Process> {
+            let constraints =
+                HashMap::<usize, Option<usize>>::from_iter(constraints.iter().copied());
+            let mut pids = Vec::new();
+            (0..count)
+                .map(|idx| {
+                    let name = format!("proc{idx}");
+                    let parent_pid = constraints
+                        .get(&idx)
+                        .map(|opt_idx| opt_idx.map(|idx| pids[idx]).unwrap_or(0))
+                        .unwrap_or(self.last_pid());
+                    let proc = self.builder().name(&name).parent_pid(parent_pid).build();
+                    pids.push(proc.pid());
+                    proc
+                })
+                .collect::<Vec<Process>>()
         }
     }
 
@@ -482,6 +499,26 @@ mod tests {
                 start_time: Instant::now(),
                 count: 0,
             }
+        }
+    }
+
+    #[test]
+    /// Make sure the factory builds correct processes.
+    ///
+    /// |_0
+    /// | |_1_2_3
+    /// | \_4_5
+    /// |_6
+    ///   \_7
+    fn test_forest_from_parent_pids() {
+        let mut factory = ProcessFactory::default();
+        let parent_pids = &[0, 1, 2, 3, 1, 5, 0, 7];
+        let constraints = &[(1, Some(0)), (4, Some(0)), (6, None)];
+        let processes = factory.from_parent_pids(constraints, 8);
+        assert_eq!(8, processes.len());
+        for (expected_ppid, proc) in std::iter::zip(parent_pids, processes) {
+            let parent_pid = proc.stat().unwrap().ppid;
+            assert_eq!(*expected_ppid, parent_pid);
         }
     }
 
@@ -533,63 +570,44 @@ mod tests {
     /// that children comes sometimes before sometimes after their parent.
     ///
     /// Tree:
-    /// 1
-    /// |_2_3_4
-    /// \_5_6
-    ///
-    /// List: 2, 3, 4, 1, 5, 6
+    /// 0
+    /// |_1_2
+    /// |   \_5
+    /// \_3_4
     #[test]
     fn test_single_tree() {
         let mut factory = ProcessFactory::default();
-        let mut forest = Forest::new();
-        let mut processes = Vec::new();
-        let root = factory.builder().name("root").build();
-        let root_pid = root.pid();
-        factory.branch(&mut processes, root_pid, "child1_", 3);
-        processes.push(root);
-        factory.branch(&mut processes, root_pid, "child2_", 2);
-        forest.refresh_from(processes.drain(..), |_| true);
-        assert_eq!(vec![root_pid], forest.root_pids());
+        let mut processes = factory.from_parent_pids(&[(3, Some(0)), (5, Some(2))], 6);
 
-        let expected_exe_tree = vec![
-            "root", "child1_0", "child1_1", "child1_2", "child2_0", "child2_1",
-        ];
+        let mut forest = Forest::new();
+        forest.refresh_from(processes.drain(..), |_| true);
+        let root_pids = forest.root_pids();
+        assert_eq!(vec![1], root_pids);
+
+        let expected_exe_tree = vec!["proc0", "proc1", "proc2", "proc5", "proc3", "proc4"];
         let exe_tree = forest
-            .descendants(root_pid)
+            .descendants(root_pids[0])
             .unwrap()
             .map(|p| p.name().unwrap_or("<unknown>").to_string())
             .collect::<Vec<String>>();
-        assert!(exe_tree.iter().eq(expected_exe_tree.iter()));
+        assert_eq!(expected_exe_tree.len(), exe_tree.len());
+        std::iter::zip(expected_exe_tree, exe_tree).for_each(|(expected_name, name)| {
+            assert_eq!(expected_name, name);
+        });
     }
 
     #[test]
     /// Build a forest of two trees and check that there are two roots.
     fn test_multi_trees() {
         let mut factory = ProcessFactory::default();
+        let mut processes = factory.from_parent_pids(&[(4, None)], 8);
+        processes.shuffle(&mut rand::thread_rng());
+
         let mut forest = Forest::new();
-        let mut processes = Vec::new();
-        // First tree (root first)
-        let root1 = factory.builder_with_pid(5).name("root1").build();
-        let root1_pid = root1.pid();
-        processes.push(root1);
-        factory.branch(&mut processes, root1_pid, "child1_", 2);
-        // First tree (root last)
-        let root2 = factory
-            .builder_with_pid(10)
-            .parent_pid(0)
-            .name("root2")
-            .build();
-        let root2_pid = root2.pid();
-        factory.branch(&mut processes, root2_pid, "child2_", 1);
-        processes.push(root2);
-
         forest.refresh_from(processes.drain(..), |_| true);
+        let root_pids = forest.root_pids();
 
-        let expected_pids = {
-            let mut pids = vec![root1_pid, root2_pid];
-            pids.sort();
-            pids
-        };
+        let expected_pids = vec![1, 5];
         let pids = sorted(forest.root_pids());
         assert_eq!(expected_pids, pids);
     }
@@ -602,46 +620,34 @@ mod tests {
     /// - Only selected processes and their parents are in the tree.
     ///
     /// Tree:
-    /// 1
-    /// |_2_3_4
-    /// |   \_[5]
-    /// \_6_[7]_8
+    /// 0
+    /// |_1_2_3
+    /// |   \_[4]
+    /// \_5_[6]_7
     ///
     /// - Processes 5 and 7 are selected.
     /// - Processes 4 and 8 must not be in the tree.
     /// - Other processes are hidden.
     fn test_predicate() {
         let mut factory = ProcessFactory::default();
-        // First tree (root first)
-        let root = factory.builder().name("root").build();
-        let root_pid = root.pid();
-        let proc2 = factory.builder().name("proc2").build();
-        let proc3 = factory.builder().name("proc3").build();
-        let proc3_pid = proc3.pid();
-        let proc4 = factory.builder().name("proc4").build();
-        let proc4_pid = proc4.pid();
-        let proc5 = factory
-            .builder()
-            .name("proc5")
-            .parent_pid(proc3_pid)
-            .build();
-        let proc5_pid = proc5.pid();
-        let proc6 = factory.builder().name("proc6").parent_pid(root_pid).build();
-        let proc7 = factory.builder().name("proc7").build();
-        let proc7_pid = proc7.pid();
-        let proc8 = factory.builder().name("proc8").build();
-        let proc8_pid = proc8.pid();
-        let mut processes = vec![root, proc2, proc3, proc4, proc5, proc6, proc7, proc8];
+        let mut processes = factory.from_parent_pids(&[(4, Some(2)), (5, Some(0))], 8);
+        let proc3_pid = processes[3].pid();
+        let proc4_pid = processes[4].pid();
+        let proc6_pid = processes[6].pid();
+        let proc7_pid = processes[7].pid();
 
         let mut forest = Forest::new();
-        let predicate = |p: &ProcessInstance| p.pid() == proc5_pid || p.pid() == proc7_pid;
+        let predicate = |p: &ProcessInstance| p.pid() == proc4_pid || p.pid() == proc6_pid;
         forest.refresh_from(processes.drain(..), predicate);
 
-        assert_eq!(6, forest.count());
-        for instance in forest.descendants(root_pid).unwrap() {
-            assert_eq!(predicate(instance), !instance.hidden());
-            assert_ne!(proc4_pid, instance.pid());
-            assert_ne!(proc8_pid, instance.pid());
+        let root_pid = forest.root_pids()[0];
+
+        assert_eq!(6, forest.count()); // Process 3 and 7 are discarded
+        for pinfo in forest.descendants(root_pid).unwrap() {
+            assert_eq!(predicate(pinfo), !pinfo.hidden());
+            // Processes that have been discarded
+            assert_ne!(proc3_pid, pinfo.pid());
+            assert_ne!(proc7_pid, pinfo.pid());
         }
     }
 
