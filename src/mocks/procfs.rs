@@ -24,7 +24,7 @@ pub(crate) mod process {
         io::Error::new(io::ErrorKind::Other, msg)
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub(crate) struct Process {
         pid: pid_t,
         parent_pid: pid_t,
