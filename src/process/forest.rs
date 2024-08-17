@@ -127,6 +127,7 @@ impl ProcessInfo {
 }
 
 #[derive(Debug)]
+/// Iterator on a forest roots.
 pub struct RootIter<'a, 'b> {
     forest: &'a Forest,
     inner: std::collections::btree_set::Iter<'b, NodeId>,
@@ -141,6 +142,7 @@ impl<'a, 'b> Iterator for RootIter<'a, 'b> {
     }
 }
 
+/// Iterator on a process descendants.
 pub struct Descendants<'a, 'b> {
     forest: &'a Forest,
     inner: indextree::Descendants<'b, ProcessInfo>,
@@ -155,6 +157,7 @@ impl<'a, 'b> Iterator for Descendants<'a, 'b> {
     }
 }
 
+#[derive(Debug)]
 /// State used during refresh
 struct RefreshState {
     processes: BTreeMap<pid_t, ProcessInfo>,
@@ -407,7 +410,8 @@ impl Forest {
     }
 
     #[cfg(not(test))]
-    pub fn refresh<P>(&mut self, predicate: P) -> Result<bool, ProcessError>
+    /// Refresh the forest with all the visible processes in the system if they match the predicate.
+    pub fn refresh_if<P>(&mut self, predicate: P) -> Result<bool, ProcessError>
     where
         P: Fn(&ProcessInfo) -> bool,
     {
@@ -417,6 +421,12 @@ impl Forest {
                 .filter_map(ProcResult::ok),
             predicate,
         ))
+    }
+
+    #[cfg(not(test))]
+    /// Refresh the forest with all the visible processes in the system.
+    pub fn refresh(&mut self) -> Result<bool, ProcessError> {
+        self.refresh_if(|_| true)
     }
 }
 
@@ -436,6 +446,11 @@ mod tests {
         let mut v = input.into_iter().collect::<Vec<T>>();
         v.sort();
         v
+    }
+
+    fn shuffle(mut processes: Vec<Process>) -> Vec<Process> {
+        processes.shuffle(&mut rand::thread_rng());
+        processes
     }
 
     #[derive(Debug)]
@@ -499,12 +514,11 @@ mod tests {
     impl ProcessFactory {
         /// Return a builder with predefined name and pid and parent pid is the last pid.
         fn builder_with_pid(&mut self, pid: pid_t) -> ProcessBuilder {
-            let name = format!("proc{}", self.count);
+            let name = self.next_name();
             let parent_pid = self.pid;
             if self.pid < pid {
                 self.pid = pid;
             }
-            self.count += 1;
             let start_time = self.start_time.elapsed().as_millis() as u64;
             ProcessBuilder::new(self.pid, parent_pid, &name, start_time)
         }
@@ -514,6 +528,19 @@ mod tests {
             self.builder_with_pid(self.pid + 1)
         }
 
+        /// Build a process with default parameters.
+        fn build(&mut self) -> Process {
+            self.builder().build()
+        }
+
+        /// Next unique name.
+        fn next_name(&mut self) -> String {
+            let count = self.count;
+            self.count += 1;
+            format!("proc{count}")
+        }
+
+        /// Last PID used.
         fn last_pid(&self) -> pid_t {
             self.pid
         }
@@ -537,12 +564,11 @@ mod tests {
             let mut pids = Vec::new();
             (0..count)
                 .map(|idx| {
-                    let name = format!("proc{idx}");
                     let parent_pid = constraints
                         .get(&idx)
                         .map(|opt_idx| opt_idx.map(|idx| pids[idx]).unwrap_or(0))
                         .unwrap_or(self.last_pid());
-                    let proc = self.builder().name(&name).parent_pid(parent_pid).build();
+                    let proc = self.builder().parent_pid(parent_pid).build();
                     pids.push(proc.pid());
                     proc
                 })
@@ -658,8 +684,7 @@ mod tests {
     /// Build a forest of two trees and check that there are two roots.
     fn test_multi_trees() {
         let mut factory = ProcessFactory::default();
-        let mut processes = factory.from_parent_pids(&[(4, None)], 8);
-        processes.shuffle(&mut rand::thread_rng());
+        let mut processes = shuffle(factory.from_parent_pids(&[(4, None)], 8));
 
         let mut forest = Forest::new();
         forest.refresh_from(processes.drain(..), |_| true);
@@ -723,28 +748,39 @@ mod tests {
         let proc4_pid = processes1[4].pid();
 
         let mut forest = Forest::new();
-        processes1.shuffle(&mut rand::thread_rng());
-        forest.refresh_from(dbg!(processes1).drain(..), |p| p.pid() == proc3_pid);
+        forest.refresh_from(shuffle(processes1).drain(..), |p| p.pid() == proc3_pid);
         assert!(forest.get_process(proc3_pid).is_some());
         assert!(forest.get_process(proc4_pid).is_none());
 
-        processes2.shuffle(&mut rand::thread_rng());
-        forest.refresh_from(dbg!(processes2).drain(..), |p| p.pid() == proc4_pid);
+        forest.refresh_from(shuffle(processes2).drain(..), |p| p.pid() == proc4_pid);
         assert!(forest.get_process(proc3_pid).is_none());
         assert!(forest.get_process(proc4_pid).is_some());
     }
 
-    #[ignore]
     #[test]
     /// Refresh a tree with new processes.
     fn test_refresh_with_new_processes() {
-        panic!("test_refresh_with_new_processes: unimplemented");
+        let mut factory = ProcessFactory::default();
+        let root = factory.build();
+        let root_pid = root.pid();
+        let mut processes = Vec::new();
+        processes.push(root);
+
+        let mut forest = Forest::new();
+        forest.refresh_from(processes.clone().drain(..), |_| true);
+        for count in 2..6 {
+            let proc = factory.builder().parent_pid(root_pid).build();
+            processes.push(proc);
+            forest.refresh_from(shuffle(processes.clone()).drain(..), |_| true);
+            assert_eq!(count, forest.count());
+        }
     }
 
     #[ignore]
     #[test]
     /// Refresh a tree with processes that die.
     fn test_refresh_with_old_processes() {
+        // Use the ttl to make processes die.
         panic!("test_refresh_with_old_processes: unimplemented");
     }
 
