@@ -35,6 +35,7 @@ pub(crate) use crate::mocks::procfs::process::Process;
 pub enum ProcessError {
     #[error("unknown process {0}")]
     UnknownProcess(pid_t),
+    #[cfg(not(test))]
     #[error("cannot access processes")]
     CannotAccessProcesses,
 }
@@ -311,7 +312,7 @@ impl Forest {
     /// Transfer a process and it's parents in the forest.
     ///
     /// It takes processes in the first list.
-    pub fn transfer_ascendants(&mut self, state: &mut RefreshState, pid: pid_t) {
+    fn transfer_ascendants(&mut self, state: &mut RefreshState, pid: pid_t) {
         let mut pid = pid;
         loop {
             // Add parent processes that have been found earlier but not
@@ -390,9 +391,10 @@ impl Forest {
         let mut state = RefreshState::new(&self.arena);
         for process in processes {
             let pid = process.pid();
+            let is_alive = process.is_alive();
             match ProcessInfo::new(process) {
                 Ok(mut info) => {
-                    if predicate(&info) {
+                    if is_alive && predicate(&info) {
                         info.show();
                         self.transfer_ascendants(&mut state, info.parent_pid());
                         self.add_node(&mut state, info);
@@ -434,9 +436,10 @@ impl Forest {
 mod tests {
 
     use rand::seq::SliceRandom;
-    use std::{collections::HashMap, time::Instant};
+    use std::collections::HashMap;
 
     use super::*;
+    use crate::mocks::procfs::ProcessBuilder;
 
     fn sorted<T: Clone, I>(input: I) -> Vec<T>
     where
@@ -454,60 +457,8 @@ mod tests {
     }
 
     #[derive(Debug)]
-    struct ProcessBuilder {
-        pid: pid_t,
-        parent_pid: pid_t,
-        name: String,
-        start_time: u64,
-        ttl: Option<u16>,
-    }
-
-    impl ProcessBuilder {
-        fn new(pid: pid_t, parent_pid: pid_t, name: &str, start_time: u64) -> Self {
-            Self {
-                pid,
-                parent_pid,
-                name: name.to_string(),
-                start_time,
-                ttl: None,
-            }
-        }
-
-        fn pid(mut self, pid: pid_t) -> Self {
-            self.pid = pid;
-            self
-        }
-
-        fn parent_pid(mut self, parent_pid: pid_t) -> Self {
-            self.parent_pid = parent_pid;
-            self
-        }
-
-        fn name(mut self, name: &str) -> Self {
-            self.name = name.to_string();
-            self
-        }
-
-        fn start_time(mut self, start_time: u64) -> Self {
-            self.start_time = start_time;
-            self
-        }
-
-        fn ttl(mut self, ttl: u16) -> Self {
-            self.ttl = Some(ttl);
-            self
-        }
-
-        fn build(self) -> Process {
-            let exe = format!("/bin/{}", self.name);
-            Process::with_exe(self.pid, self.parent_pid, &exe, self.start_time, self.ttl)
-        }
-    }
-
-    #[derive(Debug)]
     struct ProcessFactory {
         pid: pid_t,
-        start_time: Instant,
         count: usize,
     }
 
@@ -519,8 +470,9 @@ mod tests {
             if self.pid < pid {
                 self.pid = pid;
             }
-            let start_time = self.start_time.elapsed().as_millis() as u64;
-            ProcessBuilder::new(self.pid, parent_pid, &name, start_time)
+            ProcessBuilder::new(&name)
+                .pid(self.pid)
+                .parent_pid(parent_pid)
         }
 
         /// Return a default builder with predefined name and parent pid is the last pid.
@@ -578,11 +530,7 @@ mod tests {
 
     impl Default for ProcessFactory {
         fn default() -> Self {
-            Self {
-                pid: 0,
-                start_time: Instant::now(),
-                count: 0,
-            }
+            Self { pid: 0, count: 0 }
         }
     }
 
@@ -616,8 +564,8 @@ mod tests {
             .builder()
             .pid(PID)
             .parent_pid(PARENT_PID)
-            .start_time(START_TIME)
             .name(NAME)
+            .start_time(START_TIME)
             .build();
         let st = proc.stat().unwrap();
         assert_eq!(PID, st.pid);
@@ -645,6 +593,7 @@ mod tests {
         forest.refresh_from(processes.drain(..), |info| info.pid() == first_pid);
         let pinfo = forest.get_process(first_pid).unwrap();
         assert_eq!(first_pid, pinfo.pid());
+        assert_eq!(first_pid, pinfo.process().pid());
         assert_eq!(NAME, pinfo.name().unwrap());
     }
 
@@ -742,8 +691,8 @@ mod tests {
     /// |   \_4
     fn test_refresh_different_predicates() {
         let mut factory = ProcessFactory::default();
-        let mut processes1 = factory.from_parent_pids(&[(4, Some(2)), (5, Some(0))], 8);
-        let mut processes2 = processes1.clone();
+        let processes1 = factory.from_parent_pids(&[(4, Some(2)), (5, Some(0))], 8);
+        let processes2 = processes1.clone();
         let proc3_pid = processes1[3].pid();
         let proc4_pid = processes1[4].pid();
 
@@ -776,12 +725,40 @@ mod tests {
         }
     }
 
-    #[ignore]
     #[test]
     /// Refresh a tree with processes that die.
+    ///
+    /// Tree:
+    /// 0
+    /// |_1_2
+    /// |   \_5
+    /// \_3_4
     fn test_refresh_with_old_processes() {
-        // Use the ttl to make processes die.
-        panic!("test_refresh_with_old_processes: unimplemented");
+        let mut factory = ProcessFactory::default();
+        let mut processes1 = factory.from_parent_pids(&[(3, Some(0))], 5);
+        let proc2_pid = processes1[2].pid();
+        let mut processes2 = processes1.clone();
+
+        let mut forest = Forest::new();
+        forest.refresh_from(processes1.drain(..), |_| true);
+        assert_eq!(5, forest.count());
+
+        let mut ttl = 3;
+        let proc = factory.builder().parent_pid(proc2_pid).ttl(ttl).build();
+        let proc_pid = proc.pid();
+        assert_eq!(ttl, proc.ttl().unwrap());
+        processes2.push(proc);
+
+        loop {
+            ttl = ttl.checked_sub(1).unwrap_or(0);
+            forest.refresh_from(processes2.clone().drain(..), |_| true);
+            match forest.get_process(proc_pid) {
+                Some(info) => assert_eq!(ttl, info.process().ttl().unwrap()),
+                None => break,
+            }
+            assert_eq!(6, forest.count());
+        }
+        assert!(forest.get_process(proc_pid).is_none());
     }
 
     #[ignore]

@@ -6,7 +6,7 @@ pub(crate) mod process {
 
     use libc::pid_t;
     use procfs::process::{FDInfo, Io, Limits, MemoryMaps, Stat, StatM};
-    use std::{cell::RefCell, io, path::PathBuf};
+    use std::{cell::RefCell, io, path::PathBuf, rc::Rc};
 
     use super::{ProcError, ProcResult};
 
@@ -30,7 +30,7 @@ pub(crate) mod process {
         parent_pid: pid_t,
         exe: Option<String>,
         start_time: u64,
-        ttl: Option<RefCell<u16>>,
+        ttl: Option<Rc<RefCell<u16>>>,
     }
 
     impl Process {
@@ -56,24 +56,28 @@ pub(crate) mod process {
                 parent_pid,
                 exe: Some(exe.to_string()),
                 start_time,
-                ttl: ttl.map(RefCell::new),
+                ttl: ttl.map(RefCell::new).map(Rc::new),
             }
         }
 
         pub(crate) fn is_alive(&self) -> bool {
-            match &self.ttl {
-                Some(ttl) if *ttl.borrow() == 0 => false,
-                _ => self.exe.is_some(),
+            match self.ttl {
+                Some(ref ttl) => {
+                    let mut ttl = ttl.borrow_mut();
+                    match ttl.checked_sub(1) {
+                        Some(value) => {
+                            *ttl = value;
+                            value > 0
+                        }
+                        None => false,
+                    }
+                }
+                None => self.exe.is_some(),
             }
         }
 
-        pub(crate) fn decrease_ttl(&self) {
-            if let Some(ref ttl) = self.ttl {
-                let mut ttl = ttl.borrow_mut();
-                if let Some(value) = ttl.checked_sub(1) {
-                    *ttl = value;
-                }
-            }
+        pub(crate) fn ttl(&self) -> Option<u16> {
+            self.ttl.as_ref().map(|ttl| *ttl.borrow())
         }
 
         pub(crate) fn cmdline(&self) -> ProcResult<Vec<String>> {
@@ -139,5 +143,61 @@ pub(crate) mod process {
         pub(crate) fn statm(&self) -> ProcResult<StatM> {
             Err(new_error("Process::statm not implemented"))
         }
+    }
+}
+
+use libc::pid_t;
+use std::{sync::LazyLock, time::Instant};
+
+static ORIGIN: LazyLock<Instant> = LazyLock::new(|| Instant::now());
+
+#[derive(Debug)]
+pub(crate) struct ProcessBuilder {
+    pid: pid_t,
+    parent_pid: pid_t,
+    name: String,
+    start_time: u64,
+    ttl: Option<u16>,
+}
+
+impl ProcessBuilder {
+    pub(crate) fn new(name: &str) -> Self {
+        Self {
+            pid: 0,
+            parent_pid: 0,
+            start_time: ORIGIN.elapsed().as_nanos() as u64,
+            name: name.to_string(),
+            ttl: None,
+        }
+    }
+
+    pub(crate) fn pid(mut self, pid: pid_t) -> Self {
+        self.pid = pid;
+        self
+    }
+
+    pub(crate) fn parent_pid(mut self, parent_pid: pid_t) -> Self {
+        self.parent_pid = parent_pid;
+        self
+    }
+
+    pub(crate) fn name(mut self, name: &str) -> Self {
+        self.name = name.to_string();
+        self
+    }
+
+    pub(crate) fn start_time(mut self, start_time: u64) -> Self {
+        self.start_time = start_time;
+        self
+    }
+
+    pub(crate) fn ttl(mut self, ttl: u16) -> Self {
+        self.ttl = Some(ttl);
+        self
+    }
+
+    pub(crate) fn build(self) -> process::Process {
+        let exe = format!("/bin/{}", self.name);
+        process::Process::with_exe(self.pid, self.parent_pid, &exe, self.start_time, self.ttl)
     }
 }
