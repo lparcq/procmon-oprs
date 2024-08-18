@@ -270,12 +270,22 @@ impl Forest {
                 // A process with same PID exists. It can be a different process.
                 let prev_info = self.get_known_info(*prev_node_id);
                 if prev_info.same_as(&info) {
-                    if prev_info.parent_pid() == info.parent_pid() {
+                    let new_parent_pid = info.parent_pid();
+                    if prev_info.parent_pid() == new_parent_pid {
                         state.remove_old_node(&prev_node_id);
                     } else {
-                        // Same process but reparented.
+                        // Same process but reparented. Insert the new info where the
+                        // previous was by making the new the parent of the previous one
+                        // and removing the previous so the new inherits all the children.
+                        let node_id = self.arena.new_node(info);
                         prev_node_id.detach(&mut self.arena);
-                        self.attach_node(state, *prev_node_id, pid, info.parent_pid());
+                        node_id.append(*prev_node_id, &mut self.arena);
+                        if self.roots.remove(&prev_node_id) {
+                            self.roots.insert(node_id);
+                        }
+                        state.remove_old_node(prev_node_id);
+                        prev_node_id.remove(&mut self.arena);
+                        self.attach_node(state, node_id, pid, new_parent_pid);
                     }
                 } else {
                     // Process ID has been reused. If the process had children,
@@ -328,8 +338,8 @@ impl Forest {
     }
 
     /// Number of processes
-    pub fn count(&self) -> usize {
-        self.arena.count()
+    pub fn size(&self) -> usize {
+        self.processes.len()
     }
 
     /// Get process with a given PID if it exists.
@@ -439,7 +449,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::mocks::procfs::ProcessBuilder;
+    use crate::mocks::procfs::{reparent_process, ProcessBuilder};
 
     fn sorted<T: Clone, I>(input: I) -> Vec<T>
     where
@@ -673,7 +683,7 @@ mod tests {
 
         let root_pid = forest.root_pids()[0];
 
-        assert_eq!(6, forest.count()); // Process 3 and 7 are discarded
+        assert_eq!(6, forest.size()); // Process 3 and 7 are discarded
         for pinfo in forest.descendants(root_pid).unwrap() {
             assert_eq!(predicate(pinfo), !pinfo.hidden());
             // Processes that have been discarded
@@ -689,6 +699,7 @@ mod tests {
     /// 0
     /// |_1_2_3
     /// |   \_4
+    /// \_5_6_7
     fn test_refresh_different_predicates() {
         let mut factory = ProcessFactory::default();
         let processes1 = factory.from_parent_pids(&[(4, Some(2)), (5, Some(0))], 8);
@@ -718,10 +729,11 @@ mod tests {
         let mut forest = Forest::new();
         forest.refresh_from(processes.clone().drain(..), |_| true);
         for count in 2..6 {
+            // Add a new process at each loop.
             let proc = factory.builder().parent_pid(root_pid).build();
             processes.push(proc);
             forest.refresh_from(shuffle(processes.clone()).drain(..), |_| true);
-            assert_eq!(count, forest.count());
+            assert_eq!(count, forest.size());
         }
     }
 
@@ -741,7 +753,7 @@ mod tests {
 
         let mut forest = Forest::new();
         forest.refresh_from(processes1.drain(..), |_| true);
-        assert_eq!(5, forest.count());
+        assert_eq!(5, forest.size());
 
         let mut ttl = 3;
         let proc = factory.builder().parent_pid(proc2_pid).ttl(ttl).build();
@@ -756,18 +768,46 @@ mod tests {
                 Some(info) => assert_eq!(ttl, info.process().ttl().unwrap()),
                 None => break,
             }
-            assert_eq!(6, forest.count());
+            assert_eq!(6, forest.size());
         }
         assert!(forest.get_process(proc_pid).is_none());
     }
 
-    #[ignore]
     #[test]
     /// Refresh a tree where the root process dies.
     ///
-    /// - The tree must have multiple roots
+    /// Tree:
+    /// 0
+    /// |_1_2
+    /// \_3_4
     fn test_refresh_with_root_stopped() {
-        panic!("test_refresh_with_root_stopped: unimplemented");
+        let mut factory = ProcessFactory::default();
+        let mut processes1 = factory.from_parent_pids(&[(3, Some(0))], 5);
+        let mut root = processes1[0].clone();
+        let root_pid = root.pid();
+        root.set_ttl(1);
+        // If the root dies, the children are reparented by the system.
+        // The processes are reparented to PID 0 here. It would be PID 1 on Linux.
+        let mut processes2 = vec![
+            root,
+            reparent_process(&processes1[1], 0),
+            processes1[2].clone(),
+            reparent_process(&processes1[3], 0),
+            processes1[4].clone(),
+        ];
+        let proc1_pid = processes2[1].pid();
+        let proc3_pid = processes2[3].pid();
+
+        let mut forest = Forest::new();
+        forest.refresh_from(processes1.drain(..), |_| true);
+        assert_eq!(5, forest.size());
+        assert_eq!(vec![root_pid], forest.root_pids());
+
+        forest.refresh_from(processes2.drain(..), |_| true);
+        assert_eq!(4, forest.size());
+        assert_eq!(vec![proc1_pid, proc3_pid], sorted(forest.root_pids()));
+        assert_eq!(0, forest.get_process(proc1_pid).unwrap().parent_pid());
+        assert_eq!(0, forest.get_process(proc3_pid).unwrap().parent_pid());
     }
 
     #[ignore]

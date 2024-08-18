@@ -80,6 +80,16 @@ pub(crate) mod process {
             self.ttl.as_ref().map(|ttl| *ttl.borrow())
         }
 
+        pub(crate) fn set_ttl(&mut self, new_ttl: u16) {
+            match self.ttl {
+                Some(ref ttl) => {
+                    let mut ttl = ttl.borrow_mut();
+                    *ttl = new_ttl;
+                }
+                None => self.ttl = Some(Rc::new(RefCell::new(new_ttl))),
+            }
+        }
+
         pub(crate) fn cmdline(&self) -> ProcResult<Vec<String>> {
             self.exe
                 .as_ref()
@@ -144,10 +154,25 @@ pub(crate) mod process {
             Err(new_error("Process::statm not implemented"))
         }
     }
+
+    /// Return the same process with a different parent.
+    pub(crate) fn reparent_process(proc: &Process, parent_pid: pid_t) -> Process {
+        Process {
+            pid: proc.pid,
+            parent_pid,
+            exe: proc.exe.clone(),
+            start_time: proc.start_time,
+            ttl: proc.ttl.as_ref().map(Rc::clone),
+        }
+    }
 }
 
 use libc::pid_t;
 use std::{sync::LazyLock, time::Instant};
+
+use process::Process;
+
+pub(crate) use process::reparent_process;
 
 static ORIGIN: LazyLock<Instant> = LazyLock::new(|| Instant::now());
 
@@ -196,8 +221,8 @@ impl ProcessBuilder {
         self
     }
 
-    pub(crate) fn build(self) -> process::Process {
+    pub(crate) fn build(self) -> Process {
         let exe = format!("/bin/{}", self.name);
-        process::Process::with_exe(self.pid, self.parent_pid, &exe, self.start_time, self.ttl)
+        Process::with_exe(self.pid, self.parent_pid, &exe, self.start_time, self.ttl)
     }
 }
