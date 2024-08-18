@@ -782,13 +782,13 @@ mod tests {
     /// \_3_4
     fn test_refresh_with_root_stopped() {
         let mut factory = ProcessFactory::default();
-        let mut processes1 = factory.from_parent_pids(&[(3, Some(0))], 5);
+        let processes1 = factory.from_parent_pids(&[(3, Some(0))], 5);
         let mut root = processes1[0].clone();
         let root_pid = root.pid();
         root.set_ttl(1);
         // If the root dies, the children are reparented by the system.
         // The processes are reparented to PID 0 here. It would be PID 1 on Linux.
-        let mut processes2 = vec![
+        let processes2 = vec![
             root,
             reparent_process(&processes1[1], 0),
             processes1[2].clone(),
@@ -799,30 +799,47 @@ mod tests {
         let proc3_pid = processes2[3].pid();
 
         let mut forest = Forest::new();
-        forest.refresh_from(processes1.drain(..), |_| true);
+        forest.refresh_from(shuffle(processes1).drain(..), |_| true);
         assert_eq!(5, forest.size());
         assert_eq!(vec![root_pid], forest.root_pids());
 
-        forest.refresh_from(processes2.drain(..), |_| true);
+        forest.refresh_from(shuffle(processes2).drain(..), |_| true);
         assert_eq!(4, forest.size());
         assert_eq!(vec![proc1_pid, proc3_pid], sorted(forest.root_pids()));
         assert_eq!(0, forest.get_process(proc1_pid).unwrap().parent_pid());
         assert_eq!(0, forest.get_process(proc3_pid).unwrap().parent_pid());
     }
 
-    #[ignore]
-    #[test]
-    /// Refresh a tree with a process that is reparented (parent died).
-    fn test_refresh_reparent() {
-        panic!("test_refresh_reparent: unimplemented");
-    }
-
-    #[ignore]
     #[test]
     /// Refresh a tree with a PID reused.
     ///
-    /// - A process dies and another process gets the same PID.
+    /// A process dies and another process gets the same PID.
     fn test_refresh_pid_reused() {
-        panic!("test_refresh_pid_reused: unimplemented");
+        let mut factory = ProcessFactory::default();
+        let processes1 = factory.from_parent_pids(&[(2, Some(0))], 3);
+        let (first_proc_pid, first_proc_start) = {
+            let proc = &processes1[1];
+            (proc.pid(), proc.stat().unwrap().starttime)
+        };
+        let mut processes2 = processes1.clone();
+        let second_proc_start = {
+            let proc = factory.builder().pid(first_proc_pid).parent_pid(0).build();
+            assert_eq!(first_proc_pid, proc.pid());
+            let start = proc.stat().unwrap().starttime;
+            processes2[1] = proc;
+            start
+        };
+        assert_ne!(first_proc_start, second_proc_start);
+
+        let mut forest = Forest::new();
+        forest.refresh_from(shuffle(processes1).drain(..), |_| true);
+        let first_proc = forest.get_process(first_proc_pid).unwrap();
+        assert_eq!(first_proc_pid, first_proc.pid());
+        assert_eq!(first_proc_start, first_proc.start_time);
+
+        forest.refresh_from(shuffle(processes2).drain(..), |_| true);
+        let second_proc = forest.get_process(first_proc_pid).unwrap();
+        assert_eq!(first_proc_pid, second_proc.pid());
+        assert_eq!(second_proc_start, second_proc.start_time);
     }
 }

@@ -124,10 +124,6 @@ pub(crate) mod process {
             self.pid
         }
 
-        pub(crate) fn starttime(&self) -> u64 {
-            self.start_time
-        }
-
         pub(crate) fn stat(&self) -> ProcResult<Stat> {
             let mut st: Stat = procfs::FromRead::from_read(io::Cursor::new(format!(
                 "{} ({}) S {} {}",
