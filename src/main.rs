@@ -159,12 +159,6 @@ struct Opt {
     #[argh(option, short = 'f', description = "process id file")]
     file: Vec<String>,
 
-    #[argh(option, short = 'P', description = "parent process id")]
-    parent_pid: Vec<i32>,
-
-    #[argh(option, short = 'F', description = "parent process id file")]
-    parent_file: Vec<String>,
-
     #[argh(option, short = 'n', description = "process name")]
     name: Vec<String>,
 
@@ -301,13 +295,6 @@ fn start(opt: Opt) -> anyhow::Result<()> {
     for pid_file in opt.file {
         let path = PathBuf::from(pid_file.as_str());
         target_ids.push(TargetId::PidFile(path));
-    }
-    for pid in opt.parent_pid {
-        target_ids.push(TargetId::ParentPid(pid));
-    }
-    for pid_file in opt.parent_file {
-        let path = PathBuf::from(pid_file.as_str());
-        target_ids.push(TargetId::ParentPidFile(path));
     }
     for name in opt.name {
         target_ids.push(TargetId::ProcessName(name));

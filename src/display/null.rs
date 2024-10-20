@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020-2024  Laurent Pelecq
+// Copyright (C) 2024  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -14,30 +14,28 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::{clock::Timer, collector::Collector};
+use super::DisplayDevice;
+use crate::collector::Collector;
 
-pub mod null;
-pub mod term;
-pub mod text;
+/// Null device
+pub struct NullDevice {}
 
-pub enum PauseStatus {
-    Quit,
-    TimeOut,
-    Interrupted,
-}
-
-pub trait DisplayDevice {
-    fn open(&mut self, collector: &Collector) -> anyhow::Result<()>;
-
-    fn close(&mut self) -> anyhow::Result<()>;
-
-    fn render(&mut self, collector: &Collector, targets_updated: bool) -> anyhow::Result<()>;
-
-    fn pause(&mut self, _: &mut Timer) -> anyhow::Result<PauseStatus> {
-        panic!("not available");
+impl NullDevice {
+    pub fn new() -> Self {
+        Self {}
     }
 }
 
-pub use crate::display::null::NullDevice;
-pub use crate::display::term::TerminalDevice;
-pub use crate::display::text::TextDevice;
+impl DisplayDevice for NullDevice {
+    fn open(&mut self, _collector: &Collector) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn close(&mut self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn render(&mut self, _collector: &Collector, _targets_updated: bool) -> anyhow::Result<()> {
+        Ok(())
+    }
+}

@@ -29,13 +29,15 @@ pub use procfs::{
 };
 
 #[cfg(test)]
-pub(crate) use crate::mocks::procfs::process::Process;
+pub(crate) use crate::mocks::procfs::{
+    process::{all_processes, Process},
+    ProcResult,
+};
 
 #[derive(thiserror::Error, Debug)]
 pub enum ProcessError {
     #[error("unknown process {0}")]
     UnknownProcess(pid_t),
-    #[cfg(not(test))]
     #[error("cannot access processes")]
     CannotAccessProcesses,
 }
@@ -377,6 +379,8 @@ impl Forest {
     }
 
     /// Descendants of a pid
+    ///
+    /// Include the root process itself.
     pub fn descendants(&self, pid: pid_t) -> ProcessResult<Descendants> {
         match self.processes.get(&pid) {
             Some(node_id) => Ok(Descendants {
@@ -421,7 +425,6 @@ impl Forest {
         state.changed
     }
 
-    #[cfg(not(test))]
     /// Refresh the forest with all the visible processes in the system if they match the predicate.
     pub fn refresh_if<P>(&mut self, predicate: P) -> Result<bool, ProcessError>
     where
@@ -435,7 +438,6 @@ impl Forest {
         ))
     }
 
-    #[cfg(not(test))]
     /// Refresh the forest with all the visible processes in the system.
     pub fn refresh(&mut self) -> Result<bool, ProcessError> {
         self.refresh_if(|_| true)

@@ -24,7 +24,7 @@ use std::time::Duration;
 use crate::{
     agg::Aggregation,
     cfg::{ExportSettings, ExportType},
-    collector::{Collector, TargetStatus},
+    collector::{Collector, ProcessSamples},
     metrics::MetricDataType,
 };
 
@@ -122,7 +122,7 @@ impl RrdExporter {
     /// Create process info.
     fn insert_export_info(
         &mut self,
-        status: &TargetStatus,
+        status: &ProcessSamples,
         timestamp: &Duration,
     ) -> anyhow::Result<()> {
         let pid = status.pid();

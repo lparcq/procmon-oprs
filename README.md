@@ -30,8 +30,6 @@ file (pulseaudio) and a process by name (bash), run:
 
 Without argument, the command prints the available metrics.
 
-By default, the raw figure is printed unless -raw is added: mem:rss-raw+min+max. 
-
 Metrics
 -------
 
@@ -58,6 +56,8 @@ memory size and the peak size. To get only the max, use: mem:vm-raw+max. To get 
 
 For some metrics, min or max is meaningless.
 
+By default, the raw figure is printed unless -raw is added: mem:rss-raw+min+max. 
+
 ### Data type
 
 Metrics are either:
@@ -82,8 +82,6 @@ Processes are selected using one of the four following options:
 - Option --pid-file: file containing the pid of the process. It doesn't have to exists when the command starts.
 
 - Option --name: monitor all processes with the given name.
-
-- Option --merge: sum the metrics of all the processes with the same name. The number of processes is displayed between parenthesis instead of the pid.
 
 Options can be specified more than once.
 

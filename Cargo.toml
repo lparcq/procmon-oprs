@@ -27,12 +27,12 @@ light-ini = "0.3"
 log = "0"
 memchr = "2"
 nom = "7"
-procfs = "0.16"
+procfs = "0.17"
 simplelog = "0.12"
 strum = "0.26"
 strum_macros = "0.26"
 termion = "4"
-ratatui = { version = "0.27", default-features = false, features = ["termion"] }
+ratatui = { version = "0.28", default-features = false, features = ["termion"] }
 thiserror = "1.0"
 xdg = "2"
 

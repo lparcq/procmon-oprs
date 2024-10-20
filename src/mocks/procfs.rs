@@ -151,6 +151,20 @@ pub(crate) mod process {
         }
     }
 
+    #[derive(Debug)]
+    pub(crate) struct ProcessIter {}
+
+    impl std::iter::Iterator for ProcessIter {
+        type Item = ProcResult<Process>;
+        fn next(&mut self) -> Option<ProcResult<Process>> {
+            None
+        }
+    }
+
+    pub(crate) fn all_processes() -> ProcResult<ProcessIter> {
+        Err(new_error("all_processes not implemented"))
+    }
+
     /// Return the same process with a different parent.
     pub(crate) fn reparent_process(proc: &Process, parent_pid: pid_t) -> Process {
         Process {

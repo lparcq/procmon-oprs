@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020, 2021  Laurent Pelecq
+// Copyright (C) 2020-2024  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -26,7 +26,7 @@ use crate::{
     clock::{DriftMonitor, Timer},
     collector::Collector,
     console::BuiltinTheme,
-    display::{DisplayDevice, PauseStatus, TerminalDevice, TextDevice},
+    display::{DisplayDevice, NullDevice, PauseStatus, TerminalDevice, TextDevice},
     export::{CsvExporter, Exporter, RrdExporter},
     metrics::{FormattedMetric, MetricDataType, MetricId, MetricNamesParser},
     process::SystemConf,
@@ -39,6 +39,8 @@ const DRIFT_NOTIFICATION_DELAY: u64 = 300;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    #[error("no target specified in non-terminal mode")]
+    NoTargets,
     #[error("terminal not available")]
     TerminalNotAvailable,
 }
@@ -124,28 +126,42 @@ impl Application {
     ) -> anyhow::Result<()> {
         info!("starting");
 
-        let mut device: Option<Box<dyn DisplayDevice>> = match self.display_mode {
-            DisplayMode::Any => panic!("internal error: must use check_display_mode first"),
-            DisplayMode::Terminal => Some(Box::new(TerminalDevice::new(self.every, self.theme)?)),
-            DisplayMode::Text => Some(Box::new(TextDevice::new())),
-            DisplayMode::None => None,
-        };
-
-        let mut targets = TargetContainer::new(system_conf);
+        let with_system = self
+            .metrics
+            .iter()
+            .any(|metric| metric.aggregations.has(Aggregation::Ratio));
+        let mut targets = TargetContainer::new(system_conf, with_system);
         targets.push_all(target_ids)?;
-        if !targets.has_system()
-            && self
-                .metrics
-                .iter()
-                .any(|metric| metric.aggregations.has(Aggregation::Ratio))
-        {
-            targets.push(&TargetId::System)?; // ratio requires system
-        }
-        let mut collector = Collector::new(target_ids.len(), &self.metrics);
 
-        if let Some(ref mut device) = device {
-            device.open(&collector)?;
+        if target_ids.is_empty() {
+            match self.display_mode {
+                DisplayMode::Terminal => self.run_ui(targets)?,
+                _ => return Err(anyhow::anyhow!(Error::NoTargets)),
+            }
+        } else {
+            let mut is_interactive = false;
+            let device: Box<dyn DisplayDevice> = match self.display_mode {
+                DisplayMode::Terminal => {
+                    is_interactive = true;
+                    Box::new(TerminalDevice::new(self.every, self.theme)?)
+                }
+                DisplayMode::Text => Box::new(TextDevice::new()),
+                _ => Box::new(NullDevice::new()),
+            };
+            self.run_loop(targets, device, is_interactive)?;
         }
+        Ok(())
+    }
+
+    fn run_loop(
+        &mut self,
+        mut targets: TargetContainer,
+        mut device: Box<dyn DisplayDevice>,
+        is_interactive: bool,
+    ) -> anyhow::Result<()> {
+        let mut collector = Collector::new(targets.len(), &self.metrics);
+
+        device.open(&collector)?;
         if let Some(ref mut exporter) = self.exporter {
             exporter.open(&collector)?;
         }
@@ -154,10 +170,6 @@ impl Application {
         let mut loop_number: u64 = 0;
         let mut timer = Timer::new(self.every, true);
         let mut drift = DriftMonitor::new(timer.start_time(), DRIFT_NOTIFICATION_DELAY);
-        let is_interactive = match device {
-            Some(ref device) => device.is_interactive(),
-            _ => false,
-        };
 
         targets.initialize(&collector);
 
@@ -171,9 +183,7 @@ impl Application {
             } else {
                 None
             };
-            if let Some(ref mut device) = device {
-                device.render(&collector, targets_updated)?;
-            }
+            device.render(&collector, targets_updated)?;
             if let Some(timestamp) = collect_timestamp {
                 if let Some(ref mut exporter) = self.exporter {
                     exporter.export(&collector, &timestamp)?;
@@ -187,7 +197,7 @@ impl Application {
                 }
             }
             if is_interactive {
-                if let PauseStatus::Quit = device.as_mut().unwrap().pause(&mut timer)? {
+                if let PauseStatus::Quit = device.pause(&mut timer)? {
                     break;
                 }
             } else {
@@ -204,13 +214,15 @@ impl Application {
             drift.update(timer.get_delay());
         }
 
-        if let Some(ref mut device) = device {
-            device.close()?;
-        }
+        device.close()?;
         if let Some(ref mut exporter) = self.exporter {
             exporter.close()?;
         }
         info!("stopping");
         Ok(())
+    }
+
+    fn run_ui(&self, mut _targets: TargetContainer) -> anyhow::Result<()> {
+        Err(anyhow::anyhow!("run_ui is not implemented"))
     }
 }

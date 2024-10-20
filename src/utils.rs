@@ -57,23 +57,6 @@ pub fn read_pid_file(pid_file: &Path) -> anyhow::Result<pid_t> {
         .with_context(|| format!("{}: invalid pid file", pid_file.display()))
 }
 
-/// Read the first string in a file
-pub fn read_file_first_string<P>(path: P, end_char: u8) -> Option<String>
-where
-    P: AsRef<Path>,
-{
-    if let Ok(file) = fs::File::open(path) {
-        let mut string_buf = Vec::new();
-        if let Ok(size) = BufReader::new(file).read_until(end_char, &mut string_buf) {
-            if size > 0 {
-                string_buf.truncate(size - 1); // remove end char
-                return String::from_utf8(string_buf).ok();
-            }
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
 
@@ -89,14 +72,5 @@ mod tests {
             "file",
             super::basename(PathBuf::from("/a/file.pid"), true).unwrap()
         );
-    }
-
-    #[test]
-    fn test_read_file_first_string() {
-        let path = PathBuf::from("content:/a/b\tone\ttwo");
-        match super::read_file_first_string(path, b'\t') {
-            Some(value) => assert_eq!("/a/b", value),
-            None => panic!("no string"),
-        }
     }
 }

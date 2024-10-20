@@ -314,10 +314,7 @@ impl DisplayDevice for TextDevice {
             self.table.clear_titles();
             self.table.clear_values();
             collector.lines().for_each(|pstat| {
-                let name = match pstat.count() {
-                    Some(count) => format!("{} ({})", pstat.name(), count),
-                    None => format!("{} [{}]", pstat.name(), pstat.pid()),
-                };
+                let name = format!("{} [{}]", pstat.name(), pstat.pid());
                 self.table.push_title(name);
                 pstat.samples().for_each(|sample| {
                     sample

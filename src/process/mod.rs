@@ -17,5 +17,5 @@
 mod forest;
 mod stat;
 
-pub(crate) use self::forest::{process_identifier, Process};
+pub(crate) use self::forest::{process_identifier, Forest, Process, ProcessError};
 pub(crate) use self::stat::{Limit, LimitValue, ProcessStat, SystemConf, SystemStat};

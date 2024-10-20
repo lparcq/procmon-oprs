@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020, 2021  Laurent Pelecq
+// Copyright (C) 2020-2024  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -411,7 +411,7 @@ impl TerminalDevice {
         let odd_row_style = self.styles.odd_row;
 
         self.terminal.draw(|frame| {
-            let screen = frame.size();
+            let screen = frame.area();
             let rects = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(screen.height - 1), Constraint::Min(0)].as_ref())
@@ -621,10 +621,7 @@ impl DisplayDevice for TerminalDevice {
                 cw.center(target.name()),
                 Style::default().add_modifier(Modifier::BOLD),
             );
-            let subtitle = match target.count() {
-                Some(count) => format!("({count})"),
-                None => format!("{}", target.pid()),
-            };
+            let subtitle = format!("{}", target.pid());
             cw.check(&subtitle);
             title.extend(Text::from(cw.center(&subtitle)));
             headers.push(Cell::from(title));
@@ -652,11 +649,6 @@ impl DisplayDevice for TerminalDevice {
             cw.length as u16,
         )?;
         Ok(())
-    }
-
-    /// Terminal is interactive
-    fn is_interactive(&self) -> bool {
-        true
     }
 
     /// Wait for a user input or a timeout.

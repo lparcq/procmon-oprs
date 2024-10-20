@@ -201,19 +201,17 @@ impl From<&[&str]> for Sample {
 }
 
 /// A list of computed samples for a process
-pub struct TargetStatus {
+pub struct ProcessSamples {
     name: String,
     pid: pid_t,
-    count: Option<usize>,
     samples: Vec<Sample>,
 }
 
-impl TargetStatus {
-    fn new(name: &str, pid: pid_t, count: Option<usize>, samples: Vec<Sample>) -> TargetStatus {
-        TargetStatus {
+impl ProcessSamples {
+    fn new(name: &str, pid: pid_t, samples: Vec<Sample>) -> ProcessSamples {
+        ProcessSamples {
             name: name.to_string(),
             pid,
-            count,
             samples,
         }
     }
@@ -224,14 +222,6 @@ impl TargetStatus {
 
     pub fn pid(&self) -> pid_t {
         self.pid
-    }
-
-    pub fn count(&self) -> Option<usize> {
-        self.count
-    }
-
-    pub fn set_count(&mut self, count: Option<usize>) {
-        self.count = count;
     }
 
     pub fn samples(&self) -> Iter<Sample> {
@@ -262,12 +252,11 @@ impl TargetStatus {
 }
 
 #[cfg(test)]
-impl From<&[Vec<&str>]> for TargetStatus {
-    fn from(samples: &[Vec<&str>]) -> TargetStatus {
-        TargetStatus {
+impl From<&[Vec<&str>]> for ProcessSamples {
+    fn from(samples: &[Vec<&str>]) -> ProcessSamples {
+        ProcessSamples {
             name: String::new(),
             pid: 0,
-            count: None,
             samples: samples.iter().map(|s| Sample::from(s.as_slice())).collect(),
         }
     }
@@ -310,11 +299,10 @@ impl Updater {
         &mut self,
         target_name: &str,
         pid: pid_t,
-        count: Option<usize>,
         metrics: &[FormattedMetric],
         values: &[u64],
         limits: &[Option<Limit>],
-    ) -> TargetStatus {
+    ) -> ProcessSamples {
         let samples = metrics
             .iter()
             .zip(values.iter().zip(limits.iter()))
@@ -338,7 +326,7 @@ impl Updater {
         if pid == 0 {
             self.push_samples(&samples); // new system values
         }
-        TargetStatus::new(target_name, pid, count, samples)
+        ProcessSamples::new(target_name, pid, samples)
     }
 
     /// Historical metrics for the system
@@ -388,12 +376,10 @@ impl Updater {
     /// Update values for an existing process
     fn update_computed_values(
         &mut self,
-        count: Option<usize>,
         metrics: &[FormattedMetric],
-        pstat: &mut TargetStatus,
+        pstat: &mut ProcessSamples,
         values: &[u64],
     ) {
-        pstat.set_count(count);
         for (metric_index, (metric, sample, value_ref)) in
             izip!(metrics, pstat.get_samples_mut(), values).enumerate()
         {
@@ -424,7 +410,7 @@ impl Updater {
 /// Collect raw samples from target and returns computed values
 pub struct Collector<'a> {
     metrics: &'a [FormattedMetric],
-    lines: VecDeque<TargetStatus>,
+    lines: VecDeque<ProcessSamples>,
     updater: Updater,
     last_line_pos: usize,
 }
@@ -454,7 +440,6 @@ impl<'a> Collector<'a> {
         &mut self,
         target_name: &str,
         pid: pid_t,
-        count: Option<usize>,
         values: &[u64],
         limits: &[Option<Limit>],
     ) {
@@ -462,7 +447,7 @@ impl<'a> Collector<'a> {
         while let Some(line) = self.lines.get_mut(line_pos) {
             if line.pid() == pid {
                 self.updater
-                    .update_computed_values(count, self.metrics, line, values);
+                    .update_computed_values(self.metrics, line, values);
                 self.last_line_pos += 1;
                 return;
             }
@@ -474,9 +459,9 @@ impl<'a> Collector<'a> {
                 break;
             }
         }
-        let line =
-            self.updater
-                .new_computed_values(target_name, pid, count, self.metrics, values, limits);
+        let line = self
+            .updater
+            .new_computed_values(target_name, pid, self.metrics, values, limits);
         if line_pos >= self.lines.len() {
             self.lines.push_back(line);
         } else {
@@ -506,7 +491,7 @@ impl<'a> Collector<'a> {
     }
 
     /// Return lines
-    pub fn lines(&self) -> vec_deque::Iter<TargetStatus> {
+    pub fn lines(&self) -> vec_deque::Iter<ProcessSamples> {
         self.lines.iter()
     }
 
@@ -525,8 +510,8 @@ impl<'a> From<&[Vec<Vec<&str>>]> for Collector<'a> {
         let lines = VecDeque::from(
             statuses
                 .iter()
-                .map(|s| TargetStatus::from(s.as_slice()))
-                .collect::<Vec<TargetStatus>>(),
+                .map(|s| ProcessSamples::from(s.as_slice()))
+                .collect::<Vec<ProcessSamples>>(),
         );
         Collector {
             metrics: &[],
