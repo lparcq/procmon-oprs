@@ -475,6 +475,10 @@ impl<'a> Collector<'a> {
         self.metrics.iter()
     }
 
+    pub fn metric_count(&self) -> usize {
+        self.metrics.len()
+    }
+
     pub fn for_each_computed_metric<F>(&self, mut func: F)
     where
         F: FnMut(MetricId, Aggregation),
@@ -491,7 +495,7 @@ impl<'a> Collector<'a> {
         self.lines.iter()
     }
 
-    pub fn len(&self) -> usize {
+    pub fn line_count(&self) -> usize {
         self.lines.len()
     }
 

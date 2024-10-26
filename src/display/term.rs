@@ -27,7 +27,6 @@ use ratatui::{
 use std::cmp::Ordering;
 use std::io;
 use std::time::Duration;
-use strum::IntoEnumIterator;
 use termion::{
     raw::{IntoRawMode, RawTerminal},
     screen::{AlternateScreen, IntoAlternateScreen},
@@ -178,35 +177,6 @@ fn menu_paragraph(entries: &[(Key, &'static str)]) -> Paragraph<'static> {
     Paragraph::new(Line::from(spans)).alignment(Alignment::Left)
 }
 
-fn pivot_flatten<'a>(
-    collector: &'a Collector,
-    nrows: usize,
-    ncols: usize,
-    display_limits: LimitKind,
-    rows_with_limit: &[bool],
-) -> Vec<Vec<(&'a str, Ordering)>> {
-    let mut values = Vec::with_capacity(nrows);
-    for _ in 0..nrows {
-        values.push(Vec::with_capacity(ncols));
-    }
-    collector.lines().for_each(|target| {
-        let mut row_index = 0;
-        target.samples().for_each(|sample| {
-            izip!(sample.strings(), sample.trends()).for_each(|(value, trend)| {
-                let with_limit = rows_with_limit[row_index];
-                values[row_index].push((value.as_str(), *trend));
-                row_index += 1;
-                if with_limit {
-                    let limit = sample.limit(display_limits.clone()).unwrap_or("");
-                    values[row_index].push((limit, Ordering::Equal));
-                    row_index += 1;
-                }
-            });
-        });
-    });
-    values
-}
-
 /// Navigation arrows dependending on table overflows
 fn navigation_arrows(
     screen: Rect,
@@ -248,7 +218,6 @@ fn style_rows<'a>(
             } else {
                 odd_row_style
             };
-            log::debug!("styling row of length {} from 0 to {}", r.len(), ncols);
             Row::new(r.drain(0..ncols)).style(style)
         })
         .collect::<Vec<Row>>()
@@ -257,20 +226,22 @@ fn style_rows<'a>(
 /// Calculate widths constraints to avoid an overflow
 fn width_constraints(
     screen_width: u16,
-    first_column_width: u16,
-    column_width: u16,
+    column_widths: &[u16],
+    default_column_width: u16,
     column_spacing: u16,
     ncols: usize,
 ) -> (u16, Vec<Constraint>) {
     let mut widths = Vec::with_capacity(ncols);
-    let ncols = (ncols - 1) as u16; // Number of columns without the first one.
-    widths.push(first_column_width);
-    let remaining = screen_width - first_column_width;
-    let spaced_column_width = column_spacing + column_width;
-    let nvisible_cols = std::cmp::min(remaining.saturating_div(spaced_column_width), ncols);
-    (0..nvisible_cols).for_each(|_| widths.push(column_width));
-    let mut total_width = first_column_width + spaced_column_width * nvisible_cols;
-    if nvisible_cols < ncols {
+    let nfixed_cols = column_widths.len() as u16;
+    let ndef_cols = ncols as u16 - nfixed_cols; // Number of columns with a default width.
+    widths.extend_from_slice(column_widths);
+    let fixed_width = column_widths.iter().sum::<u16>() + (column_spacing * (nfixed_cols - 1));
+    let remaining: u16 = screen_width - fixed_width;
+    let spaced_column_width = column_spacing + default_column_width;
+    let nvisible_cols = std::cmp::min(remaining.saturating_div(spaced_column_width), ndef_cols);
+    (0..nvisible_cols).for_each(|_| widths.push(default_column_width));
+    let mut total_width = fixed_width + spaced_column_width * nvisible_cols;
+    if nvisible_cols < ndef_cols {
         let remaining = remaining - nvisible_cols * spaced_column_width;
         if remaining > column_spacing {
             let last_col_width = remaining - column_spacing;
@@ -304,31 +275,10 @@ impl MaxLength {
         }
     }
 
-    /// Count the maximun length of strings
-    fn iterate<I, S>(&mut self, it: I)
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<str>,
-    {
-        for s in it.into_iter() {
-            self.check(s.as_ref());
-        }
-    }
-
     /// Count the length and return the string.
     fn as_str<'a>(&mut self, s: &'a str) -> &'a str {
         self.check(s);
         s
-    }
-
-    /// Return the string centered
-    fn center(&self, s: &str) -> String {
-        format!("{:^width$}", s, width = self.length)
-    }
-
-    /// Return the string centered
-    fn right(&self, s: &str) -> String {
-        format!("{:>width$}", s, width = self.length)
     }
 }
 
@@ -375,23 +325,6 @@ impl TerminalDevice {
         format!(" {time_string} / {delay} ")
     }
 
-    /// Change a list of target samples (columns) into rows and flatten the samples.
-    fn pivot_flatten<'a>(
-        &self,
-        collector: &'a Collector,
-        nrows: usize,
-        ncols: usize,
-        rows_with_limit: &[bool],
-    ) -> Vec<Vec<(&'a str, Ordering)>> {
-        pivot_flatten(
-            collector,
-            nrows,
-            ncols,
-            self.display_limits.clone(),
-            rows_with_limit,
-        )
-    }
-
     /// Table headers and body
     ///
     /// Return (headers, rows, column_width)
@@ -401,7 +334,8 @@ impl TerminalDevice {
         mut rows: Vec<Vec<Cell>>,
         nrows: usize,
         ncols: usize,
-        col_width: u16,
+        col_widths: &[u16],
+        default_col_width: u16,
     ) -> anyhow::Result<()> {
         let (hoffset, voffset) = self.table_offset;
         let title = self.title();
@@ -420,8 +354,8 @@ impl TerminalDevice {
                 let column_spacing = self.styles.column_spacing;
                 let (table_width, widths) = width_constraints(
                     screen.width,
-                    self.metric_width,
-                    col_width,
+                    col_widths,
+                    default_col_width,
                     self.styles.column_spacing,
                     ncols,
                 );
@@ -561,95 +495,67 @@ impl DisplayDevice for TerminalDevice {
 
     fn render(&mut self, collector: &Collector, _targets_updated: bool) -> anyhow::Result<()> {
         let (hoffset, voffset) = self.table_offset;
-        let nmetrics = self.metric_names.len();
-        let mut metric_names_with_limit = Vec::new();
-        let rows_with_limit = match self.display_limits {
-            LimitKind::None => {
-                metric_names_with_limit = vec![false; nmetrics];
-                vec![false; nmetrics]
-            }
-            _ => {
-                let mut rows_with_limit = Vec::new();
-                collector.metrics().for_each(|metric| {
-                    let has_limit = metric.has_limit();
-                    if has_limit {
-                        rows_with_limit.push(true);
-                    };
-                    metric_names_with_limit.push(has_limit);
-                    for variant in Aggregation::iter() {
-                        if metric.aggregations.has(variant) {
-                            if !matches!(variant, Aggregation::None) {
-                                metric_names_with_limit.push(false);
-                            }
-                            rows_with_limit.push(false);
-                        }
-                    }
-                });
-                rows_with_limit
-            }
-        };
-        let nrows = rows_with_limit.len();
-        let ncols = collector.len() + 1;
+        let ncols = collector.metric_count() + 2; // process name, PID, metric1, ...
+        let nrows = collector.line_count() + 2; // metric title, metric subtitle, process1, ...
         let nvisible_rows = nrows - voffset;
         let nvisible_cols = ncols - hoffset;
 
-        let mut headers = Vec::with_capacity(nvisible_cols);
-        headers.push(Cell::from(""));
-
-        let mut rows: Vec<Vec<Cell>> = Vec::with_capacity(nvisible_rows);
-        izip!(self.metric_names.iter(), metric_names_with_limit.iter())
-            .skip(voffset)
-            .for_each(|(name, with_limit)| {
-                let mut row = Vec::with_capacity(nvisible_cols);
-                row.push(Cell::from(name.to_string()));
-                rows.push(row);
-                if *with_limit {
-                    let mut row = Vec::with_capacity(nvisible_cols);
-                    row.push(Cell::from(""));
-                    rows.push(row);
-                }
+        let bold_style = Style::default().add_modifier(Modifier::BOLD);
+        let headers = {
+            let mut headers = Vec::with_capacity(nvisible_cols);
+            headers.push(Cell::from(""));
+            headers.push(Cell::from(Text::from("PID").alignment(Alignment::Center)));
+            self.metric_names.iter().skip(hoffset).for_each(|name| {
+                headers.push(Cell::from(
+                    Text::from(
+                        name.split(':')
+                            .map(|s| Line::from(s.to_string()).alignment(Alignment::Center))
+                            .collect::<Vec<Line>>(),
+                    )
+                    .alignment(Alignment::Center),
+                ))
             });
+            headers
+        };
 
+        let mut cw_pid = MaxLength::new();
         let mut cw = MaxLength::new();
-
-        let values = self.pivot_flatten(collector, nrows, ncols, &rows_with_limit);
-        values
-            .iter()
-            .skip(hoffset)
-            .for_each(|row| cw.iterate(row.iter().map(|(val, _)| val)));
-        collector.lines().skip(hoffset).for_each(|target| {
-            cw.check(target.name());
-        });
-        collector.lines().skip(hoffset).for_each(|target| {
-            let mut title = Text::styled(
-                cw.center(target.name()),
-                Style::default().add_modifier(Modifier::BOLD),
-            );
-            let subtitle = format!("{}", target.pid());
-            cw.check(&subtitle);
-            title.extend(Text::from(cw.center(&subtitle)));
-            headers.push(Cell::from(title));
-        });
         let decrease_style = self.styles.decrease;
         let increase_style = self.styles.increase;
-        values
-            .iter()
-            .skip(voffset)
-            .enumerate()
-            .for_each(|(row_index, row_values)| {
-                rows[row_index].extend(row_values.iter().skip(hoffset).map(|(str_val, trend)| {
-                    Cell::from(cw.right(str_val)).style(match trend {
-                        Ordering::Less => decrease_style,
-                        Ordering::Equal => Style::default(),
-                        Ordering::Greater => increase_style,
-                    })
-                }));
+        let rows = {
+            let mut rows: Vec<Vec<Cell>> = Vec::with_capacity(nvisible_rows);
+            collector.lines().skip(voffset).for_each(|target| {
+                let mut row = Vec::with_capacity(nvisible_cols);
+                row.push(Cell::from(target.name()).style(bold_style));
+                let pid = format!("{}", target.pid());
+                cw_pid.check(&pid);
+                row.push(Cell::from(Text::from(pid).alignment(Alignment::Right)));
+                target.samples().skip(hoffset).for_each(|sample| {
+                    izip!(sample.strings(), sample.trends()).for_each(|(value, trend)| {
+                        cw.check(value);
+                        row.push(Cell::from(
+                            Text::from(value.as_str())
+                                .style(match trend {
+                                    Ordering::Less => decrease_style,
+                                    Ordering::Equal => Style::default(),
+                                    Ordering::Greater => increase_style,
+                                })
+                                .alignment(Alignment::Right),
+                        ));
+                    });
+                });
+                rows.push(row);
             });
+            rows
+        };
+
+        let col_widths = vec![self.metric_width, cw_pid.length as u16];
         self.draw(
             headers,
             rows,
             nvisible_rows,
             nvisible_cols,
+            &col_widths,
             cw.length as u16,
         )?;
         Ok(())
