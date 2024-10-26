@@ -18,7 +18,7 @@
 
 use anyhow::Context;
 use libc::pid_t;
-use std::io::{BufRead, BufReader, Read};
+use std::io::Read;
 use std::path::Path;
 
 #[cfg(not(test))]

@@ -446,11 +446,16 @@ impl TerminalDevice {
                 frame.render_widget(table, rects[0]);
             }
 
+            let display_limits = match self.display_limits {
+                LimitKind::None => "Limit:Off",
+                LimitKind::Soft => "Limit:Soft",
+                LimitKind::Hard => "Limit:Hard",
+            };
             let menu_entries = vec![
                 (KEY_QUIT, "Quit"),
                 (KEY_FASTER, "Faster"),
                 (KEY_SLOWER, "Slower"),
-                (KEY_LIMITS_UPPER, "Limits"),
+                (KEY_LIMITS_UPPER, display_limits),
             ];
             let menu = menu_paragraph(&menu_entries);
             frame.render_widget(menu, rects[1]);
@@ -592,7 +597,6 @@ impl DisplayDevice for TerminalDevice {
         headers.push(Cell::from(""));
 
         let mut rows: Vec<Vec<Cell>> = Vec::with_capacity(nvisible_rows);
-        let display_limits = self.display_limits.to_string();
         izip!(self.metric_names.iter(), metric_names_with_limit.iter())
             .skip(voffset)
             .for_each(|(name, with_limit)| {
@@ -601,7 +605,7 @@ impl DisplayDevice for TerminalDevice {
                 rows.push(row);
                 if *with_limit {
                     let mut row = Vec::with_capacity(nvisible_cols);
-                    row.push(Cell::from(display_limits.to_string()));
+                    row.push(Cell::from(""));
                     rows.push(row);
                 }
             });

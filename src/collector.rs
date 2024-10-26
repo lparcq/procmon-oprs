@@ -20,7 +20,6 @@ use std::cmp::Ordering;
 use std::collections::{vec_deque, VecDeque};
 use std::slice::Iter;
 use strum::IntoEnumIterator;
-use strum_macros::Display;
 
 use crate::{
     agg::Aggregation,
@@ -41,13 +40,10 @@ fn track_change(id: MetricId) -> bool {
 
 const UNLIMITED: &str = "∞";
 
-#[derive(Clone, Display, Debug)]
+#[derive(Clone, Debug)]
 pub enum LimitKind {
-    #[strum(serialize = "no limit")]
     None,
-    #[strum(serialize = "soft limit")]
     Soft,
-    #[strum(serialize = "hard limit")]
     Hard,
 }
 
