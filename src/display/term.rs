@@ -41,6 +41,40 @@ use crate::{
     format::human_duration,
 };
 
+/// Area property with an horizontal and vertical value.
+#[derive(Clone, Copy, Debug, Default)]
+struct AreaProperty<T: Default> {
+    horizontal: T,
+    vertical: T,
+}
+
+impl<T: Default> AreaProperty<T> {
+    fn new(horizontal: T, vertical: T) -> Self {
+        Self {
+            horizontal,
+            vertical,
+        }
+    }
+}
+
+impl AreaProperty<usize> {
+    fn scroll_left(&mut self, delta: usize) {
+        self.horizontal = self.horizontal.saturating_sub(delta);
+    }
+
+    fn scroll_right(&mut self, delta: usize) {
+        self.horizontal += delta;
+    }
+
+    fn scroll_up(&mut self, delta: usize) {
+        self.vertical = self.vertical.saturating_sub(delta);
+    }
+
+    fn scroll_down(&mut self, delta: usize) {
+        self.vertical += delta;
+    }
+}
+
 /// Theme styles
 struct Styles {
     even_row: Style,
@@ -102,8 +136,10 @@ impl Styles {
 
 /// Standard keys
 const KEY_QUIT: Key = Key::Esc;
-const KEY_FASTER: Key = Key::PageUp;
-const KEY_SLOWER: Key = Key::PageDown;
+const KEY_FASTER_CHAR: char = '+';
+const KEY_FASTER: Key = Key::Char(KEY_FASTER_CHAR);
+const KEY_SLOWER_CHAR: char = '-';
+const KEY_SLOWER: Key = Key::Char(KEY_SLOWER_CHAR);
 const KEY_LIMITS_UPPER: Key = Key::Char('L');
 const KEY_LIMITS_LOWER: Key = Key::Char('l');
 
@@ -129,8 +165,8 @@ impl From<Event> for Action {
             Event::Key(KEY_SLOWER) => Action::MultiplyTimeout(2),
             Event::Key(KEY_LIMITS_UPPER) | Event::Key(KEY_LIMITS_LOWER) => Action::ToggleLimits,
             Event::Key(Key::Right) => Action::ScrollRight,
-            Event::Key(Key::Up) => Action::ScrollUp,
-            Event::Key(Key::Down) => Action::ScrollDown,
+            Event::Key(Key::PageUp) => Action::ScrollUp,
+            Event::Key(Key::PageDown) => Action::ScrollDown,
             Event::Key(Key::Left) => Action::ScrollLeft,
             _ => Action::None,
         }
@@ -144,10 +180,10 @@ fn key_name(key: Key) -> String {
         Key::Right => "→".to_string(),
         Key::Up => "↑".to_string(),
         Key::Down => "↓".to_string(),
+        Key::PageUp => "⇞".to_string(),
+        Key::PageDown => "⇟".to_string(),
         Key::Home => "⇱".to_string(),
         Key::End => "⇲".to_string(),
-        KEY_FASTER => "PgUp".to_string(),
-        KEY_SLOWER => "PgDn".to_string(),
         Key::BackTab => "⇤".to_string(),
         Key::Delete => "⌧".to_string(),
         Key::Insert => "Ins".to_string(),
@@ -162,13 +198,13 @@ fn key_name(key: Key) -> String {
     }
 }
 
-fn menu_paragraph(entries: &[(Key, &'static str)]) -> Paragraph<'static> {
+fn menu_paragraph(entries: &[(String, &'static str)]) -> Paragraph<'static> {
     let mut spans = Vec::new();
     let mut sep = "";
     entries.iter().for_each(|(key, action)| {
         spans.push(Span::raw(sep));
         spans.push(Span::styled(
-            key_name(*key),
+            key.to_string(),
             Style::default().add_modifier(Modifier::REVERSED),
         ));
         spans.push(Span::raw(format!(" {action}")));
@@ -180,17 +216,20 @@ fn menu_paragraph(entries: &[(Key, &'static str)]) -> Paragraph<'static> {
 /// Navigation arrows dependending on table overflows
 fn navigation_arrows(
     screen: Rect,
-    hoffset: usize,
-    voffset: usize,
+    offset: AreaProperty<usize>,
     table_width: u16,
     table_height: u16,
     first_col_width: usize,
-) -> (Text<'static>, bool, bool) {
+) -> (Text<'static>, AreaProperty<bool>) {
     let (inner_width, inner_height) = (screen.width - 2, screen.height - 3);
-    let up_arrow = if voffset > 0 { "  ⬆  " } else { "   " };
+    let up_arrow = if offset.vertical > 0 {
+        "  ⬆  "
+    } else {
+        "   "
+    };
     let voverflow = table_height > inner_height;
     let down_arrow = if voverflow { "⬇" } else { " " };
-    let left_arrow = if hoffset > 0 { "⬅" } else { " " };
+    let left_arrow = if offset.horizontal > 0 { "⬅" } else { " " };
     let hoverflow = table_width > inner_width;
     let right_arrow = if hoverflow { "➡" } else { " " };
     let mut nav = Text::from(format!("{up_arrow:^first_col_width$}"));
@@ -198,7 +237,7 @@ fn navigation_arrows(
         "{:^first_col_width$}",
         format!("{left_arrow} {down_arrow} {right_arrow}",)
     )));
-    (nav, voverflow, hoverflow)
+    (nav, AreaProperty::new(hoverflow, voverflow))
 }
 
 /// Apply style to rows
@@ -268,11 +307,6 @@ impl MaxLength {
         *length
     }
 
-    /// The length:
-    fn as_u16(&self) -> u16 {
-        self.len() as u16
-    }
-
     /// Count the maximun length of a string
     fn check(&mut self, s: &str) {
         let slen = s.len() as u16;
@@ -280,24 +314,27 @@ impl MaxLength {
             self.0 = slen
         }
     }
-
-    /// Count the length and return the string.
-    fn as_str<'a>(&mut self, s: &'a str) -> &'a str {
-        self.check(s);
-        s
-    }
 }
 
 /// Print on standard output as a table
 pub struct TerminalDevice {
+    /// Interval to update the screen
     every: Duration,
+    /// Channel for input events
     events: EventChannel,
+    /// Terminal
     terminal: Terminal<TermionBackend<Box<AlternateScreen<RawTerminal<io::Stdout>>>>>,
-    table_offset: (usize, usize),
-    overflow: (bool, bool),
+    /// Horizontal and vertical offset
+    table_offset: AreaProperty<usize>,
+    /// Number of lines to scroll vertically up and down
+    vertical_scroll: usize,
+    /// Horizontal and vertical overflow (whether the table is bigger than the screen)
+    overflow: AreaProperty<bool>,
+    /// List of metrics
     metric_names: Vec<String>,
-    metric_width: u16,
+    /// Mode to display limits.
     display_limits: LimitKind,
+    /// Display styles
     styles: Styles,
 }
 
@@ -311,10 +348,10 @@ impl TerminalDevice {
             every,
             events: EventChannel::new(),
             terminal,
-            table_offset: (0, 0),
-            overflow: (false, false),
+            table_offset: Default::default(),
+            vertical_scroll: 1,
+            overflow: AreaProperty::new(false, false),
             metric_names: Vec::new(),
-            metric_width: 0,
             display_limits: LimitKind::None,
             styles: Styles::new(theme),
         })
@@ -342,12 +379,12 @@ impl TerminalDevice {
         ncols: usize,
         col_widths: &[u16],
     ) -> anyhow::Result<()> {
-        let (hoffset, voffset) = self.table_offset;
+        let offset = self.table_offset;
         let title = self.title();
-        let mut new_voverflow = false;
-        let mut new_hoverflow = false;
+        let mut new_overflow = AreaProperty::new(false, false);
         let even_row_style = self.styles.even_row;
         let odd_row_style = self.styles.odd_row;
+        let mut table_visible_height = 0;
 
         self.terminal.draw(|frame| {
             let screen = frame.area();
@@ -355,46 +392,50 @@ impl TerminalDevice {
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(screen.height - 1), Constraint::Min(0)].as_ref())
                 .split(screen);
-            if self.metric_width < screen.width {
-                let column_spacing = self.styles.column_spacing;
-                let (table_width, widths) =
-                    width_constraints(screen.width, col_widths, self.styles.column_spacing, ncols);
-                let table_height: u16 = 2 + nrows as u16;
-                let (nav, voverflow, hoverflow) = navigation_arrows(
-                    screen,
-                    hoffset,
-                    voffset,
-                    table_width,
-                    table_height,
-                    self.metric_width as usize,
-                );
-                new_voverflow = voverflow;
-                new_hoverflow = hoverflow;
-                headers[0] = Cell::from(nav);
+            let column_spacing = self.styles.column_spacing;
+            let (table_width, widths) =
+                width_constraints(screen.width, col_widths, self.styles.column_spacing, ncols);
+            let table_height = 2u16 + nrows as u16;
+            let (nav, overflow) = navigation_arrows(
+                screen,
+                offset,
+                table_width,
+                table_height,
+                col_widths[0] as usize,
+            );
+            new_overflow = overflow;
+            headers[0] = Cell::from(nav);
 
-                let rows = style_rows(&mut rows, widths.len(), even_row_style, odd_row_style);
-                let table = Table::new(rows, widths)
-                    .block(Block::default().borders(Borders::ALL).title(title))
-                    .header(Row::new(headers).height(2))
-                    .column_spacing(column_spacing);
-                frame.render_widget(table, rects[0]);
-            }
+            const HEADERS_HEIGHT: u16 = 2;
+            const BORDERS_HEIGHT: u16 = 2;
+            let rows = style_rows(&mut rows, widths.len(), even_row_style, odd_row_style);
+            let table = Table::new(rows, widths)
+                .block(Block::default().borders(Borders::ALL).title(title))
+                .header(Row::new(headers).height(HEADERS_HEIGHT))
+                .column_spacing(column_spacing);
+            frame.render_widget(table, rects[0]);
 
+            const MENU_HEIGHT: u16 = 1;
             let display_limits = match self.display_limits {
                 LimitKind::None => "Limit:Off",
                 LimitKind::Soft => "Limit:Soft",
                 LimitKind::Hard => "Limit:Hard",
             };
             let menu_entries = vec![
-                (KEY_QUIT, "Quit"),
-                (KEY_FASTER, "Faster"),
-                (KEY_SLOWER, "Slower"),
-                (KEY_LIMITS_UPPER, display_limits),
+                (key_name(KEY_QUIT), "Quit"),
+                (format!("{KEY_FASTER_CHAR}/{KEY_SLOWER_CHAR}"), "Speed"),
+                (key_name(KEY_LIMITS_UPPER), display_limits),
             ];
             let menu = menu_paragraph(&menu_entries);
             frame.render_widget(menu, rects[1]);
+            table_visible_height = screen.height - HEADERS_HEIGHT - BORDERS_HEIGHT - MENU_HEIGHT;
         })?;
-        self.overflow = (new_voverflow, new_hoverflow);
+        self.overflow = new_overflow;
+        self.vertical_scroll = if table_visible_height > 2 {
+            table_visible_height / 2
+        } else {
+            1
+        } as usize;
         Ok(())
     }
 
@@ -402,7 +443,6 @@ impl TerminalDevice {
     fn react(&mut self, action: Action, timer: &mut Timer) -> bool {
         const MAX_TIMEOUT_SECS: u64 = 24 * 3_600; // 24 hours
         const MIN_TIMEOUT_MSECS: u128 = 1;
-        let (voverflow, hoverflow) = self.overflow;
         match action {
             Action::Quit => return false,
             Action::MultiplyTimeout(factor) => {
@@ -431,28 +471,20 @@ impl TerminalDevice {
                 }
             }
             Action::ScrollRight => {
-                if hoverflow {
-                    let (horizontal_offset, vertical_offset) = self.table_offset;
-                    self.table_offset = (horizontal_offset + 1, vertical_offset);
+                if self.overflow.horizontal {
+                    self.table_offset.scroll_right(1)
                 }
             }
             Action::ScrollUp => {
-                let (horizontal_offset, vertical_offset) = self.table_offset;
-                if vertical_offset > 0 {
-                    self.table_offset = (horizontal_offset, vertical_offset - 1);
-                }
+                self.table_offset.scroll_up(self.vertical_scroll);
             }
             Action::ScrollDown => {
-                if voverflow {
-                    let (horizontal_offset, vertical_offset) = self.table_offset;
-                    self.table_offset = (horizontal_offset, vertical_offset + 1);
+                if self.overflow.vertical {
+                    self.table_offset.scroll_down(self.vertical_scroll);
                 }
             }
             Action::ScrollLeft => {
-                let (horizontal_offset, vertical_offset) = self.table_offset;
-                if horizontal_offset > 0 {
-                    self.table_offset = (horizontal_offset - 1, vertical_offset);
-                }
+                self.table_offset.scroll_left(1);
             }
             _ => {}
         }
@@ -463,11 +495,10 @@ impl TerminalDevice {
 impl DisplayDevice for TerminalDevice {
     fn open(&mut self, collector: &Collector) -> anyhow::Result<()> {
         let mut last_id = None;
-        let mut cw = MaxLength::default();
         collector.for_each_computed_metric(|id, ag| {
             if last_id.is_none() || last_id.unwrap() != id {
                 last_id = Some(id);
-                self.metric_names.push(cw.as_str(id.as_str()).to_string());
+                self.metric_names.push(id.as_str().to_string());
             } else {
                 let name = format!(
                     "{} ({})",
@@ -482,7 +513,6 @@ impl DisplayDevice for TerminalDevice {
                 self.metric_names.push(name);
             }
         });
-        self.metric_width = cw.len() as u16;
         self.terminal.hide_cursor()?;
         Ok(())
     }
@@ -494,7 +524,7 @@ impl DisplayDevice for TerminalDevice {
     }
 
     fn render(&mut self, collector: &Collector, _targets_updated: bool) -> anyhow::Result<()> {
-        let (hoffset, voffset) = self.table_offset;
+        let (hoffset, voffset) = (self.table_offset.horizontal, self.table_offset.vertical);
         let ncols = self.metric_names.len() + 2; // process name, PID, metric1, ...
         let nrows = collector.line_count() + 2; // metric title, metric subtitle, process1, ...
         let nvisible_rows = nrows - voffset;
