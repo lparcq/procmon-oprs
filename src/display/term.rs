@@ -81,55 +81,62 @@ struct Styles {
     odd_row: Style,
     increase: Style,
     decrease: Style,
+    unselected: Style,
+    selected: Style,
     column_spacing: u16,
 }
 
 impl Styles {
     fn new(theme: Option<BuiltinTheme>) -> Self {
         let default_style = Style::default();
-        let (even_row, odd_row, increase, decrease, column_spacing) = match theme {
-            Some(BuiltinTheme::Dark) => (
-                default_style,
-                Style::default().bg(Color::Rgb(40, 40, 40)),
-                Style::default().fg(Color::Rgb(235, 45, 83)),
-                Style::default().fg(Color::Rgb(166, 255, 77)),
-                2,
-            ),
-            Some(BuiltinTheme::Light) => (
-                default_style,
-                Style::default().bg(Color::Rgb(215, 215, 215)),
-                Style::default().fg(Color::Rgb(220, 20, 60)),
-                Style::default().fg(Color::Rgb(102, 204, 00)),
-                2,
-            ),
-            Some(BuiltinTheme::Dark16) => (
-                default_style,
-                Style::default().fg(Color::LightBlue),
-                Style::default().fg(Color::LightMagenta),
-                Style::default().fg(Color::LightGreen),
-                2,
-            ),
-            Some(BuiltinTheme::Light16) => (
-                default_style,
-                Style::default().bg(Color::Blue),
-                Style::default().fg(Color::Red),
-                Style::default().fg(Color::Green),
-                2,
-            ),
-            None => (
-                default_style,
-                default_style,
-                Style::default().add_modifier(Modifier::BOLD),
-                Style::default().add_modifier(Modifier::BOLD),
-                2,
-            ),
-        };
-        Styles {
-            even_row,
-            odd_row,
-            increase,
-            decrease,
-            column_spacing,
+        let bold = Style::default().add_modifier(Modifier::BOLD);
+        let bold_reversed = bold.add_modifier(Modifier::REVERSED);
+        match theme {
+            Some(BuiltinTheme::Dark) => Styles {
+                even_row: default_style,
+                odd_row: Style::default().bg(Color::Rgb(40, 40, 40)),
+                increase: Style::default().fg(Color::Rgb(235, 45, 83)),
+                decrease: Style::default().fg(Color::Rgb(166, 255, 77)),
+                unselected: bold,
+                selected: bold_reversed,
+                column_spacing: 2,
+            },
+            Some(BuiltinTheme::Light) => Styles {
+                even_row: default_style,
+                odd_row: Style::default().bg(Color::Rgb(215, 215, 215)),
+                increase: Style::default().fg(Color::Rgb(220, 20, 60)),
+                decrease: Style::default().fg(Color::Rgb(102, 204, 00)),
+                unselected: bold,
+                selected: bold_reversed,
+                column_spacing: 2,
+            },
+            Some(BuiltinTheme::Dark16) => Styles {
+                even_row: default_style,
+                odd_row: Style::default().fg(Color::LightBlue),
+                increase: Style::default().fg(Color::LightMagenta),
+                decrease: Style::default().fg(Color::LightGreen),
+                unselected: bold,
+                selected: bold_reversed,
+                column_spacing: 2,
+            },
+            Some(BuiltinTheme::Light16) => Styles {
+                even_row: default_style,
+                odd_row: Style::default().bg(Color::Blue),
+                increase: Style::default().fg(Color::Red),
+                decrease: Style::default().fg(Color::Green),
+                unselected: bold,
+                selected: bold_reversed,
+                column_spacing: 2,
+            },
+            None => Styles {
+                even_row: default_style,
+                odd_row: default_style,
+                increase: bold,
+                decrease: bold,
+                unselected: bold,
+                selected: bold_reversed,
+                column_spacing: 2,
+            },
         }
     }
 }
@@ -153,6 +160,8 @@ pub enum Action {
     ScrollLeft,
     ScrollRight,
     ScrollUp,
+    SelectUp,
+    SelectDown,
     Quit,
 }
 
@@ -168,6 +177,8 @@ impl From<Event> for Action {
             Event::Key(Key::PageUp) => Action::ScrollUp,
             Event::Key(Key::PageDown) => Action::ScrollDown,
             Event::Key(Key::Left) => Action::ScrollLeft,
+            Event::Key(Key::Up) => Action::SelectUp,
+            Event::Key(Key::Down) => Action::SelectDown,
             _ => Action::None,
         }
     }
@@ -336,6 +347,8 @@ pub struct TerminalDevice {
     display_limits: LimitKind,
     /// Display styles
     styles: Styles,
+    /// Selected line in the table
+    selected: usize,
 }
 
 impl TerminalDevice {
@@ -354,6 +367,7 @@ impl TerminalDevice {
             metric_names: Vec::new(),
             display_limits: LimitKind::None,
             styles: Styles::new(theme),
+            selected: 0,
         })
     }
 
@@ -423,6 +437,10 @@ impl TerminalDevice {
             };
             let menu_entries = vec![
                 (key_name(KEY_QUIT), "Quit"),
+                (
+                    format!("{}/{}", key_name(Key::Up), key_name(Key::Down)),
+                    "Select",
+                ),
                 (format!("{KEY_FASTER_CHAR}/{KEY_SLOWER_CHAR}"), "Speed"),
                 (key_name(KEY_LIMITS_UPPER), display_limits),
             ];
@@ -444,6 +462,7 @@ impl TerminalDevice {
         const MAX_TIMEOUT_SECS: u64 = 24 * 3_600; // 24 hours
         const MIN_TIMEOUT_MSECS: u128 = 1;
         match action {
+            Action::None => {}
             Action::Quit => return false,
             Action::MultiplyTimeout(factor) => {
                 let delay = timer.get_delay();
@@ -486,7 +505,12 @@ impl TerminalDevice {
             Action::ScrollLeft => {
                 self.table_offset.scroll_left(1);
             }
-            _ => {}
+            Action::SelectUp => {
+                self.selected = self.selected.saturating_sub(1);
+            }
+            Action::SelectDown => {
+                self.selected += 1;
+            }
         }
         true
     }
@@ -525,15 +549,19 @@ impl DisplayDevice for TerminalDevice {
 
     fn render(&mut self, collector: &Collector, _targets_updated: bool) -> anyhow::Result<()> {
         let (hoffset, voffset) = (self.table_offset.horizontal, self.table_offset.vertical);
+        let line_count = collector.line_count();
         let ncols = self.metric_names.len() + 2; // process name, PID, metric1, ...
-        let nrows = collector.line_count() + 2; // metric title, metric subtitle, process1, ...
+        let nrows = line_count + 2; // metric title, metric subtitle, process1, ...
         let nvisible_rows = nrows - voffset;
         let nvisible_cols = ncols - hoffset;
+
+        if self.selected >= line_count {
+            self.selected = line_count.saturating_sub(1);
+        }
 
         let mut cws = Vec::with_capacity(nvisible_cols); // column widths
         cws.resize(nvisible_cols, MaxLength::default());
 
-        let bold_style = Style::default().add_modifier(Modifier::BOLD);
         let headers = {
             let mut headers = Vec::with_capacity(nvisible_cols);
             headers.push(Cell::from(""));
@@ -562,36 +590,47 @@ impl DisplayDevice for TerminalDevice {
 
         let decrease_style = self.styles.decrease;
         let increase_style = self.styles.increase;
+        let selected_style = self.styles.selected;
+        let unselected_style = self.styles.unselected;
         let rows = {
             let mut rows: Vec<Vec<Cell>> = Vec::with_capacity(nvisible_rows);
-            collector.lines().skip(voffset).for_each(|target| {
-                let mut row = Vec::with_capacity(nvisible_cols);
-                cws[0].check(target.name());
-                row.push(Cell::from(target.name()).style(bold_style));
-                let pid = format!("{}", target.pid());
-                cws[1].check(&pid);
-                row.push(Cell::from(Text::from(pid).alignment(Alignment::Right)));
-                let mut next_index = 2;
-                target
-                    .samples()
-                    .map(|sample| izip!(sample.strings(), sample.trends()))
-                    .flatten()
-                    .skip(hoffset)
-                    .for_each(|(value, trend)| {
-                        cws[next_index].check(value);
-                        next_index += 1;
-                        row.push(Cell::from(
-                            Text::from(value.as_str())
-                                .style(match trend {
-                                    Ordering::Less => decrease_style,
-                                    Ordering::Equal => Style::default(),
-                                    Ordering::Greater => increase_style,
-                                })
-                                .alignment(Alignment::Right),
-                        ));
-                    });
-                rows.push(row);
-            });
+            collector
+                .lines()
+                .enumerate()
+                .skip(voffset)
+                .for_each(|(index, target)| {
+                    let mut row = Vec::with_capacity(nvisible_cols);
+                    cws[0].check(target.name());
+                    let name_style = if index == self.selected {
+                        selected_style
+                    } else {
+                        unselected_style
+                    };
+                    row.push(Cell::from(target.name()).style(name_style));
+                    let pid = format!("{}", target.pid());
+                    cws[1].check(&pid);
+                    row.push(Cell::from(Text::from(pid).alignment(Alignment::Right)));
+                    let mut next_index = 2;
+                    target
+                        .samples()
+                        .map(|sample| izip!(sample.strings(), sample.trends()))
+                        .flatten()
+                        .skip(hoffset)
+                        .for_each(|(value, trend)| {
+                            cws[next_index].check(value);
+                            next_index += 1;
+                            row.push(Cell::from(
+                                Text::from(value.as_str())
+                                    .style(match trend {
+                                        Ordering::Less => decrease_style,
+                                        Ordering::Equal => Style::default(),
+                                        Ordering::Greater => increase_style,
+                                    })
+                                    .alignment(Alignment::Right),
+                            ));
+                        });
+                    rows.push(row);
+                });
             rows
         };
 
