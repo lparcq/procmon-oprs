@@ -309,6 +309,8 @@ fn start(opt: Opt) -> anyhow::Result<()> {
         panic::set_hook(Box::new(move |panic_info| {
             if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
                 error!("panic occurred: {s:?}");
+            } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+                error!("panic occurred: {s:?}");
             } else if let Some(location) = panic_info.location() {
                 error!(
                     "panic occurred in file '{}' at line {}",
@@ -335,6 +337,12 @@ fn start(opt: Opt) -> anyhow::Result<()> {
 }
 
 fn main() {
+    #[cfg(all(debug_assertions, target_os = "linux"))]
+    unsafe {
+        // Allow debugger to attach
+        libc::prctl(libc::PR_SET_PTRACER, -1, 0, 0, 0);
+    }
+
     let opt: Opt = argh::from_env();
     if opt.metric.is_empty() {
         application::list_metrics();

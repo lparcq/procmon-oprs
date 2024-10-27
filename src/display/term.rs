@@ -218,6 +218,9 @@ fn style_rows<'a>(
             } else {
                 odd_row_style
             };
+            if r.len() < ncols {
+                panic!("rows must have {} columns instead of {}", ncols, r.len());
+            }
             Row::new(r.drain(0..ncols)).style(style)
         })
         .collect::<Vec<Row>>()
@@ -227,51 +230,54 @@ fn style_rows<'a>(
 fn width_constraints(
     screen_width: u16,
     column_widths: &[u16],
-    default_column_width: u16,
     column_spacing: u16,
     ncols: usize,
 ) -> (u16, Vec<Constraint>) {
-    let mut widths = Vec::with_capacity(ncols);
-    let nfixed_cols = column_widths.len() as u16;
-    let ndef_cols = ncols as u16 - nfixed_cols; // Number of columns with a default width.
-    widths.extend_from_slice(column_widths);
-    let fixed_width = column_widths.iter().sum::<u16>() + (column_spacing * (nfixed_cols - 1));
-    let remaining: u16 = screen_width - fixed_width;
-    let spaced_column_width = column_spacing + default_column_width;
-    let nvisible_cols = std::cmp::min(remaining.saturating_div(spaced_column_width), ndef_cols);
-    (0..nvisible_cols).for_each(|_| widths.push(default_column_width));
-    let mut total_width = fixed_width + spaced_column_width * nvisible_cols;
-    if nvisible_cols < ndef_cols {
-        let remaining = remaining - nvisible_cols * spaced_column_width;
-        if remaining > column_spacing {
-            let last_col_width = remaining - column_spacing;
-            widths.push(last_col_width);
-            total_width += remaining;
+    let mut total_width = 0;
+    let mut constraints = Vec::with_capacity(ncols);
+    let mut current_column_spacing = 0;
+    while constraints.len() < column_widths.len() {
+        let index = constraints.len();
+        let col_width = column_widths[index];
+        let new_total_width = total_width + current_column_spacing + col_width;
+        if new_total_width < screen_width {
+            constraints.push(Constraint::Length(col_width));
+        } else {
+            let remaining = screen_width - total_width;
+            if remaining > column_spacing {
+                // Partial last column
+                constraints.push(Constraint::Length(remaining - column_spacing));
+                total_width = screen_width;
+            }
+            break;
         }
+        total_width = new_total_width;
+        current_column_spacing = column_spacing;
     }
-    (
-        total_width,
-        widths
-            .iter()
-            .map(|w| Constraint::Length(*w))
-            .collect::<Vec<Constraint>>(),
-    )
+    (total_width, constraints)
 }
 
 /// Compute the maximum length of strings
-struct MaxLength {
-    length: usize,
-}
+#[derive(Clone, Copy, Debug, Default)]
+struct MaxLength(u16);
 
 impl MaxLength {
-    fn new() -> MaxLength {
-        MaxLength { length: 0 }
+    /// The length:
+    fn len(&self) -> u16 {
+        let Self(length) = self;
+        *length
+    }
+
+    /// The length:
+    fn as_u16(&self) -> u16 {
+        self.len() as u16
     }
 
     /// Count the maximun length of a string
     fn check(&mut self, s: &str) {
-        if s.len() > self.length {
-            self.length = s.len()
+        let slen = s.len() as u16;
+        if slen > self.0 {
+            self.0 = slen
         }
     }
 
@@ -335,7 +341,6 @@ impl TerminalDevice {
         nrows: usize,
         ncols: usize,
         col_widths: &[u16],
-        default_col_width: u16,
     ) -> anyhow::Result<()> {
         let (hoffset, voffset) = self.table_offset;
         let title = self.title();
@@ -352,13 +357,8 @@ impl TerminalDevice {
                 .split(screen);
             if self.metric_width < screen.width {
                 let column_spacing = self.styles.column_spacing;
-                let (table_width, widths) = width_constraints(
-                    screen.width,
-                    col_widths,
-                    default_col_width,
-                    self.styles.column_spacing,
-                    ncols,
-                );
+                let (table_width, widths) =
+                    width_constraints(screen.width, col_widths, self.styles.column_spacing, ncols);
                 let table_height: u16 = 2 + nrows as u16;
                 let (nav, voverflow, hoverflow) = navigation_arrows(
                     screen,
@@ -463,7 +463,7 @@ impl TerminalDevice {
 impl DisplayDevice for TerminalDevice {
     fn open(&mut self, collector: &Collector) -> anyhow::Result<()> {
         let mut last_id = None;
-        let mut cw = MaxLength::new();
+        let mut cw = MaxLength::default();
         collector.for_each_computed_metric(|id, ag| {
             if last_id.is_none() || last_id.unwrap() != id {
                 last_id = Some(id);
@@ -482,7 +482,7 @@ impl DisplayDevice for TerminalDevice {
                 self.metric_names.push(name);
             }
         });
-        self.metric_width = cw.length as u16;
+        self.metric_width = cw.len() as u16;
         self.terminal.hide_cursor()?;
         Ok(())
     }
@@ -495,44 +495,61 @@ impl DisplayDevice for TerminalDevice {
 
     fn render(&mut self, collector: &Collector, _targets_updated: bool) -> anyhow::Result<()> {
         let (hoffset, voffset) = self.table_offset;
-        let ncols = collector.metric_count() + 2; // process name, PID, metric1, ...
+        let ncols = self.metric_names.len() + 2; // process name, PID, metric1, ...
         let nrows = collector.line_count() + 2; // metric title, metric subtitle, process1, ...
         let nvisible_rows = nrows - voffset;
         let nvisible_cols = ncols - hoffset;
+
+        let mut cws = Vec::with_capacity(nvisible_cols); // column widths
+        cws.resize(nvisible_cols, MaxLength::default());
 
         let bold_style = Style::default().add_modifier(Modifier::BOLD);
         let headers = {
             let mut headers = Vec::with_capacity(nvisible_cols);
             headers.push(Cell::from(""));
-            headers.push(Cell::from(Text::from("PID").alignment(Alignment::Center)));
+            const PID_TITLE: &'static str = "PID";
+            headers.push(Cell::from(
+                Text::from(PID_TITLE).alignment(Alignment::Center),
+            ));
+            cws[1].check(PID_TITLE);
+            let mut next_index = 2;
             self.metric_names.iter().skip(hoffset).for_each(|name| {
                 headers.push(Cell::from(
                     Text::from(
                         name.split(':')
-                            .map(|s| Line::from(s.to_string()).alignment(Alignment::Center))
+                            .map(|s| {
+                                cws[next_index].check(s);
+                                Line::from(s.to_string()).alignment(Alignment::Center)
+                            })
                             .collect::<Vec<Line>>(),
                     )
                     .alignment(Alignment::Center),
-                ))
+                ));
+                next_index += 1;
             });
             headers
         };
 
-        let mut cw_pid = MaxLength::new();
-        let mut cw = MaxLength::new();
         let decrease_style = self.styles.decrease;
         let increase_style = self.styles.increase;
         let rows = {
             let mut rows: Vec<Vec<Cell>> = Vec::with_capacity(nvisible_rows);
             collector.lines().skip(voffset).for_each(|target| {
                 let mut row = Vec::with_capacity(nvisible_cols);
+                cws[0].check(target.name());
                 row.push(Cell::from(target.name()).style(bold_style));
                 let pid = format!("{}", target.pid());
-                cw_pid.check(&pid);
+                cws[1].check(&pid);
                 row.push(Cell::from(Text::from(pid).alignment(Alignment::Right)));
-                target.samples().skip(hoffset).for_each(|sample| {
-                    izip!(sample.strings(), sample.trends()).for_each(|(value, trend)| {
-                        cw.check(value);
+                let mut next_index = 2;
+                target
+                    .samples()
+                    .map(|sample| izip!(sample.strings(), sample.trends()))
+                    .flatten()
+                    .skip(hoffset)
+                    .for_each(|(value, trend)| {
+                        cws[next_index].check(value);
+                        next_index += 1;
                         row.push(Cell::from(
                             Text::from(value.as_str())
                                 .style(match trend {
@@ -543,21 +560,13 @@ impl DisplayDevice for TerminalDevice {
                                 .alignment(Alignment::Right),
                         ));
                     });
-                });
                 rows.push(row);
             });
             rows
         };
 
-        let col_widths = vec![self.metric_width, cw_pid.length as u16];
-        self.draw(
-            headers,
-            rows,
-            nvisible_rows,
-            nvisible_cols,
-            &col_widths,
-            cw.length as u16,
-        )?;
+        let col_widths = cws.iter().map(MaxLength::len).collect::<Vec<u16>>();
+        self.draw(headers, rows, nvisible_rows, nvisible_cols, &col_widths)?;
         Ok(())
     }
 
