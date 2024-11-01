@@ -16,9 +16,11 @@
 
 use itertools::izip;
 use libc::pid_t;
-use std::cmp::Ordering;
-use std::collections::{vec_deque, VecDeque};
-use std::slice::Iter;
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    slice::Iter as SliceIter,
+};
 use strum::{AsRefStr, IntoEnumIterator};
 
 use crate::{
@@ -102,7 +104,7 @@ impl Sample {
     }
 
     /// Return the numeric values.
-    pub fn values(&self) -> Iter<u64> {
+    pub fn values(&self) -> SliceIter<u64> {
         self.values.iter()
     }
 
@@ -112,12 +114,12 @@ impl Sample {
     }
 
     /// Return the formatted strings
-    pub fn strings(&self) -> Iter<String> {
+    pub fn strings(&self) -> SliceIter<String> {
         self.strings.iter()
     }
 
     /// Return the trend of formatted strings
-    pub fn trends(&self) -> Iter<Ordering> {
+    pub fn trends(&self) -> SliceIter<Ordering> {
         self.trends.iter()
     }
 
@@ -228,7 +230,7 @@ impl ProcessSamples {
         self.pid
     }
 
-    pub fn samples(&self) -> Iter<Sample> {
+    pub fn samples(&self) -> SliceIter<Sample> {
         self.samples.iter()
     }
 
@@ -411,27 +413,47 @@ impl Updater {
     }
 }
 
+pub struct LineIter<'b> {
+    iter: SliceIter<'b, pid_t>,
+    samples: &'b BTreeMap<pid_t, ProcessSamples>,
+}
+
+impl<'b> Iterator for LineIter<'b> {
+    type Item = &'b ProcessSamples;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next().map(|pid| {
+            self.samples
+                .get(pid)
+                .expect("B-tree keys must be in PID list")
+        })
+    }
+}
+
 /// Collect raw samples from target and returns computed values
 pub struct Collector<'a> {
+    /// List of tracked metrics.
     metrics: &'a [FormattedMetric],
-    lines: VecDeque<ProcessSamples>,
+    /// Samples for each process.
+    samples: BTreeMap<pid_t, ProcessSamples>,
+    /// Process IDs in insertion order. The B-tree keeps the ordering in PID order.
+    pids: Vec<pid_t>,
+    /// Samples updater.
     updater: Updater,
-    last_line_pos: usize,
 }
 
 impl<'a> Collector<'a> {
-    pub fn new(number_of_targets: usize, metrics: &'a [FormattedMetric]) -> Collector {
+    pub fn new(metrics: &'a [FormattedMetric]) -> Collector {
         Collector {
             metrics,
-            lines: VecDeque::with_capacity(number_of_targets),
+            samples: BTreeMap::new(),
+            pids: Vec::new(),
             updater: Updater::new(),
-            last_line_pos: 0,
         }
     }
 
     /// Start collecting from the beginning
     pub fn rewind(&mut self) {
-        self.last_line_pos = 0;
+        self.pids.clear();
     }
 
     /// Set idle system time
@@ -447,39 +469,39 @@ impl<'a> Collector<'a> {
         values: &[u64],
         limits: &[Option<Limit>],
     ) {
-        let line_pos = self.last_line_pos;
-        while let Some(line) = self.lines.get_mut(line_pos) {
-            if line.pid() == pid {
-                self.updater
-                    .update_computed_values(self.metrics, line, values);
-                self.last_line_pos += 1;
-                return;
-            }
-            if line.name() == target_name {
-                // Targets keeps the process order. The one in the list doesn't exists anymore.
-                self.lines.remove(line_pos);
-            } else {
-                // It's a different target
-                break;
+        self.pids.push(pid);
+        match self.samples.get_mut(&pid) {
+            Some(samples) => self
+                .updater
+                .update_computed_values(self.metrics, samples, values),
+            None => {
+                if self
+                    .samples
+                    .insert(
+                        pid,
+                        self.updater.new_computed_values(
+                            target_name,
+                            pid,
+                            self.metrics,
+                            values,
+                            limits,
+                        ),
+                    )
+                    .is_some()
+                {
+                    log::error!("{}: PID has been replaced", pid);
+                }
             }
         }
-        let line = self
-            .updater
-            .new_computed_values(target_name, pid, self.metrics, values, limits);
-        if line_pos >= self.lines.len() {
-            self.lines.push_back(line);
-        } else {
-            self.lines.insert(line_pos, line);
-        }
-        self.last_line_pos += 1;
     }
 
     /// Called when there is no more targets
     pub fn finish(&mut self) {
-        self.lines.truncate(self.last_line_pos);
+        let alive = BTreeSet::from_iter(self.pids.iter());
+        self.samples.retain(|pid, _| alive.contains(pid));
     }
 
-    pub fn metrics(&self) -> Iter<FormattedMetric> {
+    pub fn metrics(&self) -> SliceIter<FormattedMetric> {
         self.metrics.iter()
     }
 
@@ -495,33 +517,18 @@ impl<'a> Collector<'a> {
     }
 
     /// Return lines
-    pub fn lines(&self) -> vec_deque::Iter<ProcessSamples> {
-        self.lines.iter()
+    pub fn lines<'b>(&'b self) -> LineIter<'b> {
+        LineIter {
+            iter: self.pids.iter(),
+            samples: &self.samples,
+        }
     }
 
     pub fn line_count(&self) -> usize {
-        self.lines.len()
+        self.pids.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.lines.is_empty()
-    }
-}
-
-#[cfg(test)]
-impl<'a> From<&[Vec<Vec<&str>>]> for Collector<'a> {
-    fn from(statuses: &[Vec<Vec<&str>>]) -> Collector<'a> {
-        let lines = VecDeque::from(
-            statuses
-                .iter()
-                .map(|s| ProcessSamples::from(s.as_slice()))
-                .collect::<Vec<ProcessSamples>>(),
-        );
-        Collector {
-            metrics: &[],
-            lines,
-            updater: Updater::new(),
-            last_line_pos: 0,
-        }
+        self.pids.is_empty()
     }
 }

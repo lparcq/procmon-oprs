@@ -15,9 +15,10 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use log::info;
-use std::io::Write;
-use std::result;
-use std::time::{Duration, SystemTime};
+use std::{
+    io::Write,
+    time::{Duration, SystemTime},
+};
 use strum::{EnumMessage, IntoEnumIterator};
 
 use crate::{
@@ -61,7 +62,7 @@ pub fn list_metrics() {
 }
 
 /// Return the best available display
-fn resolve_display_mode(mode: DisplayMode) -> result::Result<DisplayMode, Error> {
+fn resolve_display_mode(mode: DisplayMode) -> Result<DisplayMode, Error> {
     match mode {
         DisplayMode::Any => {
             if TerminalDevice::is_available() {
@@ -159,7 +160,7 @@ impl Application {
         mut device: Box<dyn DisplayDevice>,
         is_interactive: bool,
     ) -> anyhow::Result<()> {
-        let mut collector = Collector::new(targets.len(), &self.metrics);
+        let mut collector = Collector::new(&self.metrics);
 
         device.open(&collector)?;
         if let Some(ref mut exporter) = self.exporter {

@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020  Laurent Pelecq
+// Copyright (C) 2020-2024  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -130,10 +130,6 @@ impl<'a> TargetContainer<'a> {
             system_limits: None,
             with_system: with_system,
         }
-    }
-
-    pub fn len(&self) -> usize {
-        self.targets.len()
     }
 
     pub fn refresh(&mut self) -> bool {
