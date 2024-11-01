@@ -41,6 +41,24 @@ use crate::{
     format::human_duration,
 };
 
+/// Short comparison operator.
+macro_rules! ifelse {
+    ($cond:expr, $if:expr, $else: expr) => {
+        if ($cond) {
+            $if
+        } else {
+            $else
+        }
+    };
+}
+
+/// Right aligned cell.
+macro_rules! rcell {
+    ($s:expr) => {
+        Cell::from(Text::from($s).alignment(Alignment::Right))
+    };
+}
+
 /// Area property with an horizontal and vertical value.
 #[derive(Clone, Copy, Debug, Default)]
 struct AreaProperty<T: Default> {
@@ -281,10 +299,9 @@ fn width_constraints(
     screen_width: u16,
     column_widths: &[u16],
     column_spacing: u16,
-    ncols: usize,
 ) -> (u16, Vec<Constraint>) {
     let mut total_width = 0;
-    let mut constraints = Vec::with_capacity(ncols);
+    let mut constraints = Vec::with_capacity(column_widths.len());
     let mut current_column_spacing = 0;
     while constraints.len() < column_widths.len() {
         let index = constraints.len();
@@ -343,6 +360,8 @@ pub struct TerminalDevice {
     overflow: AreaProperty<bool>,
     /// List of metrics
     metric_names: Vec<String>,
+    /// Slots where limits are displayed under the metric (only for raw metrics).
+    limit_slots: Vec<bool>,
     /// Mode to display limits.
     display_limits: LimitKind,
     /// Display styles
@@ -365,6 +384,7 @@ impl TerminalDevice {
             vertical_scroll: 1,
             overflow: AreaProperty::new(false, false),
             metric_names: Vec::new(),
+            limit_slots: Vec::new(),
             display_limits: LimitKind::None,
             styles: Styles::new(theme),
             selected: 0,
@@ -390,7 +410,6 @@ impl TerminalDevice {
         mut headers: Vec<Cell>,
         mut rows: Vec<Vec<Cell>>,
         nrows: usize,
-        ncols: usize,
         col_widths: &[u16],
     ) -> anyhow::Result<()> {
         let offset = self.table_offset;
@@ -408,7 +427,7 @@ impl TerminalDevice {
                 .split(screen);
             let column_spacing = self.styles.column_spacing;
             let (table_width, widths) =
-                width_constraints(screen.width, col_widths, self.styles.column_spacing, ncols);
+                width_constraints(screen.width, col_widths, self.styles.column_spacing);
             let table_height = 2u16 + nrows as u16;
             let (nav, overflow) = navigation_arrows(
                 screen,
@@ -519,10 +538,12 @@ impl TerminalDevice {
 impl DisplayDevice for TerminalDevice {
     fn open(&mut self, collector: &Collector) -> anyhow::Result<()> {
         let mut last_id = None;
+
         collector.for_each_computed_metric(|id, ag| {
             if last_id.is_none() || last_id.unwrap() != id {
                 last_id = Some(id);
                 self.metric_names.push(id.as_str().to_string());
+                self.limit_slots.push(true);
             } else {
                 let name = format!(
                     "{} ({})",
@@ -535,6 +556,7 @@ impl DisplayDevice for TerminalDevice {
                     }
                 );
                 self.metric_names.push(name);
+                self.limit_slots.push(false);
             }
         });
         self.terminal.hide_cursor()?;
@@ -592,6 +614,8 @@ impl DisplayDevice for TerminalDevice {
         let increase_style = self.styles.increase;
         let selected_style = self.styles.selected;
         let unselected_style = self.styles.unselected;
+        let with_limits = matches!(self.display_limits, LimitKind::Soft | LimitKind::Hard);
+        let display_limits = self.display_limits.clone();
         let rows = {
             let mut rows: Vec<Vec<Cell>> = Vec::with_capacity(nvisible_rows);
             collector
@@ -601,24 +625,21 @@ impl DisplayDevice for TerminalDevice {
                 .for_each(|(index, target)| {
                     let mut row = Vec::with_capacity(nvisible_cols);
                     cws[0].check(target.name());
-                    let name_style = if index == self.selected {
-                        selected_style
-                    } else {
-                        unselected_style
-                    };
+                    let is_selected = index == self.selected;
+                    let name_style = ifelse!(is_selected, selected_style, unselected_style);
                     row.push(Cell::from(target.name()).style(name_style));
                     let pid = format!("{}", target.pid());
                     cws[1].check(&pid);
-                    row.push(Cell::from(Text::from(pid).alignment(Alignment::Right)));
-                    let mut next_index = 2;
+                    row.push(rcell!(pid));
+                    let mut sample_col = 2;
                     target
                         .samples()
                         .map(|sample| izip!(sample.strings(), sample.trends()))
                         .flatten()
                         .skip(hoffset)
                         .for_each(|(value, trend)| {
-                            cws[next_index].check(value);
-                            next_index += 1;
+                            cws[sample_col].check(value);
+                            sample_col += 1;
                             row.push(Cell::from(
                                 Text::from(value.as_str())
                                     .style(match trend {
@@ -630,12 +651,34 @@ impl DisplayDevice for TerminalDevice {
                             ));
                         });
                     rows.push(row);
+                    if is_selected && with_limits {
+                        let mut row = Vec::with_capacity(nvisible_cols);
+                        row.push(Cell::new("limits"));
+                        let kind = self.display_limits.as_ref().to_owned();
+                        row.push(Cell::new(kind));
+                        let mut index = 0;
+                        const NOT_APPLICABLE: &'static str = "n/a";
+                        target.samples().for_each(|sample| {
+                            let count = sample.string_count();
+                            (0..count).for_each(|delta| {
+                                if self.limit_slots[index + delta] {
+                                    row.push(rcell!(sample
+                                        .limit(display_limits.clone())
+                                        .unwrap_or("--")));
+                                } else {
+                                    row.push(rcell!(NOT_APPLICABLE));
+                                }
+                            });
+                            index += count;
+                        });
+                        rows.push(row);
+                    }
                 });
             rows
         };
 
         let col_widths = cws.iter().map(MaxLength::len).collect::<Vec<u16>>();
-        self.draw(headers, rows, nvisible_rows, nvisible_cols, &col_widths)?;
+        self.draw(headers, rows, nvisible_rows, &col_widths)?;
         Ok(())
     }
 
@@ -663,34 +706,7 @@ mod test {
 
     use ratatui::layout::Constraint;
 
-    use super::{pivot_flatten, width_constraints, Collector, LimitKind};
-
-    #[test]
-    fn test_pivot_flatten() {
-        let empty: &[Vec<Vec<&str>>] = &[];
-        let collector0 = Collector::from(empty);
-        let rows_with_limit = vec![false; 3];
-        let values0 = pivot_flatten(&collector0, 0, 0, LimitKind::None, &rows_with_limit);
-        assert_eq!(0, values0.len());
-
-        let statuses1 = vec![
-            vec![vec!["val111", "val112"], vec!["val12"]],
-            vec![vec!["val211", "val212"], vec!["val22"]],
-        ];
-        let expected_values1 = vec![
-            vec!["val111", "val211"],
-            vec!["val112", "val212"],
-            vec!["val12", "val22"],
-        ];
-        let collector1 = Collector::from(statuses1.as_slice());
-        let values1 = pivot_flatten(&collector1, 3, 2, LimitKind::None, &rows_with_limit);
-        assert_eq!(expected_values1.len(), values1.len());
-        let values1 = values1
-            .iter()
-            .map(|row| row.iter().map(|(val, _trend)| *val).collect::<Vec<&str>>())
-            .collect::<Vec<Vec<&str>>>();
-        assert_eq!(expected_values1, values1);
-    }
+    use super::width_constraints;
 
     #[test]
     fn test_width_constraints_underflow() {
@@ -700,15 +716,10 @@ mod test {
         const SCREEN_WIDTH: u16 = 20;
         const FIRST_COLUMN_WIDTH: u16 = 5;
         const COLUMN_WIDTH: u16 = 4;
+        let column_widths = vec![FIRST_COLUMN_WIDTH, COLUMN_WIDTH, COLUMN_WIDTH];
         const COLUMN_SPACING: u16 = 1;
         const NCOLS: usize = 3;
-        let (table_width, widths) = width_constraints(
-            SCREEN_WIDTH,
-            FIRST_COLUMN_WIDTH,
-            COLUMN_WIDTH,
-            COLUMN_SPACING,
-            NCOLS,
-        );
+        let (table_width, widths) = width_constraints(SCREEN_WIDTH, &column_widths, COLUMN_SPACING);
         const SPACED_COLUMN_WIDTH: u16 = COLUMN_WIDTH + COLUMN_SPACING;
         const EXPECTED_WIDTH: u16 = FIRST_COLUMN_WIDTH + (NCOLS as u16 - 1) * SPACED_COLUMN_WIDTH;
         assert_eq!(EXPECTED_WIDTH, table_width);
@@ -725,19 +736,15 @@ mod test {
         const SCREEN_WIDTH: u16 = 20;
         const FIRST_COLUMN_WIDTH: u16 = 5;
         const COLUMN_WIDTH: u16 = 4;
+        let column_widths = vec![FIRST_COLUMN_WIDTH, COLUMN_WIDTH, COLUMN_WIDTH, COLUMN_WIDTH];
         const COLUMN_SPACING: u16 = 1;
-        const NCOLS: usize = 4;
-        let (table_width, widths) = width_constraints(
-            SCREEN_WIDTH,
-            FIRST_COLUMN_WIDTH,
-            COLUMN_WIDTH,
-            COLUMN_SPACING,
-            NCOLS,
-        );
+        let (table_width, widths) = width_constraints(SCREEN_WIDTH, &column_widths, COLUMN_SPACING);
         const SPACED_COLUMN_WIDTH: u16 = COLUMN_WIDTH + COLUMN_SPACING;
-        const EXPECTED_WIDTH: u16 = FIRST_COLUMN_WIDTH + (NCOLS as u16 - 1) * SPACED_COLUMN_WIDTH;
-        assert_eq!(EXPECTED_WIDTH, table_width);
-        assert_eq!(NCOLS, widths.len());
+        let expected_width: u16 =
+            FIRST_COLUMN_WIDTH + (column_widths.len() as u16 - 1) * SPACED_COLUMN_WIDTH;
+        const EXPECTED_NCOLS: usize = 4;
+        assert_eq!(expected_width, table_width);
+        assert_eq!(EXPECTED_NCOLS, widths.len());
         assert_eq!(Constraint::Length(FIRST_COLUMN_WIDTH), widths[0]);
         assert_eq!(Constraint::Length(COLUMN_WIDTH), widths[1]);
     }
@@ -750,15 +757,16 @@ mod test {
         const SCREEN_WIDTH: u16 = 20;
         const FIRST_COLUMN_WIDTH: u16 = 5;
         const COLUMN_WIDTH: u16 = 3;
-        const COLUMN_SPACING: u16 = 1;
-        const NCOLS: usize = 6;
-        let (table_width, widths) = width_constraints(
-            SCREEN_WIDTH,
+        let column_widths = vec![
             FIRST_COLUMN_WIDTH,
             COLUMN_WIDTH,
-            COLUMN_SPACING,
-            NCOLS,
-        );
+            COLUMN_WIDTH,
+            COLUMN_WIDTH,
+            COLUMN_WIDTH,
+            COLUMN_WIDTH,
+        ];
+        const COLUMN_SPACING: u16 = 1;
+        let (table_width, widths) = width_constraints(SCREEN_WIDTH, &column_widths, COLUMN_SPACING);
         const EXPECTED_NCOLS: usize = 5;
         assert_eq!(SCREEN_WIDTH, table_width);
         assert_eq!(EXPECTED_NCOLS, widths.len());

@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020  Laurent Pelecq
+// Copyright (C) 2020-2024  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@ use libc::pid_t;
 use std::cmp::Ordering;
 use std::collections::{vec_deque, VecDeque};
 use std::slice::Iter;
-use strum::IntoEnumIterator;
+use strum::{AsRefStr, IntoEnumIterator};
 
 use crate::{
     agg::Aggregation,
@@ -40,10 +40,13 @@ fn track_change(id: MetricId) -> bool {
 
 const UNLIMITED: &str = "∞";
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, AsRefStr)]
 pub enum LimitKind {
+    #[strum(serialize = "none")]
     None,
+    #[strum(serialize = "soft")]
     Soft,
+    #[strum(serialize = "hard")]
     Hard,
 }
 
@@ -101,6 +104,11 @@ impl Sample {
     /// Return the numeric values.
     pub fn values(&self) -> Iter<u64> {
         self.values.iter()
+    }
+
+    /// Return the number of formatted strings
+    pub fn string_count(&self) -> usize {
+        self.strings.len()
     }
 
     /// Return the formatted strings
