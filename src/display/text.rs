@@ -14,12 +14,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use super::DisplayDevice;
 use crate::{
     agg::Aggregation,
     collector::Collector,
     console::charset::{TableChar, TableCharSet},
+    metrics::FormattedMetric,
 };
+
+use super::{DisplayDevice, SliceIter};
 
 const REPEAT_HEADER_EVERY: u16 = 20;
 const RESIZE_IF_COLUMNS_SHRINK: usize = 2;
@@ -283,9 +285,9 @@ impl TextDevice {
 }
 
 impl DisplayDevice for TextDevice {
-    fn open(&mut self, collector: &Collector) -> anyhow::Result<()> {
+    fn open(&mut self, metrics: SliceIter<FormattedMetric>) -> anyhow::Result<()> {
         let mut last_id = None;
-        collector.for_each_computed_metric(|id, ag| {
+        Collector::for_each_computed_metric(metrics, |id, ag| {
             if last_id.is_none() || last_id.unwrap() != id {
                 last_id = Some(id);
                 self.table.push_subtitle(id.as_str(), id.to_short_str());

@@ -37,9 +37,11 @@ use crate::{
     clock::Timer,
     collector::{Collector, LimitKind},
     console::{is_tty, BuiltinTheme, Event, EventChannel, Key},
-    display::{DisplayDevice, PauseStatus},
     format::human_duration,
+    metrics::FormattedMetric,
 };
+
+use super::{DisplayDevice, PauseStatus, SliceIter};
 
 /// Short comparison operator.
 macro_rules! ifelse {
@@ -536,10 +538,10 @@ impl TerminalDevice {
 }
 
 impl DisplayDevice for TerminalDevice {
-    fn open(&mut self, collector: &Collector) -> anyhow::Result<()> {
+    fn open(&mut self, metrics: SliceIter<FormattedMetric>) -> anyhow::Result<()> {
         let mut last_id = None;
 
-        collector.for_each_computed_metric(|id, ag| {
+        Collector::for_each_computed_metric(metrics, |id, ag| {
             if last_id.is_none() || last_id.unwrap() != id {
                 last_id = Some(id);
                 self.metric_names.push(id.as_str().to_string());

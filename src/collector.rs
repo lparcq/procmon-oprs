@@ -505,11 +505,11 @@ impl<'a> Collector<'a> {
         self.metrics.iter()
     }
 
-    pub fn for_each_computed_metric<F>(&self, mut func: F)
+    pub fn for_each_computed_metric<F>(iter: SliceIter<FormattedMetric>, mut func: F)
     where
         F: FnMut(MetricId, Aggregation),
     {
-        self.metrics.iter().for_each(|metric| {
+        iter.for_each(|metric| {
             Aggregation::iter()
                 .filter(|ag| metric.aggregations.has(*ag))
                 .for_each(|ag| func(metric.id, ag));

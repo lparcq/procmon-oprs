@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020  Laurent Pelecq
+// Copyright (C) 2020-2024  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -14,19 +14,23 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::time::Duration;
+use std::{slice::Iter as SliceIter, time::Duration};
 
-use crate::collector::Collector;
+use crate::{collector::Collector, metrics::FormattedMetric};
 
 mod csv;
 mod rrd;
 mod rrdtool;
 
 pub trait Exporter {
-    fn open(&mut self, collector: &Collector) -> anyhow::Result<()>;
+    /// Initialize the exporter with the metrics.
+    fn open(&mut self, metrics: SliceIter<FormattedMetric>) -> anyhow::Result<()>;
+
+    /// Terminate exporting.
     fn close(&mut self) -> anyhow::Result<()>;
+
+    /// Export the current metrics.
     fn export(&mut self, collector: &Collector, timestamp: &Duration) -> anyhow::Result<()>;
 }
 
-pub use crate::export::csv::CsvExporter;
-pub use crate::export::rrd::RrdExporter;
+pub use crate::export::{csv::CsvExporter, rrd::RrdExporter};

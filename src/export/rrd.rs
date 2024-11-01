@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020  Laurent Pelecq
+// Copyright (C) 2020-2024  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -25,10 +25,10 @@ use crate::{
     agg::Aggregation,
     cfg::{ExportSettings, ExportType},
     collector::{Collector, ProcessSamples},
-    metrics::MetricDataType,
+    metrics::{FormattedMetric, MetricDataType},
 };
 
-use super::Exporter;
+use super::{Exporter, SliceIter};
 
 use crate::export::rrdtool::RrdTool;
 
@@ -149,15 +149,15 @@ impl RrdExporter {
 }
 
 impl Exporter for RrdExporter {
-    fn open(&mut self, collector: &Collector) -> anyhow::Result<()> {
+    fn open(&mut self, metrics: SliceIter<FormattedMetric>) -> anyhow::Result<()> {
         let heart_beat = self.interval.as_secs() * 2;
-        collector.for_each_computed_metric(|id, agg| {
+        Collector::for_each_computed_metric(metrics, |id, ag| {
             let ds_name = id.as_str().replace(':', "_");
             let ds_type = match id.data_type() {
                 MetricDataType::Counter => "COUNTER",
                 MetricDataType::Gauge => "GAUGE",
             };
-            if let Aggregation::None = agg {
+            if let Aggregation::None = ag {
                 self.skip.push(false);
                 let ds = format!("DS:{}:{}:{}:0:U", &ds_name, ds_type, heart_beat,);
                 self.variables.push(ds_name);

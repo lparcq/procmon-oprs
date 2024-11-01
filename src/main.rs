@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020, 2021  Laurent Pelecq
+// Copyright (C) 2020-2024  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -302,7 +302,7 @@ fn start(opt: Opt) -> anyhow::Result<()> {
     if target_ids.is_empty() {
         warn!("no process to monitor, exiting.");
     } else {
-        let mut app = Application::new(&settings, &opt.metric)?;
+        let app = Application::new(&settings, &opt.metric)?;
         configure_logging(&settings.logging);
         let must_print_backtrace = opt.debug;
 

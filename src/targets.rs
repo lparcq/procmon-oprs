@@ -27,7 +27,7 @@ use crate::{
 };
 
 #[derive(thiserror::Error, Debug)]
-pub enum CollectorError {
+pub enum TargetError {
     #[error("{0}: invalid process id")]
     InvalidProcessId(pid_t),
     #[error("{0}: invalid path")]
@@ -66,14 +66,14 @@ impl<'a> Target<'a> {
         }
     }
 
-    fn with_pid_file<P>(pid_file: P, system_conf: &'a SystemConf) -> Result<Self, CollectorError>
+    fn with_pid_file<P>(pid_file: P, system_conf: &'a SystemConf) -> Result<Self, TargetError>
     where
         P: AsRef<Path>,
     {
         let pid_file = pid_file.as_ref();
         Ok(Self {
             name: basename(pid_file, true)
-                .ok_or_else(|| CollectorError::InvalidPath(pid_file.to_path_buf()))?,
+                .ok_or_else(|| TargetError::InvalidPath(pid_file.to_path_buf()))?,
             process: None,
             pid_file: Some(pid_file.to_path_buf()),
             system_conf,
@@ -181,7 +181,7 @@ impl<'a> TargetContainer<'a> {
         &mut self,
         target_id: &TargetId,
         forest: &ProcessForest,
-    ) -> Result<(), CollectorError> {
+    ) -> Result<(), TargetError> {
         match target_id {
             TargetId::System => {
                 self.with_system = true;
@@ -205,7 +205,7 @@ impl<'a> TargetContainer<'a> {
             _ => {
                 let target = Box::new(match target_id {
                     TargetId::Pid(pid) => Target::new(
-                        Process::new(*pid).map_err(|_| CollectorError::InvalidProcessId(*pid))?,
+                        Process::new(*pid).map_err(|_| TargetError::InvalidProcessId(*pid))?,
                         self.system_conf,
                     ),
                     TargetId::PidFile(pid_file) => {
@@ -219,12 +219,12 @@ impl<'a> TargetContainer<'a> {
         Ok(())
     }
 
-    pub fn push_all(&mut self, target_ids: &[TargetId]) -> Result<(), CollectorError> {
+    pub fn push_all(&mut self, target_ids: &[TargetId]) -> Result<(), TargetError> {
         let forest = {
             let mut forest = ProcessForest::new();
             forest
                 .refresh()
-                .map_err(|err| CollectorError::ProcessError(err))?;
+                .map_err(|err| TargetError::ProcessError(err))?;
             forest
         };
 

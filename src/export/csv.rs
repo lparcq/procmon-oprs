@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020  Laurent Pelecq
+// Copyright (C) 2020-2024  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -16,20 +16,23 @@
 
 use libc::pid_t;
 use memchr::memchr;
-use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
-use std::fs::{self, File};
-use std::io::{self, Seek, Write};
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+    fs::{self, File},
+    io::{self, Seek, Write},
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use crate::{
     agg::Aggregation,
     cfg::{ExportSettings, ExportType},
     collector::Collector,
+    metrics::FormattedMetric,
 };
 
-use super::Exporter;
+use super::{Exporter, SliceIter};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -183,10 +186,10 @@ impl CsvExporter {
 }
 
 impl Exporter for CsvExporter {
-    fn open(&mut self, collector: &Collector) -> anyhow::Result<()> {
+    fn open(&mut self, metrics: SliceIter<FormattedMetric>) -> anyhow::Result<()> {
         let mut last_id = None;
         self.header.push(String::from("time"));
-        collector.for_each_computed_metric(|id, ag| {
+        Collector::for_each_computed_metric(metrics, |id, ag| {
             if last_id.is_none() || last_id.unwrap() != id {
                 last_id = Some(id);
                 self.header.push(id.as_str().to_string());

@@ -23,7 +23,7 @@ use strum::{EnumMessage, IntoEnumIterator};
 
 use crate::{
     agg::Aggregation,
-    cfg::{DisplayMode, ExportType, MetricFormat, Settings},
+    cfg::{DisplayMode, ExportSettings, ExportType, MetricFormat, Settings},
     clock::{DriftMonitor, Timer},
     collector::Collector,
     console::BuiltinTheme,
@@ -32,7 +32,7 @@ use crate::{
     metrics::{FormattedMetric, MetricDataType, MetricId, MetricNamesParser},
     process::SystemConf,
     sighdr::SignalHandler,
-    targets::{TargetContainer, TargetId},
+    targets::{TargetContainer, TargetError, TargetId},
 };
 
 /// Delay in seconds between two notifications for time drift
@@ -82,63 +82,81 @@ fn resolve_display_mode(mode: DisplayMode) -> Result<DisplayMode, Error> {
     }
 }
 
+trait ProcessManager {
+    fn initialize(&mut self, collector: &mut Collector);
+    fn refresh(&mut self, collector: &mut Collector) -> bool;
+}
+
+struct FlatProcessManager<'s> {
+    targets: TargetContainer<'s>,
+}
+
+impl<'s> FlatProcessManager<'s> {
+    fn new(
+        system_conf: &'s SystemConf,
+        metrics: &[FormattedMetric],
+        target_ids: &[TargetId],
+    ) -> Result<Self, TargetError> {
+        let with_system = metrics
+            .iter()
+            .any(|metric| metric.aggregations.has(Aggregation::Ratio));
+
+        let mut targets = TargetContainer::new(system_conf, with_system);
+        targets.push_all(target_ids)?;
+        Ok(Self { targets })
+    }
+}
+
+impl<'s> ProcessManager for FlatProcessManager<'s> {
+    fn initialize(&mut self, collector: &mut Collector) {
+        self.targets.initialize(collector);
+    }
+
+    fn refresh(&mut self, collector: &mut Collector) -> bool {
+        let targets_updated = self.targets.refresh();
+        self.targets.collect(collector);
+        targets_updated
+    }
+}
+
 /// Application displaying the process metrics
-pub struct Application {
+pub struct Application<'s> {
     display_mode: DisplayMode,
     every: Duration,
     count: Option<u64>,
     metrics: Vec<FormattedMetric>,
-    exporter: Option<Box<dyn Exporter>>,
+    export_settings: &'s ExportSettings,
     theme: Option<BuiltinTheme>,
 }
 
 /// Get export type
 
-impl Application {
-    pub fn new(settings: &Settings, metric_names: &[String]) -> anyhow::Result<Application> {
+impl<'s> Application<'s> {
+    pub fn new(settings: &'s Settings, metric_names: &[String]) -> anyhow::Result<Application<'s>> {
         let every = Duration::from_millis((settings.display.every * 1000.0) as u64);
         let mut metrics_parser =
             MetricNamesParser::new(matches!(settings.display.format, MetricFormat::Human));
         let display_mode = resolve_display_mode(settings.display.mode)?;
-        let exporter: Option<Box<dyn Exporter>> = match settings.export.kind {
-            ExportType::Csv | ExportType::Tsv => {
-                Some(Box::new(CsvExporter::new(&settings.export)?))
-            }
-            ExportType::Rrd | ExportType::RrdGraph => {
-                Some(Box::new(RrdExporter::new(&settings.export, every)?))
-            }
-            ExportType::None => None,
-        };
 
         Ok(Application {
             display_mode,
             every,
             count: settings.display.count,
             metrics: metrics_parser.parse(metric_names)?,
-            exporter,
+            export_settings: &settings.export,
             theme: settings.display.theme,
         })
     }
 
-    pub fn run(
-        &mut self,
-        target_ids: &[TargetId],
-        system_conf: &'_ SystemConf,
-    ) -> anyhow::Result<()> {
+    pub fn run(&self, target_ids: &[TargetId], system_conf: &'_ SystemConf) -> anyhow::Result<()> {
         info!("starting");
 
-        let with_system = self
-            .metrics
-            .iter()
-            .any(|metric| metric.aggregations.has(Aggregation::Ratio));
-        let mut targets = TargetContainer::new(system_conf, with_system);
-        targets.push_all(target_ids)?;
-
         if target_ids.is_empty() {
-            match self.display_mode {
-                DisplayMode::Terminal => self.run_ui(targets)?,
-                _ => return Err(anyhow::anyhow!(Error::NoTargets)),
-            }
+            panic!("not implemented");
+            // match self.display_mode {
+            //     DisplayMode::Terminal => self.run_ui(targets)?,
+            //     _ => return Err(anyhow::anyhow!(Error::NoTargets)),
+            // }
         } else {
             let mut is_interactive = false;
             let device: Box<dyn DisplayDevice> = match self.display_mode {
@@ -149,22 +167,34 @@ impl Application {
                 DisplayMode::Text => Box::new(TextDevice::new()),
                 _ => Box::new(NullDevice::new()),
             };
-            self.run_loop(targets, device, is_interactive)?;
+            let mut tmgt = FlatProcessManager::new(&system_conf, &self.metrics, target_ids)?;
+            self.run_loop(&mut tmgt, device, is_interactive)?;
         }
         Ok(())
     }
 
     fn run_loop(
-        &mut self,
-        mut targets: TargetContainer,
+        &self,
+        tmgt: &mut dyn ProcessManager,
         mut device: Box<dyn DisplayDevice>,
         is_interactive: bool,
     ) -> anyhow::Result<()> {
         let mut collector = Collector::new(&self.metrics);
 
-        device.open(&collector)?;
-        if let Some(ref mut exporter) = self.exporter {
-            exporter.open(&collector)?;
+        device.open(self.metrics.iter())?;
+        let mut exporter: Option<Box<dyn Exporter>> = match self.export_settings.kind {
+            ExportType::Csv | ExportType::Tsv => {
+                Some(Box::new(CsvExporter::new(self.export_settings)?))
+            }
+            ExportType::Rrd | ExportType::RrdGraph => Some(Box::new(RrdExporter::new(
+                self.export_settings,
+                self.every,
+            )?)),
+            ExportType::None => None,
+        };
+
+        if let Some(ref mut exporter) = exporter {
+            exporter.open(self.metrics.iter())?;
         }
 
         let sighdr = SignalHandler::new()?;
@@ -172,24 +202,21 @@ impl Application {
         let mut timer = Timer::new(self.every, true);
         let mut drift = DriftMonitor::new(timer.start_time(), DRIFT_NOTIFICATION_DELAY);
 
-        targets.initialize(&collector);
+        tmgt.initialize(&mut collector);
 
         while !sighdr.caught() {
-            let targets_updated = targets.refresh();
-            let collect_timestamp = if timer.expired() {
-                timer.reset();
+            let targets_updated = if timer.expired() {
                 let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
-                targets.collect(&mut collector);
-                Some(timestamp)
-            } else {
-                None
-            };
-            device.render(&collector, targets_updated)?;
-            if let Some(timestamp) = collect_timestamp {
-                if let Some(ref mut exporter) = self.exporter {
+                let targets_updated = tmgt.refresh(&mut collector);
+                if let Some(ref mut exporter) = exporter {
                     exporter.export(&collector, &timestamp)?;
                 }
-            }
+                timer.reset();
+                targets_updated
+            } else {
+                false
+            };
+            device.render(&collector, targets_updated)?;
 
             if let Some(count) = self.count {
                 loop_number += 1;
@@ -216,14 +243,10 @@ impl Application {
         }
 
         device.close()?;
-        if let Some(ref mut exporter) = self.exporter {
+        if let Some(ref mut exporter) = exporter {
             exporter.close()?;
         }
         info!("stopping");
         Ok(())
-    }
-
-    fn run_ui(&self, mut _targets: TargetContainer) -> anyhow::Result<()> {
-        Err(anyhow::anyhow!("run_ui is not implemented"))
     }
 }

@@ -14,8 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use super::DisplayDevice;
-use crate::collector::Collector;
+use crate::{collector::Collector, metrics::FormattedMetric};
+
+use super::{DisplayDevice, SliceIter};
 
 /// Null device
 pub struct NullDevice {}
@@ -27,7 +28,7 @@ impl NullDevice {
 }
 
 impl DisplayDevice for NullDevice {
-    fn open(&mut self, _collector: &Collector) -> anyhow::Result<()> {
+    fn open(&mut self, _metrics: SliceIter<FormattedMetric>) -> anyhow::Result<()> {
         Ok(())
     }
 

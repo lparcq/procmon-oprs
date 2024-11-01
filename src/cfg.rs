@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020, 2021  Laurent Pelecq
+// Copyright (C) 2020-2024  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -101,6 +101,7 @@ pub enum ConfigError {
 }
 
 /// Parameters for display
+#[derive(Debug)]
 pub struct DisplaySettings {
     pub mode: DisplayMode,
     pub every: f64,
@@ -122,6 +123,7 @@ impl DisplaySettings {
 }
 
 /// Parameters for export
+#[derive(Debug)]
 pub struct ExportSettings {
     pub kind: ExportType,
     pub dir: PathBuf,

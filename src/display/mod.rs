@@ -14,7 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::{clock::Timer, collector::Collector};
+use std::slice::Iter as SliceIter;
+
+use crate::{clock::Timer, collector::Collector, metrics::FormattedMetric};
 
 pub mod null;
 pub mod term;
@@ -27,12 +29,16 @@ pub enum PauseStatus {
 }
 
 pub trait DisplayDevice {
-    fn open(&mut self, collector: &Collector) -> anyhow::Result<()>;
+    /// Initialize the device with the metrics.
+    fn open(&mut self, metrics: SliceIter<FormattedMetric>) -> anyhow::Result<()>;
 
+    /// Close the device.
     fn close(&mut self) -> anyhow::Result<()>;
 
+    /// Render the metrics on the device.
     fn render(&mut self, collector: &Collector, targets_updated: bool) -> anyhow::Result<()>;
 
+    /// Pause for the given duration.
     fn pause(&mut self, _: &mut Timer) -> anyhow::Result<PauseStatus> {
         panic!("not available");
     }
