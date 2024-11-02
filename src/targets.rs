@@ -153,9 +153,9 @@ impl<'a> TargetContainer<'a> {
         changed
     }
 
-    pub fn initialize(&mut self, collector: &Collector) {
+    pub fn initialize(&mut self, metric_count: usize) {
         if self.with_system {
-            self.system_limits = Some(vec![None; collector.metrics().len()]);
+            self.system_limits = Some(vec![None; metric_count]);
         }
     }
 

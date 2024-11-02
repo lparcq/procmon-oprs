@@ -439,12 +439,15 @@ impl MetricNamesParser {
     }
 
     /// Return a list of metrics with aggregations and format
-    pub fn parse(&mut self, names: &[String]) -> result::Result<Vec<FormattedMetric>, Error> {
+    pub fn parse<S>(&mut self, names: &[S]) -> result::Result<Vec<FormattedMetric>, Error>
+    where
+        S: AsRef<str> + ToString + fmt::Display,
+    {
         let mut metrics = Vec::new();
         let mut parsed_ids = HashSet::new();
         names
             .iter()
-            .try_for_each(|name| match parse_metric_spec(name.as_str()) {
+            .try_for_each(|name| match parse_metric_spec(name.as_ref()) {
                 Ok((metric_ids, aggs, fmt)) => {
                     if metric_ids.is_empty() {
                         return Err(Error::UnknownMetric(name.to_string()));

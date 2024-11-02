@@ -20,7 +20,6 @@
 extern crate libc;
 
 use argh::FromArgs;
-use log::{error, warn};
 use simplelog::{self, SimpleLogger, TermLogger, WriteLogger};
 use std::{
     fs::{self, File},
@@ -84,6 +83,9 @@ struct Opt {
 
     #[argh(switch, description = "debug mode")]
     debug: bool,
+
+    #[argh(switch, short = 'l', description = "list the available metrics")]
+    list: bool,
 
     #[argh(option, short = 'L', description = "log file")]
     log_file: Option<String>,
@@ -299,38 +301,39 @@ fn start(opt: Opt) -> anyhow::Result<()> {
     for name in opt.name {
         target_ids.push(TargetId::ProcessName(name));
     }
-    if target_ids.is_empty() {
-        warn!("no process to monitor, exiting.");
+    let metric_names = if opt.metric.is_empty() {
+        vec!["time:cpu-raw+ratio", "mem:vm", "time:elapsed"]
     } else {
-        let app = Application::new(&settings, &opt.metric)?;
-        configure_logging(&settings.logging);
-        let must_print_backtrace = opt.debug;
+        opt.metric.iter().map(String::as_str).collect::<Vec<&str>>()
+    };
+    let app = Application::new(&settings, &metric_names)?;
+    configure_logging(&settings.logging);
+    let must_print_backtrace = opt.debug;
 
-        panic::set_hook(Box::new(move |panic_info| {
-            if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
-                error!("panic occurred: {s:?}");
-            } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
-                error!("panic occurred: {s:?}");
-            } else if let Some(location) = panic_info.location() {
-                error!(
-                    "panic occurred in file '{}' at line {}",
-                    location.file(),
-                    location.line(),
-                );
-            } else {
-                error!("panic occurred but can't get location information...");
-            }
-            if must_print_backtrace {
-                let bcktrc = std::backtrace::Backtrace::force_capture();
-                log::debug!("{}", bcktrc);
-            }
-        }));
-        let system_conf = process::SystemConf::new()?;
-        if let Err(err) = app.run(&target_ids, &system_conf) {
-            error!("{}", err);
-            if settings.logging.file.is_some() {
-                eprintln!("{err}");
-            }
+    panic::set_hook(Box::new(move |panic_info| {
+        if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+            log::error!("panic occurred: {s:?}");
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            log::error!("panic occurred: {s:?}");
+        } else if let Some(location) = panic_info.location() {
+            log::error!(
+                "panic occurred in file '{}' at line {}",
+                location.file(),
+                location.line(),
+            );
+        } else {
+            log::error!("panic occurred but can't get location information...");
+        }
+        if must_print_backtrace {
+            let bcktrc = std::backtrace::Backtrace::force_capture();
+            log::debug!("{}", bcktrc);
+        }
+    }));
+    let system_conf = process::SystemConf::new()?;
+    if let Err(err) = app.run(&target_ids, &system_conf) {
+        log::error!("{}", err);
+        if settings.logging.file.is_some() {
+            eprintln!("{err}");
         }
     }
     Ok(())
@@ -344,7 +347,7 @@ fn main() {
     }
 
     let opt: Opt = argh::from_env();
-    if opt.metric.is_empty() {
+    if opt.list {
         application::list_metrics();
     } else if let Err(err) = start(opt) {
         eprintln!("{err}");

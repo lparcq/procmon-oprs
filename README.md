@@ -33,11 +33,12 @@ Without argument, the command prints the available metrics.
 Metrics
 -------
 
-Without argument, the command prints the list of available metrics.
+Use option `--list` to print the list of available metrics.
 
 Limited patterns are allowed for metrics: by prefix mem:*, suffix *:call, both io:*:count.
 
-A metric may be followed by a unit. For example: mem:vm/gi
+A metric may be followed by a unit. For example: mem:vm/gi. It's usually easier to use
+`--format human`.
 
 Available units:
 - ki  kibi
@@ -57,6 +58,11 @@ memory size and the peak size. To get only the max, use: mem:vm-raw+max. To get 
 For some metrics, min or max is meaningless.
 
 By default, the raw figure is printed unless -raw is added: mem:rss-raw+min+max. 
+
+For CPU and the system and user time of a process, there is also the aggregated ratio over the
+entire system. Typically, time:cpu-raw+ratio prints the CPU usage.
+
+The default metrics are the CPU usage, the VM size and the elapsed time.
 
 ### Data type
 

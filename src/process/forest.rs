@@ -254,10 +254,12 @@ impl Forest {
     /// Remove a node if it exists.
     fn remove_node(&mut self, state: &mut RefreshState, node_id: NodeId) {
         if let Some(node) = self.arena.get(node_id) {
-            let pid = node.get().pid();
-            self.processes.remove(&pid);
+            if !node.is_removed() {
+                let pid = node.get().pid();
+                self.processes.remove(&pid);
+                node_id.remove(&mut self.arena);
+            }
             self.roots.remove(&node_id);
-            node_id.remove(&mut self.arena);
             state.remove_old_node(&node_id);
         }
     }
@@ -744,8 +746,7 @@ mod tests {
     ///
     /// Tree:
     /// 0
-    /// |_1_2
-    /// |   \_5
+    /// |_1_2_5
     /// \_3_4
     fn test_refresh_with_old_processes() {
         let mut factory = ProcessFactory::default();
@@ -773,6 +774,14 @@ mod tests {
             assert_eq!(6, forest.size());
         }
         assert!(forest.get_process(proc_pid).is_none());
+
+        let mut processes3 = processes2
+            .iter()
+            .filter(|proc| proc.pid() != proc_pid)
+            .cloned()
+            .collect::<Vec<Process>>();
+        forest.refresh_from(processes3.drain(..), |_| true);
+        assert_eq!(5, forest.size());
     }
 
     #[test]

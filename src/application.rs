@@ -30,7 +30,7 @@ use crate::{
     display::{DisplayDevice, NullDevice, PauseStatus, TerminalDevice, TextDevice},
     export::{CsvExporter, Exporter, RrdExporter},
     metrics::{FormattedMetric, MetricDataType, MetricId, MetricNamesParser},
-    process::SystemConf,
+    process::{Forest, Limit, ProcessStat, SystemConf, SystemStat},
     sighdr::SignalHandler,
     targets::{TargetContainer, TargetError, TargetId},
 };
@@ -82,11 +82,12 @@ fn resolve_display_mode(mode: DisplayMode) -> Result<DisplayMode, Error> {
     }
 }
 
+/// A process manager must define which processes must be followed.
 trait ProcessManager {
-    fn initialize(&mut self, collector: &mut Collector);
-    fn refresh(&mut self, collector: &mut Collector) -> bool;
+    fn refresh(&mut self, collector: &mut Collector) -> anyhow::Result<bool>;
 }
 
+/// A Process manager that process a fixed list of targets.
 struct FlatProcessManager<'s> {
     targets: TargetContainer<'s>,
 }
@@ -103,19 +104,64 @@ impl<'s> FlatProcessManager<'s> {
 
         let mut targets = TargetContainer::new(system_conf, with_system);
         targets.push_all(target_ids)?;
+        targets.initialize(metrics.len());
         Ok(Self { targets })
     }
 }
 
 impl<'s> ProcessManager for FlatProcessManager<'s> {
-    fn initialize(&mut self, collector: &mut Collector) {
-        self.targets.initialize(collector);
-    }
-
-    fn refresh(&mut self, collector: &mut Collector) -> bool {
+    fn refresh(&mut self, collector: &mut Collector) -> anyhow::Result<bool> {
         let targets_updated = self.targets.refresh();
         self.targets.collect(collector);
-        targets_updated
+        Ok(targets_updated)
+    }
+}
+
+/// A Process explorer that interactively displays the process tree.
+struct ForestProcessManager<'s> {
+    system_conf: &'s SystemConf,
+    system_limits: Vec<Option<Limit>>,
+    forest: Forest,
+}
+
+impl<'s> ForestProcessManager<'s> {
+    fn new(system_conf: &'s SystemConf, metrics: &[FormattedMetric]) -> Result<Self, TargetError> {
+        Ok(Self {
+            system_conf,
+            system_limits: vec![None; metrics.len()],
+            forest: Forest::new(),
+        })
+    }
+}
+
+impl<'s> ProcessManager for ForestProcessManager<'s> {
+    fn refresh(&mut self, collector: &mut Collector) -> anyhow::Result<bool> {
+        let mut system = SystemStat::new(self.system_conf);
+        collector.collect_system(&mut system);
+        collector.collect(
+            "system",
+            0,
+            &system.extract_metrics(collector.metrics()),
+            &self.system_limits,
+        );
+        self.forest.refresh()?;
+        for root_pid in self.forest.root_pids() {
+            self.forest
+                .descendants(root_pid)?
+                .for_each(|proc| match proc.name() {
+                    Some(name) => {
+                        let mut proc_info = ProcessStat::new(proc.process(), self.system_conf);
+                        collector.collect(
+                            name,
+                            proc.pid(),
+                            &proc_info.extract_metrics(collector.metrics()),
+                            &proc_info.extract_limits(collector.metrics()),
+                        )
+                    }
+                    None => log::info!("process {} has no name", proc.pid()),
+                });
+        }
+        Ok(false)
     }
 }
 
@@ -132,7 +178,10 @@ pub struct Application<'s> {
 /// Get export type
 
 impl<'s> Application<'s> {
-    pub fn new(settings: &'s Settings, metric_names: &[String]) -> anyhow::Result<Application<'s>> {
+    pub fn new<'m>(
+        settings: &'s Settings,
+        metric_names: &[&'m str],
+    ) -> anyhow::Result<Application<'s>> {
         let every = Duration::from_millis((settings.display.every * 1000.0) as u64);
         let mut metrics_parser =
             MetricNamesParser::new(matches!(settings.display.format, MetricFormat::Human));
@@ -152,11 +201,14 @@ impl<'s> Application<'s> {
         info!("starting");
 
         if target_ids.is_empty() {
-            panic!("not implemented");
-            // match self.display_mode {
-            //     DisplayMode::Terminal => self.run_ui(targets)?,
-            //     _ => return Err(anyhow::anyhow!(Error::NoTargets)),
-            // }
+            match self.display_mode {
+                DisplayMode::Terminal => {
+                    let device = Box::new(TerminalDevice::new(self.every, self.theme)?);
+                    let mut tmgt = ForestProcessManager::new(&system_conf, &self.metrics)?;
+                    self.run_loop(&mut tmgt, device, true)?;
+                }
+                _ => return Err(anyhow::anyhow!(Error::NoTargets)),
+            }
         } else {
             let mut is_interactive = false;
             let device: Box<dyn DisplayDevice> = match self.display_mode {
@@ -202,12 +254,10 @@ impl<'s> Application<'s> {
         let mut timer = Timer::new(self.every, true);
         let mut drift = DriftMonitor::new(timer.start_time(), DRIFT_NOTIFICATION_DELAY);
 
-        tmgt.initialize(&mut collector);
-
         while !sighdr.caught() {
             let targets_updated = if timer.expired() {
                 let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
-                let targets_updated = tmgt.refresh(&mut collector);
+                let targets_updated = tmgt.refresh(&mut collector)?;
                 if let Some(ref mut exporter) = exporter {
                     exporter.export(&collector, &timestamp)?;
                 }
