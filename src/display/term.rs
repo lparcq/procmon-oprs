@@ -35,24 +35,13 @@ use termion::{
 use crate::{
     agg::Aggregation,
     clock::Timer,
-    collector::{Collector, LimitKind},
+    collector::{Collector, LimitKind, ProcessSamples},
     console::{is_tty, BuiltinTheme, Event, EventChannel, Key},
     format::human_duration,
     metrics::FormattedMetric,
 };
 
 use super::{DisplayDevice, PauseStatus, SliceIter};
-
-/// Short comparison operator.
-macro_rules! ifelse {
-    ($cond:expr, $if:expr, $else: expr) => {
-        if ($cond) {
-            $if
-        } else {
-            $else
-        }
-    };
-}
 
 /// Right aligned cell.
 macro_rules! rcell {
@@ -157,6 +146,22 @@ impl Styles {
                 selected: bold_reversed,
                 column_spacing: 2,
             },
+        }
+    }
+
+    fn name_style(&self, is_selected: bool) -> Style {
+        if is_selected {
+            self.selected
+        } else {
+            self.unselected
+        }
+    }
+
+    fn trend_style(&self, trend: &Ordering) -> Style {
+        match trend {
+            Ordering::Less => self.decrease,
+            Ordering::Equal => Style::default(),
+            Ordering::Greater => self.increase,
         }
     }
 }
@@ -347,7 +352,7 @@ impl MaxLength {
 }
 
 /// Print on standard output as a table
-pub struct TerminalDevice {
+pub struct TerminalDevice<'t> {
     /// Interval to update the screen
     every: Duration,
     /// Channel for input events
@@ -362,6 +367,8 @@ pub struct TerminalDevice {
     overflow: AreaProperty<bool>,
     /// List of metrics
     metric_names: Vec<String>,
+    /// Column headers
+    headers: Vec<Text<'t>>,
     /// Slots where limits are displayed under the metric (only for raw metrics).
     limit_slots: Vec<bool>,
     /// Mode to display limits.
@@ -372,8 +379,8 @@ pub struct TerminalDevice {
     selected: usize,
 }
 
-impl TerminalDevice {
-    pub fn new(every: Duration, theme: Option<BuiltinTheme>) -> anyhow::Result<TerminalDevice> {
+impl<'t> TerminalDevice<'t> {
+    pub fn new(every: Duration, theme: Option<BuiltinTheme>) -> anyhow::Result<Self> {
         let screen = io::stdout().into_raw_mode()?.into_alternate_screen()?;
         let backend = TermionBackend::new(Box::new(screen));
         let terminal = Terminal::new(backend)?;
@@ -386,6 +393,7 @@ impl TerminalDevice {
             vertical_scroll: 1,
             overflow: AreaProperty::new(false, false),
             metric_names: Vec::new(),
+            headers: Vec::new(),
             limit_slots: Vec::new(),
             display_limits: LimitKind::None,
             styles: Styles::new(theme),
@@ -535,9 +543,110 @@ impl TerminalDevice {
         }
         true
     }
+
+    /// Make the row of headers.
+    ///
+    /// The first column is the name. The second is the PID. The rest are the metrics.
+    fn make_header_row<'p, 'w>(
+        hoffset: usize,
+        cws: &'w mut [MaxLength],
+        metric_headers: Vec<Text<'p>>,
+    ) -> Vec<Cell<'p>> {
+        let column_count = cws.len();
+
+        let mut row = Vec::with_capacity(column_count);
+        row.push(Cell::from(""));
+        const PID_TITLE: &'static str = "PID";
+        row.push(Cell::from(
+            Text::from(PID_TITLE).alignment(Alignment::Center),
+        ));
+        cws[1].check(PID_TITLE);
+
+        metric_headers
+            .iter()
+            .skip(hoffset)
+            .enumerate()
+            .for_each(|(index, text)| {
+                text.iter()
+                    .for_each(|line| line.iter().for_each(|span| cws[index].check(&span.content)));
+                row.push(Cell::from(text.clone().alignment(Alignment::Center)));
+            });
+        row
+    }
+
+    /// Make a row of metrics.
+    ///
+    /// The first column is the name. The second is the PID. The rest are the metrics.
+    fn make_metrics_row<'p, 'w>(
+        is_selected: bool,
+        hoffset: usize,
+        cws: &'w mut [MaxLength],
+        ps: &'p ProcessSamples,
+        styles: &Styles,
+    ) -> Vec<Cell<'p>> {
+        let column_count = cws.len();
+        let mut row = Vec::with_capacity(column_count);
+        cws[0].check(ps.name());
+        let name_style = styles.name_style(is_selected);
+        row.push(Cell::from(ps.name()).style(name_style));
+        let pid = format!("{}", ps.pid());
+        cws[1].check(&pid);
+        row.push(rcell!(pid));
+        let mut sample_col = 2;
+        ps.samples()
+            .map(|sample| izip!(sample.strings(), sample.trends()))
+            .flatten()
+            .skip(hoffset)
+            .for_each(|(value, trend)| {
+                cws[sample_col].check(value);
+                sample_col += 1;
+                row.push(Cell::from(
+                    Text::from(value.as_str())
+                        .style(styles.trend_style(trend))
+                        .alignment(Alignment::Right),
+                ));
+            });
+        row
+    }
+
+    /// Make a row of limits.
+    ///
+    /// The first column is the name. The second is the PID. The rest are the metrics.
+    fn make_limits_row<'p, 'w>(
+        hoffset: usize,
+        cws: &'w mut [MaxLength],
+        ps: &'p ProcessSamples,
+        display_limits: LimitKind,
+        limit_slots: &[bool],
+    ) -> Vec<Cell<'p>> {
+        let column_count = cws.len();
+        let mut row = Vec::with_capacity(column_count);
+        const LIMITS_TITLE: &str = "limits";
+        cws[0].check(LIMITS_TITLE);
+        row.push(rcell!(LIMITS_TITLE));
+        row.push(Cell::new(""));
+        let mut col_index = 0;
+        const NOT_APPLICABLE: &'static str = "n/a";
+        ps.samples().for_each(|sample| {
+            let max_index = col_index + sample.string_count();
+            if col_index >= hoffset {
+                while col_index < max_index {
+                    if limit_slots[hoffset + col_index] {
+                        let text = sample.limit(display_limits.clone()).unwrap_or("--");
+                        cws[col_index].check(text);
+                        row.push(rcell!(text));
+                    } else {
+                        row.push(rcell!(NOT_APPLICABLE));
+                    }
+                    col_index += 1;
+                }
+            }
+        });
+        row
+    }
 }
 
-impl DisplayDevice for TerminalDevice {
+impl<'t> DisplayDevice for TerminalDevice<'t> {
     fn open(&mut self, metrics: SliceIter<FormattedMetric>) -> anyhow::Result<()> {
         let mut last_id = None;
 
@@ -557,7 +666,12 @@ impl DisplayDevice for TerminalDevice {
                         Aggregation::Ratio => "%",
                     }
                 );
-                self.metric_names.push(name);
+                self.metric_names.push(name.to_owned());
+                self.headers.push(Text::from(
+                    name.split(":")
+                        .map(|s| Line::from(s.to_string()))
+                        .collect::<Vec<Line>>(),
+                ));
                 self.limit_slots.push(false);
             }
         });
@@ -586,36 +700,8 @@ impl DisplayDevice for TerminalDevice {
         let mut cws = Vec::with_capacity(nvisible_cols); // column widths
         cws.resize(nvisible_cols, MaxLength::default());
 
-        let headers = {
-            let mut headers = Vec::with_capacity(nvisible_cols);
-            headers.push(Cell::from(""));
-            const PID_TITLE: &'static str = "PID";
-            headers.push(Cell::from(
-                Text::from(PID_TITLE).alignment(Alignment::Center),
-            ));
-            cws[1].check(PID_TITLE);
-            let mut next_index = 2;
-            self.metric_names.iter().skip(hoffset).for_each(|name| {
-                headers.push(Cell::from(
-                    Text::from(
-                        name.split(':')
-                            .map(|s| {
-                                cws[next_index].check(s);
-                                Line::from(s.to_string()).alignment(Alignment::Center)
-                            })
-                            .collect::<Vec<Line>>(),
-                    )
-                    .alignment(Alignment::Center),
-                ));
-                next_index += 1;
-            });
-            headers
-        };
+        let headers = TerminalDevice::make_header_row(hoffset, &mut cws, self.headers.clone());
 
-        let decrease_style = self.styles.decrease;
-        let increase_style = self.styles.increase;
-        let selected_style = self.styles.selected;
-        let unselected_style = self.styles.unselected;
         let with_limits = matches!(self.display_limits, LimitKind::Soft | LimitKind::Hard);
         let display_limits = self.display_limits.clone();
         let rows = {
@@ -624,55 +710,24 @@ impl DisplayDevice for TerminalDevice {
                 .lines()
                 .enumerate()
                 .skip(voffset)
-                .for_each(|(index, target)| {
-                    let mut row = Vec::with_capacity(nvisible_cols);
-                    cws[0].check(target.name());
-                    let is_selected = index == self.selected;
-                    let name_style = ifelse!(is_selected, selected_style, unselected_style);
-                    row.push(Cell::from(target.name()).style(name_style));
-                    let pid = format!("{}", target.pid());
-                    cws[1].check(&pid);
-                    row.push(rcell!(pid));
-                    let mut sample_col = 2;
-                    target
-                        .samples()
-                        .map(|sample| izip!(sample.strings(), sample.trends()))
-                        .flatten()
-                        .skip(hoffset)
-                        .for_each(|(value, trend)| {
-                            cws[sample_col].check(value);
-                            sample_col += 1;
-                            row.push(Cell::from(
-                                Text::from(value.as_str())
-                                    .style(match trend {
-                                        Ordering::Less => decrease_style,
-                                        Ordering::Equal => Style::default(),
-                                        Ordering::Greater => increase_style,
-                                    })
-                                    .alignment(Alignment::Right),
-                            ));
-                        });
+                .for_each(|(line_number, target)| {
+                    let is_selected = line_number == self.selected;
+                    let row = TerminalDevice::make_metrics_row(
+                        is_selected,
+                        hoffset,
+                        &mut cws,
+                        &target,
+                        &self.styles,
+                    );
                     rows.push(row);
                     if is_selected && with_limits {
-                        let mut row = Vec::with_capacity(nvisible_cols);
-                        row.push(Cell::new("limits"));
-                        let kind = self.display_limits.as_ref().to_owned();
-                        row.push(Cell::new(kind));
-                        let mut index = 0;
-                        const NOT_APPLICABLE: &'static str = "n/a";
-                        target.samples().for_each(|sample| {
-                            let count = sample.string_count();
-                            (0..count).for_each(|delta| {
-                                if self.limit_slots[index + delta] {
-                                    row.push(rcell!(sample
-                                        .limit(display_limits.clone())
-                                        .unwrap_or("--")));
-                                } else {
-                                    row.push(rcell!(NOT_APPLICABLE));
-                                }
-                            });
-                            index += count;
-                        });
+                        let row = TerminalDevice::make_limits_row(
+                            hoffset,
+                            &mut cws,
+                            &target,
+                            display_limits.clone(),
+                            &self.limit_slots,
+                        );
                         rows.push(row);
                     }
                 });
