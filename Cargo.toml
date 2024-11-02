@@ -32,7 +32,7 @@ simplelog = "0.12"
 strum = "0.26"
 strum_macros = "0.26"
 termion = "4"
-ratatui = { version = "0.28", default-features = false, features = ["termion"] }
+ratatui = { version = "0.29", default-features = false, features = ["termion"] }
 thiserror = "1.0"
 xdg = "2"
 

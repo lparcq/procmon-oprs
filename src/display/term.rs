@@ -403,10 +403,8 @@ pub struct TerminalDevice<'t> {
     vertical_scroll: usize,
     /// Horizontal and vertical overflow (whether the table is bigger than the screen)
     overflow: AreaProperty<bool>,
-    /// List of metrics
-    metric_names: Vec<String>,
-    /// Column headers
-    headers: Vec<Text<'t>>,
+    /// Column headers for metrics
+    metric_headers: Vec<Text<'t>>,
     /// Slots where limits are displayed under the metric (only for raw metrics).
     limit_slots: Vec<bool>,
     /// Mode to display limits.
@@ -430,8 +428,7 @@ impl<'t> TerminalDevice<'t> {
             table_offset: Default::default(),
             vertical_scroll: 1,
             overflow: AreaProperty::new(false, false),
-            metric_names: Vec::new(),
-            headers: Vec::new(),
+            metric_headers: Vec::new(),
             limit_slots: Vec::new(),
             display_limits: LimitKind::None,
             styles: Styles::new(theme),
@@ -694,14 +691,19 @@ impl<'t> DisplayDevice for TerminalDevice<'t> {
         let mut last_id = None;
 
         Collector::for_each_computed_metric(metrics, |id, ag| {
+            let mut header = id
+                .as_str()
+                .split(":")
+                .map(str::to_string)
+                .collect::<Vec<String>>();
+
             if last_id.is_none() || last_id.unwrap() != id {
                 last_id = Some(id);
-                self.metric_names.push(id.as_str().to_string());
                 self.limit_slots.push(true);
             } else {
                 let name = format!(
                     "{} ({})",
-                    id.as_str(),
+                    header.pop().unwrap(),
                     match ag {
                         Aggregation::None => "none", // never used
                         Aggregation::Min => "min",
@@ -709,14 +711,15 @@ impl<'t> DisplayDevice for TerminalDevice<'t> {
                         Aggregation::Ratio => "%",
                     }
                 );
-                self.metric_names.push(name.to_owned());
-                self.headers.push(Text::from(
-                    name.split(":")
-                        .map(|s| Line::from(s.to_string()))
-                        .collect::<Vec<Line>>(),
-                ));
+                header.push(name);
                 self.limit_slots.push(false);
             }
+            self.metric_headers.push(Text::from(
+                header
+                    .iter()
+                    .map(|s| Line::from(s.to_string()))
+                    .collect::<Vec<Line>>(),
+            ));
         });
         self.terminal.hide_cursor()?;
         Ok(())
@@ -731,7 +734,7 @@ impl<'t> DisplayDevice for TerminalDevice<'t> {
     fn render(&mut self, collector: &Collector, _targets_updated: bool) -> anyhow::Result<()> {
         let (hoffset, voffset) = (self.table_offset.horizontal, self.table_offset.vertical);
         let line_count = collector.line_count();
-        let ncols = self.metric_names.len() + 2; // process name, PID, metric1, ...
+        let ncols = self.metric_headers.len() + 2; // process name, PID, metric1, ...
         let nrows = line_count + 2; // metric title, metric subtitle, process1, ...
         let nvisible_rows = nrows - voffset;
         let nvisible_cols = ncols - hoffset;
@@ -743,7 +746,8 @@ impl<'t> DisplayDevice for TerminalDevice<'t> {
         let mut cws = Vec::with_capacity(nvisible_cols); // column widths
         cws.resize(nvisible_cols, MaxLength::default());
 
-        let headers = TerminalDevice::make_header_row(hoffset, &mut cws, self.headers.clone());
+        let metric_headers = self.metric_headers.clone();
+        let headers = TerminalDevice::make_header_row(hoffset, &mut cws, metric_headers);
 
         let mut pids = PidStack::default();
         collector
