@@ -281,6 +281,12 @@ impl Forest {
                         // Same process but reparented. Insert the new info where the
                         // previous was by making the new the parent of the previous one
                         // and removing the previous so the new inherits all the children.
+                        log::debug!(
+                            "process {} parent changed from {} to {}",
+                            pid,
+                            prev_info.parent_pid(),
+                            new_parent_pid
+                        );
                         let node_id = self.arena.new_node(info);
                         prev_node_id.detach(&mut self.arena);
                         node_id.append(*prev_node_id, &mut self.arena);

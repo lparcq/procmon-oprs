@@ -103,13 +103,8 @@ impl<'a> Target<'a> {
 
     fn collect(&self, collector: &mut Collector) {
         if let Some(ref process) = self.process {
-            let mut proc_info = ProcessStat::new(process, self.system_conf);
-            collector.collect(
-                &self.name,
-                process.pid(),
-                &proc_info.extract_metrics(collector.metrics()),
-                &proc_info.extract_limits(collector.metrics()),
-            )
+            let proc_stat = ProcessStat::new(process, self.system_conf);
+            collector.collect(&self.name, proc_stat);
         }
     }
 }
@@ -164,9 +159,10 @@ impl<'a> TargetContainer<'a> {
         if let Some(ref limits) = self.system_limits {
             let mut system = SystemStat::new(self.system_conf);
             collector.collect_system(&mut system);
-            collector.collect(
+            collector.record(
                 "system",
                 0,
+                None,
                 &system.extract_metrics(collector.metrics()),
                 &limits,
             );

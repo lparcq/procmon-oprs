@@ -138,9 +138,10 @@ impl<'s> ProcessManager for ForestProcessManager<'s> {
     fn refresh(&mut self, collector: &mut Collector) -> anyhow::Result<bool> {
         let mut system = SystemStat::new(self.system_conf);
         collector.collect_system(&mut system);
-        collector.collect(
+        collector.record(
             "system",
             0,
+            None,
             &system.extract_metrics(collector.metrics()),
             &self.system_limits,
         );
@@ -148,17 +149,16 @@ impl<'s> ProcessManager for ForestProcessManager<'s> {
         for root_pid in self.forest.root_pids() {
             self.forest
                 .descendants(root_pid)?
-                .for_each(|proc| match proc.name() {
+                .for_each(|proc_info| match proc_info.name() {
                     Some(name) => {
-                        let mut proc_info = ProcessStat::new(proc.process(), self.system_conf);
-                        collector.collect(
-                            name,
-                            proc.pid(),
-                            &proc_info.extract_metrics(collector.metrics()),
-                            &proc_info.extract_limits(collector.metrics()),
-                        )
+                        let proc_stat = ProcessStat::with_parent_pid(
+                            proc_info.process(),
+                            proc_info.parent_pid(),
+                            self.system_conf,
+                        );
+                        collector.collect(name, proc_stat);
                     }
-                    None => log::info!("process {} has no name", proc.pid()),
+                    None => log::info!("process {} has no name", proc_info.pid()),
                 });
         }
         Ok(false)

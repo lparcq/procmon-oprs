@@ -16,6 +16,7 @@
 
 use chrono::Local;
 use itertools::izip;
+use libc::pid_t;
 use ratatui::{
     backend::TermionBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -163,6 +164,43 @@ impl Styles {
             Ordering::Equal => Style::default(),
             Ordering::Greater => self.increase,
         }
+    }
+}
+
+/// Stack of parent child PIDs
+struct PidStack(Vec<pid_t>);
+
+impl PidStack {
+    /// Stack len
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Pop pids that are not a parent of the given process and push the new pid on the stack.
+    fn push(&mut self, samples: &ProcessSamples) {
+        let Self(ref mut stack) = self;
+        match samples.parent_pid() {
+            Some(parent_pid) => {
+                loop {
+                    if let Some(top_pid) = stack.last() {
+                        if *top_pid == parent_pid {
+                            break;
+                        }
+                        let _ = stack.pop();
+                    } else {
+                        break;
+                    }
+                }
+                stack.push(samples.pid());
+            }
+            None => stack.clear(),
+        }
+    }
+}
+
+impl Default for PidStack {
+    fn default() -> Self {
+        PidStack(Vec::new())
     }
 }
 
@@ -580,6 +618,7 @@ impl<'t> TerminalDevice<'t> {
     fn make_metrics_row<'p, 'w>(
         is_selected: bool,
         hoffset: usize,
+        indent: usize,
         cws: &'w mut [MaxLength],
         ps: &'p ProcessSamples,
         styles: &Styles,
@@ -588,7 +627,11 @@ impl<'t> TerminalDevice<'t> {
         let mut row = Vec::with_capacity(column_count);
         cws[0].check(ps.name());
         let name_style = styles.name_style(is_selected);
-        row.push(Cell::from(ps.name()).style(name_style));
+        let name = {
+            let name = ps.name();
+            format!("{:>width$}", name, width = indent + name.len())
+        };
+        row.push(Cell::from(name).style(name_style));
         let pid = format!("{}", ps.pid());
         cws[1].check(&pid);
         row.push(rcell!(pid));
@@ -702,6 +745,12 @@ impl<'t> DisplayDevice for TerminalDevice<'t> {
 
         let headers = TerminalDevice::make_header_row(hoffset, &mut cws, self.headers.clone());
 
+        let mut pids = PidStack::default();
+        collector
+            .lines()
+            .take(voffset)
+            .for_each(|sample| pids.push(sample));
+
         let with_limits = matches!(self.display_limits, LimitKind::Soft | LimitKind::Hard);
         let display_limits = self.display_limits.clone();
         let rows = {
@@ -710,13 +759,15 @@ impl<'t> DisplayDevice for TerminalDevice<'t> {
                 .lines()
                 .enumerate()
                 .skip(voffset)
-                .for_each(|(line_number, target)| {
+                .for_each(|(line_number, samples)| {
+                    pids.push(samples);
                     let is_selected = line_number == self.selected;
                     let row = TerminalDevice::make_metrics_row(
                         is_selected,
                         hoffset,
+                        pids.len().saturating_sub(1),
                         &mut cws,
-                        &target,
+                        &samples,
                         &self.styles,
                     );
                     rows.push(row);
@@ -724,7 +775,7 @@ impl<'t> DisplayDevice for TerminalDevice<'t> {
                         let row = TerminalDevice::make_limits_row(
                             hoffset,
                             &mut cws,
-                            &target,
+                            &samples,
                             display_limits.clone(),
                             &self.limit_slots,
                         );

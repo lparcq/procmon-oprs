@@ -27,7 +27,7 @@ use crate::{
     agg::Aggregation,
     format::Formatter,
     metrics::{FormattedMetric, MetricId},
-    process::{Limit, LimitValue, SystemStat},
+    process::{Limit, LimitValue, ProcessStat, SystemStat},
 };
 
 /// Tell if it makes sense to track metric changes
@@ -210,14 +210,21 @@ impl From<&[&str]> for Sample {
 pub struct ProcessSamples {
     name: String,
     pid: pid_t,
+    parent_pid: Option<pid_t>,
     samples: Vec<Sample>,
 }
 
 impl ProcessSamples {
-    fn new(name: &str, pid: pid_t, samples: Vec<Sample>) -> ProcessSamples {
+    fn new(
+        name: &str,
+        pid: pid_t,
+        parent_pid: Option<pid_t>,
+        samples: Vec<Sample>,
+    ) -> ProcessSamples {
         ProcessSamples {
             name: name.to_string(),
             pid,
+            parent_pid,
             samples,
         }
     }
@@ -228,6 +235,10 @@ impl ProcessSamples {
 
     pub fn pid(&self) -> pid_t {
         self.pid
+    }
+
+    pub fn parent_pid(&self) -> Option<pid_t> {
+        self.parent_pid
     }
 
     pub fn samples(&self) -> SliceIter<Sample> {
@@ -263,6 +274,7 @@ impl From<&[Vec<&str>]> for ProcessSamples {
         ProcessSamples {
             name: String::new(),
             pid: 0,
+            parent_pid: None,
             samples: samples.iter().map(|s| Sample::from(s.as_slice())).collect(),
         }
     }
@@ -305,6 +317,7 @@ impl Updater {
         &mut self,
         target_name: &str,
         pid: pid_t,
+        parent_pid: Option<pid_t>,
         metrics: &[FormattedMetric],
         values: &[u64],
         limits: &[Option<Limit>],
@@ -332,7 +345,7 @@ impl Updater {
         if pid == 0 {
             self.push_samples(&samples); // new system values
         }
-        ProcessSamples::new(target_name, pid, samples)
+        ProcessSamples::new(target_name, pid, parent_pid, samples)
     }
 
     /// Historical metrics for the system
@@ -461,19 +474,22 @@ impl<'a> Collector<'a> {
         self.updater.push_system_time(system.total_time());
     }
 
-    /// Collect a target metrics
-    pub fn collect(
+    /// Record metrics
+    pub fn record(
         &mut self,
         target_name: &str,
         pid: pid_t,
+        parent_pid: Option<pid_t>,
         values: &[u64],
         limits: &[Option<Limit>],
     ) {
         self.pids.push(pid);
         match self.samples.get_mut(&pid) {
-            Some(samples) => self
-                .updater
-                .update_computed_values(self.metrics, samples, values),
+            Some(samples) => {
+                samples.parent_pid = parent_pid;
+                self.updater
+                    .update_computed_values(self.metrics, samples, values)
+            }
             None => {
                 if self
                     .samples
@@ -482,6 +498,7 @@ impl<'a> Collector<'a> {
                         self.updater.new_computed_values(
                             target_name,
                             pid,
+                            parent_pid,
                             self.metrics,
                             values,
                             limits,
@@ -493,6 +510,19 @@ impl<'a> Collector<'a> {
                 }
             }
         }
+    }
+
+    /// Collect metrics
+    pub fn collect(&mut self, target_name: &str, mut proc_stat: ProcessStat) {
+        let values = proc_stat.extract_metrics(self.metrics());
+        let limits = proc_stat.extract_limits(self.metrics());
+        self.record(
+            target_name,
+            proc_stat.pid(),
+            proc_stat.parent_pid(),
+            &values,
+            &limits,
+        );
     }
 
     /// Called when there is no more targets

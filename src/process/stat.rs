@@ -17,10 +17,7 @@
 // Extract metrics from procfs interface.
 
 use libc::pid_t;
-use std::collections::HashMap;
-use std::path::Path;
-use std::slice::Iter;
-use std::time::SystemTime;
+use std::{collections::HashMap, slice::Iter, time::SystemTime};
 
 use procfs::{
     process::{FDTarget, Io, MMapPath, Stat, StatM},
@@ -31,13 +28,7 @@ pub use procfs::process::{Limit, LimitValue};
 
 use super::Process;
 
-use crate::{
-    metrics::{FormattedMetric, MetricId},
-    utils::read_pid_file,
-};
-
-/// Hard limit for the maximum pid on Linux (see https://stackoverflow.com/questions/6294133/maximum-pid-in-linux)
-const MAX_LINUX_PID: pid_t = 4_194_304;
+use crate::metrics::{FormattedMetric, MetricId};
 
 /// Elapsed time since a start time
 /// Since the boot time is in seconds since the Epoch, no need to be more precise than the second.
@@ -80,7 +71,6 @@ pub struct SystemConf {
     ticks_per_second: u64,
     boot_time_seconds: u64,
     page_size: u64,
-    max_pid: pid_t,
 }
 
 impl SystemConf {
@@ -88,13 +78,11 @@ impl SystemConf {
         let ticks_per_second = procfs::ticks_per_second();
         let kstat = KernelStats::current()?;
         let page_size = procfs::page_size();
-        let max_pid = read_pid_file(Path::new("/proc/sys/kernel/pid_max")).unwrap_or(MAX_LINUX_PID);
 
         Ok(SystemConf {
             ticks_per_second,
             boot_time_seconds: kstat.btime,
             page_size,
-            max_pid,
         })
     }
 
@@ -102,11 +90,6 @@ impl SystemConf {
     /// A u64 can hold more than 10 millions years
     pub fn ticks_to_millis(&self, ticks: u64) -> u64 {
         ticks * 1000 / self.ticks_per_second
-    }
-
-    /// Maximum value for a process ID
-    pub fn max_pid(&self) -> pid_t {
-        self.max_pid
     }
 }
 
@@ -341,6 +324,7 @@ impl MapsStats {
 /// even if it's only precise in seconds.
 pub struct ProcessStat<'a, 'b> {
     process: &'a Process,
+    parent_pid: Option<pid_t>,
     system_conf: &'b SystemConf,
     fd_stats: Option<FdStats>,
     maps_stats: Option<MapsStats>,
@@ -353,6 +337,7 @@ impl<'a, 'b> ProcessStat<'a, 'b> {
     pub fn new(process: &'a Process, system_conf: &'b SystemConf) -> ProcessStat<'a, 'b> {
         ProcessStat {
             process,
+            parent_pid: None,
             system_conf,
             fd_stats: None,
             io: None,
@@ -362,8 +347,23 @@ impl<'a, 'b> ProcessStat<'a, 'b> {
         }
     }
 
+    pub fn with_parent_pid(
+        process: &'a Process,
+        parent_pid: pid_t,
+        system_conf: &'b SystemConf,
+    ) -> ProcessStat<'a, 'b> {
+        let mut pstat = ProcessStat::new(process, system_conf);
+        pstat.parent_pid = Some(parent_pid);
+        pstat
+    }
+
     pub fn pid(&self) -> pid_t {
         self.process.pid()
+    }
+
+    pub fn parent_pid(&self) -> Option<pid_t> {
+        self.parent_pid
+            .or_else(|| self.stat.as_ref().map(|stat| stat.ppid))
     }
 
     fn with_fd_stats<F>(&mut self, func: F) -> u64
