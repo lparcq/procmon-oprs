@@ -186,12 +186,10 @@ impl<'a> TargetContainer<'a> {
                 forest.iter_roots().for_each(|p| {
                     if let Ok(descendants) = forest.descendants(p.pid()) {
                         descendants.for_each(|p| {
-                            if let Some(other_name) = p.name() {
-                                if other_name == name {
-                                    if let Ok(process) = Process::new(p.pid()) {
-                                        self.targets
-                                            .push(Box::new(Target::new(process, self.system_conf)));
-                                    }
+                            if name == p.name() {
+                                if let Ok(process) = Process::new(p.pid()) {
+                                    self.targets
+                                        .push(Box::new(Target::new(process, self.system_conf)));
                                 }
                             }
                         })

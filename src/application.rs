@@ -147,19 +147,14 @@ impl<'s> ProcessManager for ForestProcessManager<'s> {
         );
         self.forest.refresh()?;
         for root_pid in self.forest.root_pids() {
-            self.forest
-                .descendants(root_pid)?
-                .for_each(|proc_info| match proc_info.name() {
-                    Some(name) => {
-                        let proc_stat = ProcessStat::with_parent_pid(
-                            proc_info.process(),
-                            proc_info.parent_pid(),
-                            self.system_conf,
-                        );
-                        collector.collect(name, proc_stat);
-                    }
-                    None => log::info!("process {} has no name", proc_info.pid()),
-                });
+            self.forest.descendants(root_pid)?.for_each(|proc_info| {
+                let proc_stat = ProcessStat::with_parent_pid(
+                    proc_info.process(),
+                    proc_info.parent_pid(),
+                    self.system_conf,
+                );
+                collector.collect(proc_info.name(), proc_stat);
+            });
         }
         Ok(false)
     }

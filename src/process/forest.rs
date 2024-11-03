@@ -74,7 +74,7 @@ pub struct ProcessInfo {
     pid: pid_t,
     parent_pid: pid_t,
     start_time: u64,
-    name: Option<String>,
+    name: String,
     process: Process,
     hidden: bool,
 }
@@ -85,7 +85,7 @@ impl ProcessInfo {
         let stat = process
             .stat()
             .map_err(|_| ProcessError::UnknownProcess(pid))?;
-        let name = process_name(&process);
+        let name = process_name(&process).unwrap_or(format!("({})", stat.comm));
         Ok(Self {
             pid: stat.pid,
             parent_pid: stat.ppid,
@@ -104,8 +104,8 @@ impl ProcessInfo {
         self.parent_pid
     }
 
-    pub fn name<'a>(&'a self) -> Option<&'a str> {
-        self.name.as_ref().map(|s| s.as_str())
+    pub fn name<'a>(&'a self) -> &'a str {
+        self.name.as_str()
     }
 
     pub fn process<'a>(&'a self) -> &'a Process {
@@ -173,7 +173,10 @@ impl RefreshState {
         Self {
             processes: BTreeMap::new(),
             old_nodes: BTreeSet::from_iter(
-                arena.iter().map(|node| arena.get_node_id(node).unwrap()),
+                arena
+                    .iter()
+                    .filter(|node| !node.is_removed())
+                    .map(|node| arena.get_node_id(node).unwrap()),
             ),
             changed: false,
         }
@@ -233,6 +236,7 @@ impl Forest {
                 .collect::<Vec<NodeId>>();
             for root_id in adopted_ids {
                 self.roots.remove(&root_id);
+                log::debug!("indextree[{}]: {node_id}.append({root_id})", std::line!(),);
                 node_id.append(root_id, &mut self.arena);
             }
         }
@@ -242,6 +246,10 @@ impl Forest {
                 parent_node_id
                     .ancestors(&self.arena)
                     .for_each(|node_id| state.remove_old_node(&node_id));
+                log::debug!(
+                    "indextree[{}]: {parent_node_id}.append({node_id})",
+                    std::line!(),
+                );
                 parent_node_id.append(node_id, &mut self.arena);
             }
             None => {
@@ -252,11 +260,12 @@ impl Forest {
     }
 
     /// Remove a node if it exists.
-    fn remove_node(&mut self, state: &mut RefreshState, node_id: NodeId) {
+    fn remove_node(&mut self, state: &mut RefreshState, node_id: NodeId, reason: &'static str) {
         if let Some(node) = self.arena.get(node_id) {
             if !node.is_removed() {
                 let pid = node.get().pid();
                 self.processes.remove(&pid);
+                log::debug!("indextree[{}]: {node_id}.remove(): {reason}", std::line!());
                 node_id.remove(&mut self.arena);
             }
             self.roots.remove(&node_id);
@@ -282,18 +291,23 @@ impl Forest {
                         // previous was by making the new the parent of the previous one
                         // and removing the previous so the new inherits all the children.
                         log::debug!(
-                            "process {} parent changed from {} to {}",
-                            pid,
+                            "process {pid} parent changed from {} to {new_parent_pid}",
                             prev_info.parent_pid(),
-                            new_parent_pid
                         );
                         let node_id = self.arena.new_node(info);
+                        log::debug!("indextree[{}]: new_node {}", std::line!(), node_id);
+                        log::debug!("indextree[{}]: {}.detach()", std::line!(), prev_node_id);
                         prev_node_id.detach(&mut self.arena);
+                        log::debug!(
+                            "indextree[{}]: {node_id}.append({prev_node_id})",
+                            std::line!(),
+                        );
                         node_id.append(*prev_node_id, &mut self.arena);
                         if self.roots.remove(&prev_node_id) {
                             self.roots.insert(node_id);
                         }
                         state.remove_old_node(prev_node_id);
+                        log::debug!("indextree[{}]: {prev_node_id}.remove()", std::line!());
                         prev_node_id.remove(&mut self.arena);
                         self.attach_node(state, node_id, pid, new_parent_pid);
                     }
@@ -301,13 +315,15 @@ impl Forest {
                     // Process ID has been reused. If the process had children,
                     // they have been reparented or will be. Remove it here to
                     // avoid the pid been removed.
-                    self.remove_node(state, *prev_node_id);
+                    self.remove_node(state, *prev_node_id, "PID reused");
                     let node_id = self.arena.new_node(info);
+                    log::debug!("indextree[{}]: new_node {node_id}", std::line!());
                     self.attach_node(state, node_id, pid, parent_pid);
                 }
             }
             None => {
                 let node_id = self.arena.new_node(info);
+                log::debug!("indextree[{}]: new_node {node_id}", std::line!());
                 self.attach_node(state, node_id, pid, parent_pid);
             }
         }
@@ -319,7 +335,7 @@ impl Forest {
         for child_id in child_node_ids {
             self.remove_subtree(state, child_id);
         }
-        self.remove_node(state, node_id);
+        self.remove_node(state, node_id, "subtree");
     }
 
     /// Remove subtrees.
@@ -372,6 +388,7 @@ impl Forest {
                 None => {
                     self.processes.remove(&pid);
                     self.roots.remove(&node_id);
+                    log::debug!("indextree[{}]: {node_id}.remove()", std::line!());
                     node_id.remove(&mut self.arena);
                 }
             }
@@ -410,6 +427,7 @@ impl Forest {
         I: Iterator<Item = Process>,
         P: Fn(&ProcessInfo) -> bool,
     {
+        log::debug!("refresh");
         let mut state = RefreshState::new(&self.arena);
         for process in processes {
             let pid = process.pid();
