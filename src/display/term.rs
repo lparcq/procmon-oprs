@@ -373,9 +373,14 @@ impl MaxLength {
 
     /// Count the maximun length of a string
     fn check(&mut self, s: &str) {
-        let slen = s.len() as u16;
-        if slen > self.0 {
-            self.0 = slen
+        self.set_min(s.len());
+    }
+
+    /// Ensure a minimum length
+    fn set_min(&mut self, l: usize) {
+        let l = l as u16;
+        if l > self.0 {
+            self.0 = l
         }
     }
 }
@@ -396,6 +401,8 @@ pub struct TerminalDevice<'t> {
     overflow: AreaProperty<bool>,
     /// Column headers for metrics
     metric_headers: Vec<Text<'t>>,
+    /// Number of lines in the headers
+    headers_height: usize,
     /// Slots where limits are displayed under the metric (only for raw metrics).
     limit_slots: Vec<bool>,
     /// Mode to display limits.
@@ -420,6 +427,7 @@ impl<'t> TerminalDevice<'t> {
             vertical_scroll: 1,
             overflow: AreaProperty::new(false, false),
             metric_headers: Vec::new(),
+            headers_height: 0,
             limit_slots: Vec::new(),
             display_limits: LimitKind::None,
             styles: Styles::new(theme),
@@ -454,6 +462,7 @@ impl<'t> TerminalDevice<'t> {
         let even_row_style = self.styles.even_row;
         let odd_row_style = self.styles.odd_row;
         let mut table_visible_height = 0;
+        let headers_height = self.headers_height as u16;
 
         self.terminal.draw(|frame| {
             let screen = frame.area();
@@ -475,12 +484,11 @@ impl<'t> TerminalDevice<'t> {
             new_overflow = overflow;
             headers[0] = Cell::from(nav);
 
-            const HEADERS_HEIGHT: u16 = 2;
             const BORDERS_HEIGHT: u16 = 2;
             let rows = style_rows(&mut rows, widths.len(), even_row_style, odd_row_style);
             let table = Table::new(rows, widths)
                 .block(Block::default().borders(Borders::ALL).title(title))
-                .header(Row::new(headers).height(HEADERS_HEIGHT))
+                .header(Row::new(headers).height(headers_height))
                 .column_spacing(column_spacing);
             frame.render_widget(table, rects[0]);
 
@@ -501,7 +509,7 @@ impl<'t> TerminalDevice<'t> {
             ];
             let menu = menu_paragraph(&menu_entries);
             frame.render_widget(menu, rects[1]);
-            table_visible_height = screen.height - HEADERS_HEIGHT - BORDERS_HEIGHT - MENU_HEIGHT;
+            table_visible_height = screen.height - headers_height - BORDERS_HEIGHT - MENU_HEIGHT;
         })?;
         self.overflow = new_overflow;
         self.vertical_scroll = if table_visible_height > 2 {
@@ -579,22 +587,25 @@ impl<'t> TerminalDevice<'t> {
         metric_headers: Vec<Text<'p>>,
     ) -> Vec<Cell<'p>> {
         let column_count = cws.len();
-
         let mut row = Vec::with_capacity(column_count);
         row.push(Cell::from(""));
         const PID_TITLE: &str = "PID";
         row.push(Cell::from(
             Text::from(PID_TITLE).alignment(Alignment::Center),
         ));
-        cws[1].check(PID_TITLE);
+        let mut col_index = 1;
+        cws[col_index].check(PID_TITLE);
+        col_index += 1;
 
         metric_headers
             .iter()
             .skip(hoffset)
             .enumerate()
             .for_each(|(index, text)| {
-                text.iter()
-                    .for_each(|line| line.iter().for_each(|span| cws[index].check(&span.content)));
+                text.iter().for_each(|line| {
+                    let line_len = line.iter().map(|span| span.content.len()).sum();
+                    cws[col_index + index].set_min(line_len)
+                });
                 row.push(Cell::from(text.clone().alignment(Alignment::Center)));
             });
         row
@@ -613,7 +624,9 @@ impl<'t> TerminalDevice<'t> {
     ) -> Vec<Cell<'p>> {
         let column_count = cws.len();
         let mut row = Vec::with_capacity(column_count);
-        cws[0].check(ps.name());
+        let mut col_index = 0;
+        cws[col_index].check(ps.name());
+        col_index += 1;
         let name_style = styles.name_style(is_selected);
         let name = {
             let name = ps.name();
@@ -621,15 +634,15 @@ impl<'t> TerminalDevice<'t> {
         };
         row.push(Cell::from(name).style(name_style));
         let pid = format!("{}", ps.pid());
-        cws[1].check(&pid);
+        cws[col_index].check(&pid);
+        col_index += 1;
         row.push(rcell!(pid));
-        let mut sample_col = 2;
         ps.samples()
             .flat_map(|sample| izip!(sample.strings(), sample.trends()))
             .skip(hoffset)
             .for_each(|(value, trend)| {
-                cws[sample_col].check(value);
-                sample_col += 1;
+                cws[col_index].check(value);
+                col_index += 1;
                 row.push(Cell::from(
                     Text::from(value.as_str())
                         .style(styles.trend_style(trend))
@@ -686,7 +699,7 @@ impl<'t> DisplayDevice for TerminalDevice<'t> {
                 .split(":")
                 .map(str::to_string)
                 .collect::<Vec<String>>();
-
+            self.headers_height = std::cmp::max(self.headers_height, header.len());
             if last_id.is_none() || last_id.unwrap() != id {
                 last_id = Some(id);
                 self.limit_slots.push(true);
