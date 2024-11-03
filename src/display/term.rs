@@ -83,6 +83,12 @@ impl AreaProperty<usize> {
     fn scroll_down(&mut self, delta: usize) {
         self.vertical += delta;
     }
+
+    fn recenter_vertically(&mut self, center: usize, height: usize, force: bool) {
+        if force || center < self.vertical || center >= self.vertical + height {
+            self.vertical = center.saturating_sub(height / 2)
+        }
+    }
 }
 
 /// Theme styles
@@ -196,43 +202,44 @@ impl PidStack {
 }
 
 /// Standard keys
-const KEY_QUIT: Key = Key::Esc;
-const KEY_FASTER_CHAR: char = '+';
 const KEY_FASTER: Key = Key::Char(KEY_FASTER_CHAR);
-const KEY_SLOWER_CHAR: char = '-';
+const KEY_FASTER_CHAR: char = '+';
+const KEY_FOCUS: Key = Key::Char('f');
+const KEY_LIMITS: Key = Key::Char('l');
+const KEY_QUIT: Key = Key::Esc;
 const KEY_SLOWER: Key = Key::Char(KEY_SLOWER_CHAR);
-const KEY_LIMITS_UPPER: Key = Key::Char('L');
-const KEY_LIMITS_LOWER: Key = Key::Char('l');
+const KEY_SLOWER_CHAR: char = '-';
 
 /// Action
 pub enum Action {
     None,
     DivideTimeout(u16),
+    Focus,
     MultiplyTimeout(u16),
-    ToggleLimits,
+    Quit,
     ScrollDown,
     ScrollLeft,
     ScrollRight,
     ScrollUp,
-    SelectUp,
     SelectDown,
-    Quit,
+    SelectUp,
+    ToggleLimits,
 }
 
 impl From<Event> for Action {
     fn from(evt: Event) -> Self {
         match evt {
-            Event::Key(KEY_QUIT) => Action::Quit,
-            Event::Key(Key::Ctrl('c')) => Action::Quit,
             Event::Key(KEY_FASTER) => Action::DivideTimeout(2),
+            Event::Key(KEY_FOCUS) => Action::Focus,
             Event::Key(KEY_SLOWER) => Action::MultiplyTimeout(2),
-            Event::Key(KEY_LIMITS_UPPER) | Event::Key(KEY_LIMITS_LOWER) => Action::ToggleLimits,
-            Event::Key(Key::Right) => Action::ScrollRight,
-            Event::Key(Key::PageUp) => Action::ScrollUp,
+            Event::Key(KEY_QUIT) | Event::Key(Key::Ctrl('c')) => Action::Quit,
             Event::Key(Key::PageDown) => Action::ScrollDown,
-            Event::Key(Key::Left) => Action::ScrollLeft,
-            Event::Key(Key::Up) => Action::SelectUp,
+            Event::Key(Key::PageUp) => Action::ScrollUp,
             Event::Key(Key::Down) => Action::SelectDown,
+            Event::Key(Key::Left) => Action::ScrollLeft,
+            Event::Key(Key::Right) => Action::ScrollRight,
+            Event::Key(Key::Up) => Action::SelectUp,
+            Event::Key(KEY_LIMITS) => Action::ToggleLimits,
             _ => Action::None,
         }
     }
@@ -401,14 +408,16 @@ pub struct TerminalDevice<'t> {
     overflow: AreaProperty<bool>,
     /// Column headers for metrics
     metric_headers: Vec<Text<'t>>,
-    /// Number of lines in the headers
-    headers_height: usize,
     /// Slots where limits are displayed under the metric (only for raw metrics).
     limit_slots: Vec<bool>,
     /// Mode to display limits.
     display_limits: LimitKind,
     /// Display styles
     styles: Styles,
+    /// Number of lines in the headers
+    headers_height: usize,
+    /// Number of lines in the headers
+    table_visible_height: usize,
     /// Selected line in the table
     selected: usize,
 }
@@ -427,10 +436,11 @@ impl<'t> TerminalDevice<'t> {
             vertical_scroll: 1,
             overflow: AreaProperty::new(false, false),
             metric_headers: Vec::new(),
-            headers_height: 0,
             limit_slots: Vec::new(),
             display_limits: LimitKind::None,
             styles: Styles::new(theme),
+            headers_height: 0,
+            table_visible_height: 0,
             selected: 0,
         })
     }
@@ -446,9 +456,28 @@ impl<'t> TerminalDevice<'t> {
         format!(" {time_string} / {delay} ")
     }
 
-    /// Table headers and body
+    /// The main menu
+    fn menu(&self) -> Vec<(String, &'static str)> {
+        let display_limits = match self.display_limits {
+            LimitKind::None => "Limit:Off",
+            LimitKind::Soft => "Limit:Soft",
+            LimitKind::Hard => "Limit:Hard",
+        };
+        vec![
+            (key_name(KEY_QUIT), "Quit"),
+            (
+                format!("{}/{}", key_name(Key::Up), key_name(Key::Down)),
+                "Select",
+            ),
+            (format!("{KEY_FASTER_CHAR}/{KEY_SLOWER_CHAR}"), "Speed"),
+            (key_name(KEY_LIMITS), display_limits),
+            (key_name(KEY_FOCUS), "Focus"),
+        ]
+    }
+
+    /// Draw the table of metrics and the menu.
     ///
-    /// Return (headers, rows, column_width)
+    /// Return the table visible height.
     fn draw(
         &mut self,
         mut headers: Vec<Cell>,
@@ -463,6 +492,7 @@ impl<'t> TerminalDevice<'t> {
         let odd_row_style = self.styles.odd_row;
         let mut table_visible_height = 0;
         let headers_height = self.headers_height as u16;
+        let menu_entries = self.menu();
 
         self.terminal.draw(|frame| {
             let screen = frame.area();
@@ -493,20 +523,6 @@ impl<'t> TerminalDevice<'t> {
             frame.render_widget(table, rects[0]);
 
             const MENU_HEIGHT: u16 = 1;
-            let display_limits = match self.display_limits {
-                LimitKind::None => "Limit:Off",
-                LimitKind::Soft => "Limit:Soft",
-                LimitKind::Hard => "Limit:Hard",
-            };
-            let menu_entries = vec![
-                (key_name(KEY_QUIT), "Quit"),
-                (
-                    format!("{}/{}", key_name(Key::Up), key_name(Key::Down)),
-                    "Select",
-                ),
-                (format!("{KEY_FASTER_CHAR}/{KEY_SLOWER_CHAR}"), "Speed"),
-                (key_name(KEY_LIMITS_UPPER), display_limits),
-            ];
             let menu = menu_paragraph(&menu_entries);
             frame.render_widget(menu, rects[1]);
             table_visible_height = screen.height - headers_height - BORDERS_HEIGHT - MENU_HEIGHT;
@@ -517,6 +533,7 @@ impl<'t> TerminalDevice<'t> {
         } else {
             1
         } as usize;
+        self.table_visible_height = table_visible_height as usize;
         Ok(())
     }
 
@@ -570,9 +587,26 @@ impl<'t> TerminalDevice<'t> {
             }
             Action::SelectUp => {
                 self.selected = self.selected.saturating_sub(1);
+                self.table_offset.recenter_vertically(
+                    self.selected,
+                    self.table_visible_height,
+                    false,
+                );
             }
             Action::SelectDown => {
                 self.selected += 1;
+                self.table_offset.recenter_vertically(
+                    self.selected,
+                    self.table_visible_height,
+                    false,
+                );
+            }
+            Action::Focus => {
+                self.table_offset.recenter_vertically(
+                    self.selected,
+                    self.table_visible_height,
+                    true,
+                );
             }
         }
         true
