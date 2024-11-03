@@ -57,7 +57,7 @@ struct Target<'a> {
 
 impl<'a> Target<'a> {
     fn new(process: Process, system_conf: &'a SystemConf) -> Self {
-        let name = crate::process::process_identifier(&process);
+        let name = crate::process::process_name(&process);
         Self {
             name,
             process: Some(process),

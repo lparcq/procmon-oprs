@@ -24,13 +24,13 @@ use std::{
 
 #[cfg(not(test))]
 pub use procfs::{
-    process::{all_processes, Process},
+    process::{self, all_processes, Process},
     ProcResult,
 };
 
 #[cfg(test)]
 pub(crate) use crate::mocks::procfs::{
-    process::{all_processes, Process},
+    process::{self, all_processes, Process},
     ProcResult,
 };
 
@@ -44,11 +44,11 @@ pub enum ProcessError {
 
 pub type ProcessResult<T> = Result<T, ProcessError>;
 
-/// Process name
+/// Executable name
 ///
 /// Based of the first element of the command line if it exists or the name of
 /// the executable.
-fn process_name(process: &Process) -> Option<String> {
+fn exe_name(process: &Process) -> Option<String> {
     process
         .cmdline()
         .map(|c| c.first().map(PathBuf::from))
@@ -63,9 +63,19 @@ fn process_name(process: &Process) -> Option<String> {
         .flatten()
 }
 
+/// Command name
+///
+/// Based on the stat.
+fn command_name(stat: &process::Stat) -> String {
+    format!("({})", stat.comm)
+}
+
 /// Process identifier: either the name or the PID into brackets.
-pub fn process_identifier(process: &Process) -> String {
-    process_name(process).unwrap_or_else(|| format!("[{}]", process.pid()))
+pub fn process_name(process: &Process) -> String {
+    exe_name(process).unwrap_or_else(|| match process.stat() {
+        Ok(stat) => command_name(&stat),
+        Err(_) => format!("[{}]", process.pid()),
+    })
 }
 
 #[derive(Debug)]
@@ -85,7 +95,7 @@ impl ProcessInfo {
         let stat = process
             .stat()
             .map_err(|_| ProcessError::UnknownProcess(pid))?;
-        let name = process_name(&process).unwrap_or(format!("({})", stat.comm));
+        let name = exe_name(&process).unwrap_or(command_name(&stat));
         Ok(Self {
             pid: stat.pid,
             parent_pid: stat.ppid,
@@ -632,7 +642,7 @@ mod tests {
         let pinfo = forest.get_process(first_pid).unwrap();
         assert_eq!(first_pid, pinfo.pid());
         assert_eq!(first_pid, pinfo.process().pid());
-        assert_eq!(NAME, pinfo.name().unwrap());
+        assert_eq!(NAME, pinfo.name());
     }
 
     /// Create a forest with a single tree.
@@ -659,7 +669,7 @@ mod tests {
         let exe_tree = forest
             .descendants(root_pids[0])
             .unwrap()
-            .map(|p| p.name().unwrap_or("<unknown>").to_string())
+            .map(|p| p.name().to_string())
             .collect::<Vec<String>>();
         assert_eq!(expected_exe_tree.len(), exe_tree.len());
         std::iter::zip(expected_exe_tree, exe_tree).for_each(|(expected_name, name)| {

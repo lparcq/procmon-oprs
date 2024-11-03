@@ -5,8 +5,10 @@ pub(crate) type ProcResult<T> = Result<T, ProcError>;
 pub(crate) mod process {
 
     use libc::pid_t;
-    use procfs::process::{FDInfo, Io, Limits, MemoryMaps, Stat, StatM};
+    use procfs::process::{FDInfo, Io, Limits, MemoryMaps, StatM};
     use std::{cell::RefCell, io, path::PathBuf, rc::Rc};
+
+    pub(crate) use procfs::process::Stat;
 
     use super::{ProcError, ProcResult};
 
