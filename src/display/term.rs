@@ -168,6 +168,7 @@ impl Styles {
 }
 
 /// Stack of parent child PIDs
+#[derive(Default)]
 struct PidStack(Vec<pid_t>);
 
 impl PidStack {
@@ -181,26 +182,16 @@ impl PidStack {
         let Self(ref mut stack) = self;
         match samples.parent_pid() {
             Some(parent_pid) => {
-                loop {
-                    if let Some(top_pid) = stack.last() {
-                        if *top_pid == parent_pid {
-                            break;
-                        }
-                        let _ = stack.pop();
-                    } else {
+                while let Some(top_pid) = stack.last() {
+                    if *top_pid == parent_pid {
                         break;
                     }
+                    let _ = stack.pop();
                 }
                 stack.push(samples.pid());
             }
             None => stack.clear(),
         }
-    }
-}
-
-impl Default for PidStack {
-    fn default() -> Self {
-        PidStack(Vec::new())
     }
 }
 
@@ -582,16 +573,16 @@ impl<'t> TerminalDevice<'t> {
     /// Make the row of headers.
     ///
     /// The first column is the name. The second is the PID. The rest are the metrics.
-    fn make_header_row<'p, 'w>(
+    fn make_header_row<'p>(
         hoffset: usize,
-        cws: &'w mut [MaxLength],
+        cws: &mut [MaxLength],
         metric_headers: Vec<Text<'p>>,
     ) -> Vec<Cell<'p>> {
         let column_count = cws.len();
 
         let mut row = Vec::with_capacity(column_count);
         row.push(Cell::from(""));
-        const PID_TITLE: &'static str = "PID";
+        const PID_TITLE: &str = "PID";
         row.push(Cell::from(
             Text::from(PID_TITLE).alignment(Alignment::Center),
         ));
@@ -612,11 +603,11 @@ impl<'t> TerminalDevice<'t> {
     /// Make a row of metrics.
     ///
     /// The first column is the name. The second is the PID. The rest are the metrics.
-    fn make_metrics_row<'p, 'w>(
+    fn make_metrics_row<'p>(
         is_selected: bool,
         hoffset: usize,
         indent: usize,
-        cws: &'w mut [MaxLength],
+        cws: &mut [MaxLength],
         ps: &'p ProcessSamples,
         styles: &Styles,
     ) -> Vec<Cell<'p>> {
@@ -634,8 +625,7 @@ impl<'t> TerminalDevice<'t> {
         row.push(rcell!(pid));
         let mut sample_col = 2;
         ps.samples()
-            .map(|sample| izip!(sample.strings(), sample.trends()))
-            .flatten()
+            .flat_map(|sample| izip!(sample.strings(), sample.trends()))
             .skip(hoffset)
             .for_each(|(value, trend)| {
                 cws[sample_col].check(value);
@@ -652,9 +642,9 @@ impl<'t> TerminalDevice<'t> {
     /// Make a row of limits.
     ///
     /// The first column is the name. The second is the PID. The rest are the metrics.
-    fn make_limits_row<'p, 'w>(
+    fn make_limits_row<'p>(
         hoffset: usize,
-        cws: &'w mut [MaxLength],
+        cws: &mut [MaxLength],
         ps: &'p ProcessSamples,
         display_limits: LimitKind,
         limit_slots: &[bool],
@@ -666,7 +656,7 @@ impl<'t> TerminalDevice<'t> {
         row.push(rcell!(LIMITS_TITLE));
         row.push(Cell::new(""));
         let mut col_index = 0;
-        const NOT_APPLICABLE: &'static str = "n/a";
+        const NOT_APPLICABLE: &str = "n/a";
         ps.samples().for_each(|sample| {
             let max_index = col_index + sample.string_count();
             if col_index >= hoffset {
@@ -771,7 +761,7 @@ impl<'t> DisplayDevice for TerminalDevice<'t> {
                         hoffset,
                         pids.len().saturating_sub(1),
                         &mut cws,
-                        &samples,
+                        samples,
                         &self.styles,
                     );
                     rows.push(row);
@@ -779,7 +769,7 @@ impl<'t> DisplayDevice for TerminalDevice<'t> {
                         let row = TerminalDevice::make_limits_row(
                             hoffset,
                             &mut cws,
-                            &samples,
+                            samples,
                             display_limits.clone(),
                             &self.limit_slots,
                         );

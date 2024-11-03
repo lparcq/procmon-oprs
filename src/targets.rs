@@ -97,7 +97,7 @@ impl<'a> Target<'a> {
         changed
     }
 
-    fn pid_file<'b>(&'b self) -> Option<&'b PathBuf> {
+    fn pid_file(&self) -> Option<&PathBuf> {
         self.pid_file.as_ref()
     }
 
@@ -111,7 +111,7 @@ impl<'a> Target<'a> {
 
 /// Target container
 pub struct TargetContainer<'a> {
-    targets: Vec<Box<Target<'a>>>,
+    targets: Vec<Target<'a>>,
     system_conf: &'a SystemConf,
     system_limits: Option<Vec<Option<Limit>>>,
     with_system: bool,
@@ -123,7 +123,7 @@ impl<'a> TargetContainer<'a> {
             targets: Vec::new(),
             system_conf,
             system_limits: None,
-            with_system: with_system,
+            with_system,
         }
     }
 
@@ -164,7 +164,7 @@ impl<'a> TargetContainer<'a> {
                 0,
                 None,
                 &system.extract_metrics(collector.metrics()),
-                &limits,
+                limits,
             );
         }
         self.targets
@@ -188,8 +188,7 @@ impl<'a> TargetContainer<'a> {
                         descendants.for_each(|p| {
                             if name == p.name() {
                                 if let Ok(process) = Process::new(p.pid()) {
-                                    self.targets
-                                        .push(Box::new(Target::new(process, self.system_conf)));
+                                    self.targets.push(Target::new(process, self.system_conf));
                                 }
                             }
                         })
@@ -197,7 +196,7 @@ impl<'a> TargetContainer<'a> {
                 });
             }
             _ => {
-                let target = Box::new(match target_id {
+                let target = match target_id {
                     TargetId::Pid(pid) => Target::new(
                         Process::new(*pid).map_err(|_| TargetError::InvalidProcessId(*pid))?,
                         self.system_conf,
@@ -206,7 +205,7 @@ impl<'a> TargetContainer<'a> {
                         Target::with_pid_file(pid_file, self.system_conf)?
                     }
                     _ => panic!("already matched"),
-                });
+                };
                 self.targets.push(target);
             }
         };
@@ -216,9 +215,7 @@ impl<'a> TargetContainer<'a> {
     pub fn push_all(&mut self, target_ids: &[TargetId]) -> Result<(), TargetError> {
         let forest = {
             let mut forest = ProcessForest::new();
-            forest
-                .refresh()
-                .map_err(|err| TargetError::ProcessError(err))?;
+            forest.refresh().map_err(TargetError::ProcessError)?;
             forest
         };
 

@@ -55,12 +55,11 @@ fn exe_name(process: &Process) -> Option<String> {
         .ok()
         .flatten()
         .or_else(|| process.exe().ok())
-        .map(|path| {
+        .and_then(|path| {
             path.file_name()
                 .and_then(|os_name| os_name.to_str())
                 .map(|s| s.to_string())
         })
-        .flatten()
 }
 
 /// Command name
@@ -114,19 +113,21 @@ impl ProcessInfo {
         self.parent_pid
     }
 
-    pub fn name<'a>(&'a self) -> &'a str {
+    pub fn name(&self) -> &str {
         self.name.as_str()
     }
 
-    pub fn process<'a>(&'a self) -> &'a Process {
+    pub fn process(&self) -> &Process {
         &self.process
     }
 
+    #[cfg(test)]
     pub fn hidden(&self) -> bool {
         self.hidden
     }
 
-    pub fn hide(&mut self) {
+    #[cfg(test)]
+    pub fn _hide(&mut self) {
         self.hidden = true;
     }
 
@@ -219,7 +220,7 @@ impl Forest {
     }
 
     /// Get a process that is known to be in the arena.
-    fn get_known_info<'a>(&'a self, node_id: NodeId) -> &'a ProcessInfo {
+    fn get_known_info(&self, node_id: NodeId) -> &ProcessInfo {
         self.arena
             .get(node_id)
             .expect("Internal error: dangling root in tree.")
@@ -295,7 +296,7 @@ impl Forest {
                 if prev_info.same_as(&info) {
                     let new_parent_pid = info.parent_pid();
                     if prev_info.parent_pid() == new_parent_pid {
-                        state.remove_old_node(&prev_node_id);
+                        state.remove_old_node(prev_node_id);
                     } else {
                         // Same process but reparented. Insert the new info where the
                         // previous was by making the new the parent of the previous one
@@ -313,7 +314,7 @@ impl Forest {
                             std::line!(),
                         );
                         node_id.append(*prev_node_id, &mut self.arena);
-                        if self.roots.remove(&prev_node_id) {
+                        if self.roots.remove(prev_node_id) {
                             self.roots.insert(node_id);
                         }
                         state.remove_old_node(prev_node_id);
@@ -360,39 +361,35 @@ impl Forest {
     /// It takes processes in the first list.
     fn transfer_ascendants(&mut self, state: &mut RefreshState, pid: pid_t) {
         let mut pid = pid;
-        loop {
-            // Add parent processes that have been found earlier but not
-            // selected by the predicate to connect the tree.
-            match state.processes.remove(&pid) {
-                Some(info) => {
-                    pid = info.parent_pid();
-                    self.add_node(state, info);
-                }
-                None => break,
-            }
+        while let Some(info) = state.processes.remove(&pid) {
+            pid = info.parent_pid();
+            self.add_node(state, info);
         }
     }
 
     /// Number of processes
+    #[cfg(test)]
     pub fn size(&self) -> usize {
         self.processes.len()
     }
 
-    /// Get process with a given PID if it exists.
-    pub fn get_process<'a>(&'a self, pid: pid_t) -> Option<&'a ProcessInfo> {
+    #[cfg(test)]
+    pub fn get_process(&self, pid: pid_t) -> Option<&ProcessInfo> {
+        // Get process with a given PID if it exists.
         self.processes
             .get(&pid)
             .map(|node_id| self.get_known_info(*node_id))
     }
 
     /// Remove process with a given PID. No error if it doesn't exists.
-    pub fn remove_process(&mut self, pid: pid_t) {
+    #[cfg(test)]
+    pub fn _remove_process(&mut self, pid: pid_t) {
         if let Some(node_id) = self.processes.get(&pid).copied() {
             match node_id.children(&self.arena).next() {
                 Some(_) => {
                     // If process has children, just hide it.
                     if let Some(node) = self.arena.get_mut(node_id) {
-                        node.get_mut().hide();
+                        node.get_mut()._hide();
                     }
                 }
                 None => {
@@ -408,7 +405,7 @@ impl Forest {
     /// Iterate roots
     pub fn iter_roots<'a: 'b, 'b>(&'a self) -> RootIter<'a, 'b> {
         RootIter {
-            forest: &self,
+            forest: self,
             inner: self.roots.iter(),
         }
     }

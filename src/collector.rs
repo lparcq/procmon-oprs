@@ -547,7 +547,7 @@ impl<'a> Collector<'a> {
     }
 
     /// Return lines
-    pub fn lines<'b>(&'b self) -> LineIter<'b> {
+    pub fn lines(&self) -> LineIter {
         LineIter {
             iter: self.pids.iter(),
             samples: &self.samples,

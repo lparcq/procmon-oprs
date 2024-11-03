@@ -207,7 +207,7 @@ impl<'s> Application<'s> {
             match self.display_mode {
                 DisplayMode::Terminal => {
                     let device = Box::new(TerminalDevice::new(self.every, self.theme)?);
-                    let mut tmgt = ForestProcessManager::new(&system_conf, &self.metrics)?;
+                    let mut tmgt = ForestProcessManager::new(system_conf, &self.metrics)?;
                     self.run_loop(&mut tmgt, device, true)?;
                 }
                 _ => return Err(anyhow::anyhow!(Error::NoTargets)),
@@ -222,7 +222,7 @@ impl<'s> Application<'s> {
                 DisplayMode::Text => Box::new(TextDevice::new()),
                 _ => Box::new(NullDevice::new()),
             };
-            let mut tmgt = FlatProcessManager::new(&system_conf, &self.metrics, target_ids)?;
+            let mut tmgt = FlatProcessManager::new(system_conf, &self.metrics, target_ids)?;
             self.run_loop(&mut tmgt, device, is_interactive)?;
         }
         Ok(())
