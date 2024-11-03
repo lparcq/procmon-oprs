@@ -29,6 +29,7 @@ use crate::{
     console::BuiltinTheme,
     display::{DisplayDevice, NullDevice, PauseStatus, TerminalDevice, TextDevice},
     export::{CsvExporter, Exporter, RrdExporter},
+    format,
     metrics::{FormattedMetric, MetricDataType, MetricId, MetricNamesParser},
     process::{Forest, Limit, ProcessStat, SystemConf, SystemStat},
     sighdr::SignalHandler,
@@ -137,9 +138,16 @@ impl<'s> ForestProcessManager<'s> {
 impl<'s> ProcessManager for ForestProcessManager<'s> {
     fn refresh(&mut self, collector: &mut Collector) -> anyhow::Result<bool> {
         let mut system = SystemStat::new(self.system_conf);
+        let system_info = format!(
+            "[{} cores -- {}]",
+            SystemStat::num_cores().unwrap_or(0),
+            SystemStat::mem_total()
+                .map(format::size)
+                .unwrap_or("?".to_string())
+        );
         collector.collect_system(&mut system);
         collector.record(
-            "system",
+            &system_info,
             0,
             None,
             &system.extract_metrics(collector.metrics()),

@@ -21,7 +21,7 @@ use std::{collections::HashMap, slice::Iter, time::SystemTime};
 
 use procfs::{
     process::{FDTarget, Io, MMapPath, Stat, StatM},
-    CpuTime, Current, CurrentSI, KernelStats, Meminfo, ProcResult,
+    CpuInfo, CpuTime, Current, CurrentSI, KernelStats, Meminfo, ProcResult,
 };
 
 pub use procfs::process::{Limit, LimitValue};
@@ -172,6 +172,16 @@ impl<'a> SystemStat<'a> {
                 _ => 0,
             })
             .collect()
+    }
+
+    /// Number of cores
+    pub fn num_cores() -> Option<usize> {
+        CpuInfo::current().ok().as_ref().map(CpuInfo::num_cores)
+    }
+
+    /// RAM size
+    pub fn mem_total() -> Option<u64> {
+        Meminfo::current().ok().map(|m| m.mem_total)
     }
 }
 
