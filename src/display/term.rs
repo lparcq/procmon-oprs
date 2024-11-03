@@ -25,9 +25,7 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
     Terminal,
 };
-use std::cmp::Ordering;
-use std::io;
-use std::time::Duration;
+use std::{cmp::Ordering, io, time::Duration};
 use termion::{
     raw::{IntoRawMode, RawTerminal},
     screen::{AlternateScreen, IntoAlternateScreen},
@@ -38,9 +36,11 @@ use crate::{
     clock::Timer,
     collector::{Collector, LimitKind, ProcessSamples},
     console::{is_tty, BuiltinTheme, Event, EventChannel, Key},
+    display::types::UnboundedSize,
     format::human_duration,
     metrics::FormattedMetric,
 };
+use num_traits::{ConstZero, Zero};
 
 use super::{DisplayDevice, PauseStatus, SliceIter};
 
@@ -51,42 +51,72 @@ macro_rules! rcell {
     };
 }
 
-/// Area property with an horizontal and vertical value.
-#[derive(Clone, Copy, Debug, Default)]
-struct AreaProperty<T: Default> {
-    horizontal: T,
-    vertical: T,
+#[derive(Debug, Default)]
+struct AreaBool {
+    horizontal: bool,
+    vertical: bool,
 }
 
-impl<T: Default> AreaProperty<T> {
-    fn new(horizontal: T, vertical: T) -> Self {
-        Self {
+impl AreaBool {
+    fn new(horizontal: bool, vertical: bool) -> Self {
+        AreaBool {
             horizontal,
             vertical,
         }
     }
 }
 
-impl AreaProperty<usize> {
+/// Area property with an horizontal and vertical value.
+#[derive(Clone, Copy, Debug, Default)]
+struct UnboundedArea {
+    horizontal: UnboundedSize,
+    vertical: UnboundedSize,
+}
+
+impl UnboundedArea {
     fn scroll_left(&mut self, delta: usize) {
-        self.horizontal = self.horizontal.saturating_sub(delta);
+        self.horizontal = self.horizontal.sub(delta);
     }
 
     fn scroll_right(&mut self, delta: usize) {
-        self.horizontal += delta;
+        self.horizontal = self.horizontal.add(delta);
     }
 
     fn scroll_up(&mut self, delta: usize) {
-        self.vertical = self.vertical.saturating_sub(delta);
+        self.vertical = self.vertical.sub(delta);
     }
 
     fn scroll_down(&mut self, delta: usize) {
-        self.vertical += delta;
+        self.vertical = self.horizontal.add(delta);
+    }
+
+    fn home(&mut self) {
+        *self = Self::default();
+    }
+
+    fn set(&mut self, horizontal: usize, vertical: usize) {
+        self.horizontal = UnboundedSize::Value(horizontal);
+        self.vertical = UnboundedSize::Value(vertical);
+    }
+
+    fn horizontal_home(&mut self) {
+        self.horizontal = UnboundedSize::ZERO;
+    }
+
+    fn horizontal_end(&mut self) {
+        self.horizontal = UnboundedSize::Infinite;
+    }
+
+    fn vertical_end(&mut self) {
+        self.vertical = UnboundedSize::Infinite;
     }
 
     fn recenter_vertically(&mut self, center: usize, height: usize, force: bool) {
-        if force || center < self.vertical || center >= self.vertical + height {
-            self.vertical = center.saturating_sub(height / 2)
+        let center = UnboundedSize::Value(center);
+        let low = self.vertical;
+        let high = self.vertical + UnboundedSize::Value(height);
+        if force || center < low || center >= high {
+            self.vertical = center.sub(height / 2);
         }
     }
 }
@@ -205,6 +235,10 @@ impl PidStack {
 const KEY_FASTER: Key = Key::Char(KEY_FASTER_CHAR);
 const KEY_FASTER_CHAR: char = '+';
 const KEY_FOCUS: Key = Key::Char('f');
+const KEY_GOTO_TBL_BOTTOM: Key = Key::CtrlEnd;
+const KEY_GOTO_TBL_LEFT: Key = Key::Home;
+const KEY_GOTO_TBL_RIGHT: Key = Key::End;
+const KEY_GOTO_TBL_TOP: Key = Key::CtrlHome;
 const KEY_LIMITS: Key = Key::Char('l');
 const KEY_QUIT: Key = Key::Esc;
 const KEY_SLOWER: Key = Key::Char(KEY_SLOWER_CHAR);
@@ -215,6 +249,10 @@ pub enum Action {
     None,
     DivideTimeout(u16),
     Focus,
+    GotoTableBottom,
+    GotoTableLeft,
+    GotoTableRight,
+    GotoTableTop,
     MultiplyTimeout(u16),
     Quit,
     ScrollDown,
@@ -231,6 +269,10 @@ impl From<Event> for Action {
         match evt {
             Event::Key(KEY_FASTER) => Action::DivideTimeout(2),
             Event::Key(KEY_FOCUS) => Action::Focus,
+            Event::Key(KEY_GOTO_TBL_BOTTOM) => Action::GotoTableBottom,
+            Event::Key(KEY_GOTO_TBL_LEFT) => Action::GotoTableLeft,
+            Event::Key(KEY_GOTO_TBL_RIGHT) => Action::GotoTableRight,
+            Event::Key(KEY_GOTO_TBL_TOP) => Action::GotoTableTop,
             Event::Key(KEY_SLOWER) => Action::MultiplyTimeout(2),
             Event::Key(KEY_QUIT) | Event::Key(Key::Ctrl('c')) => Action::Quit,
             Event::Key(Key::PageDown) => Action::ScrollDown,
@@ -255,7 +297,9 @@ fn key_name(key: Key) -> String {
         Key::PageUp => "⇞".to_string(),
         Key::PageDown => "⇟".to_string(),
         Key::Home => "⇱".to_string(),
+        Key::CtrlHome => "^⇱".to_string(),
         Key::End => "⇲".to_string(),
+        Key::CtrlEnd => "^⇲".to_string(),
         Key::BackTab => "⇤".to_string(),
         Key::Delete => "⌧".to_string(),
         Key::Insert => "Ins".to_string(),
@@ -288,20 +332,24 @@ fn menu_paragraph(entries: &[(String, &'static str)]) -> Paragraph<'static> {
 /// Navigation arrows dependending on table overflows
 fn navigation_arrows(
     screen: Rect,
-    offset: AreaProperty<usize>,
+    offset: UnboundedArea,
     table_width: u16,
     table_height: u16,
     first_col_width: usize,
-) -> (Text<'static>, AreaProperty<bool>) {
+) -> (Text<'static>, AreaBool) {
     let (inner_width, inner_height) = (screen.width - 2, screen.height - 3);
-    let up_arrow = if offset.vertical > 0 {
-        "  ⬆  "
-    } else {
+    let up_arrow = if offset.vertical.is_zero() {
         "   "
+    } else {
+        "  ⬆  "
     };
     let voverflow = table_height > inner_height;
     let down_arrow = if voverflow { "⬇" } else { " " };
-    let left_arrow = if offset.horizontal > 0 { "⬅" } else { " " };
+    let left_arrow = if offset.horizontal.is_zero() {
+        " "
+    } else {
+        "⬅"
+    };
     let hoverflow = table_width > inner_width;
     let right_arrow = if hoverflow { "➡" } else { " " };
     let mut nav = Text::from(format!("{up_arrow:^first_col_width$}"));
@@ -309,7 +357,7 @@ fn navigation_arrows(
         "{:^first_col_width$}",
         format!("{left_arrow} {down_arrow} {right_arrow}",)
     )));
-    (nav, AreaProperty::new(hoverflow, voverflow))
+    (nav, AreaBool::new(hoverflow, voverflow))
 }
 
 /// Apply style to rows
@@ -401,11 +449,11 @@ pub struct TerminalDevice<'t> {
     /// Terminal
     terminal: Terminal<TermionBackend<Box<AlternateScreen<RawTerminal<io::Stdout>>>>>,
     /// Horizontal and vertical offset
-    table_offset: AreaProperty<usize>,
+    table_offset: UnboundedArea,
     /// Number of lines to scroll vertically up and down
     vertical_scroll: usize,
     /// Horizontal and vertical overflow (whether the table is bigger than the screen)
-    overflow: AreaProperty<bool>,
+    overflow: AreaBool,
     /// Column headers for metrics
     metric_headers: Vec<Text<'t>>,
     /// Slots where limits are displayed under the metric (only for raw metrics).
@@ -434,7 +482,7 @@ impl<'t> TerminalDevice<'t> {
             terminal,
             table_offset: Default::default(),
             vertical_scroll: 1,
-            overflow: AreaProperty::new(false, false),
+            overflow: AreaBool::default(),
             metric_headers: Vec::new(),
             limit_slots: Vec::new(),
             display_limits: LimitKind::None,
@@ -487,7 +535,7 @@ impl<'t> TerminalDevice<'t> {
     ) -> anyhow::Result<()> {
         let offset = self.table_offset;
         let title = self.title();
-        let mut new_overflow = AreaProperty::new(false, false);
+        let mut new_overflow = AreaBool::default();
         let even_row_style = self.styles.even_row;
         let odd_row_style = self.styles.odd_row;
         let mut table_visible_height = 0;
@@ -574,17 +622,13 @@ impl<'t> TerminalDevice<'t> {
                     self.table_offset.scroll_right(1)
                 }
             }
-            Action::ScrollUp => {
-                self.table_offset.scroll_up(self.vertical_scroll);
-            }
+            Action::ScrollUp => self.table_offset.scroll_up(self.vertical_scroll),
             Action::ScrollDown => {
                 if self.overflow.vertical {
                     self.table_offset.scroll_down(self.vertical_scroll);
                 }
             }
-            Action::ScrollLeft => {
-                self.table_offset.scroll_left(1);
-            }
+            Action::ScrollLeft => self.table_offset.scroll_left(1),
             Action::SelectUp => {
                 self.selected = self.selected.saturating_sub(1);
                 self.table_offset.recenter_vertically(
@@ -601,13 +645,15 @@ impl<'t> TerminalDevice<'t> {
                     false,
                 );
             }
-            Action::Focus => {
-                self.table_offset.recenter_vertically(
-                    self.selected,
-                    self.table_visible_height,
-                    true,
-                );
-            }
+            Action::Focus => self.table_offset.recenter_vertically(
+                self.selected,
+                self.table_visible_height,
+                true,
+            ),
+            Action::GotoTableTop => self.table_offset.home(),
+            Action::GotoTableBottom => self.table_offset.vertical_end(),
+            Action::GotoTableLeft => self.table_offset.horizontal_home(),
+            Action::GotoTableRight => self.table_offset.horizontal_end(),
         }
         true
     }
@@ -769,10 +815,18 @@ impl<'t> DisplayDevice for TerminalDevice<'t> {
     }
 
     fn render(&mut self, collector: &Collector, _targets_updated: bool) -> anyhow::Result<()> {
-        let (hoffset, voffset) = (self.table_offset.horizontal, self.table_offset.vertical);
         let line_count = collector.line_count();
         let ncols = self.metric_headers.len() + 2; // process name, PID, metric1, ...
         let nrows = line_count + 2; // metric title, metric subtitle, process1, ...
+        let hoffset = match self.table_offset.horizontal {
+            UnboundedSize::Value(offset) => offset,
+            UnboundedSize::Infinite => ncols - 3,
+        };
+        let voffset = match self.table_offset.vertical {
+            UnboundedSize::Value(offset) => offset,
+            UnboundedSize::Infinite => line_count.saturating_sub(self.table_visible_height),
+        };
+        self.table_offset.set(hoffset, voffset);
         let nvisible_rows = nrows - voffset;
         let nvisible_cols = ncols - hoffset;
 

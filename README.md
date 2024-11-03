@@ -24,11 +24,11 @@ Example
 To get the memory size, elapsed time and page fault of a process by PID (firefox), a process by pid
 file (pulseaudio) and a process by name (bash), run:
 
-    oprs -F human -p 6913 -f pulseaudio.pid -n dhclient mem:vm mem:rss+max time:elapsed fault:major
+    oprs -F human -p 29220 -f pulseaudio.pid -n zellij mem:vm mem:rss+max time:elapsed fault:major
 
 ![Screenshot of oprs](doc/screenshot.jpeg)
 
-Without argument, the command prints the available metrics.
+If no process is specified, all the visible processes are displayed.
 
 Metrics
 -------
