@@ -25,7 +25,7 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
     Terminal,
 };
-use std::{borrow::Cow, cmp::Ordering, io, time::Duration};
+use std::{cmp::Ordering, io, time::Duration};
 use termion::{
     raw::{IntoRawMode, RawTerminal},
     screen::{AlternateScreen, IntoAlternateScreen},
@@ -110,12 +110,21 @@ impl UnboundedArea {
 
 /// Theme styles
 struct Styles {
+    /// Even rows
     even_row: Style,
+    /// Odd rows
     odd_row: Style,
+    /// Increasing value
     increase: Style,
+    /// Decreasing value
     decrease: Style,
+    /// Unselected line
     unselected: Style,
+    /// Selected line
     selected: Style,
+    /// Status line
+    status: Style,
+    /// Space between columns in number of characters
     column_spacing: u16,
 }
 
@@ -124,6 +133,7 @@ impl Styles {
         let default_style = Style::default();
         let bold = Style::default().add_modifier(Modifier::BOLD);
         let bold_reversed = bold.add_modifier(Modifier::REVERSED);
+        let white_on_blue = Style::default().fg(Color::White).bg(Color::Blue);
         match theme {
             Some(BuiltinTheme::Dark) => Styles {
                 even_row: default_style,
@@ -132,6 +142,7 @@ impl Styles {
                 decrease: Style::default().fg(Color::Rgb(166, 255, 77)),
                 unselected: bold,
                 selected: bold_reversed,
+                status: white_on_blue,
                 column_spacing: 2,
             },
             Some(BuiltinTheme::Light) => Styles {
@@ -141,6 +152,7 @@ impl Styles {
                 decrease: Style::default().fg(Color::Rgb(102, 204, 00)),
                 unselected: bold,
                 selected: bold_reversed,
+                status: white_on_blue,
                 column_spacing: 2,
             },
             Some(BuiltinTheme::Dark16) => Styles {
@@ -150,6 +162,7 @@ impl Styles {
                 decrease: Style::default().fg(Color::LightGreen),
                 unselected: bold,
                 selected: bold_reversed,
+                status: white_on_blue,
                 column_spacing: 2,
             },
             Some(BuiltinTheme::Light16) => Styles {
@@ -159,6 +172,7 @@ impl Styles {
                 decrease: Style::default().fg(Color::Green),
                 unselected: bold,
                 selected: bold_reversed,
+                status: white_on_blue,
                 column_spacing: 2,
             },
             None => Styles {
@@ -168,6 +182,7 @@ impl Styles {
                 decrease: bold,
                 unselected: bold,
                 selected: bold_reversed,
+                status: bold_reversed,
                 column_spacing: 2,
             },
         }
@@ -390,19 +405,15 @@ impl MaxLength {
 
 struct MenuEntry {
     key: String,
-    label: String,
+    label: &'static str,
 }
 
 impl MenuEntry {
-    fn new(key: String, label: Cow<str>) -> Self {
-        let label = match label {
-            Cow::Borrowed(s) => s.to_string(),
-            Cow::Owned(s) => s,
-        };
+    fn new(key: String, label: &'static str) -> Self {
         Self { key, label }
     }
 
-    fn with_key(key: Key, label: Cow<str>) -> Self {
+    fn with_key(key: Key, label: &'static str) -> Self {
         Self::new(MenuEntry::key_name(key), label)
     }
 
@@ -447,6 +458,24 @@ impl MenuEntry {
         });
         Paragraph::new(Line::from(spans)).alignment(Alignment::Left)
     }
+}
+
+thread_local! {
+    static MAIN_MENU: std::cell::LazyCell<Vec<MenuEntry>> = std::cell::LazyCell::new(|| vec![
+        MenuEntry::with_key(KEY_QUIT, "Quit"),
+        MenuEntry::new(
+            format!(
+                "{}/{}",
+                MenuEntry::key_name(Key::Up),
+                MenuEntry::key_name(Key::Down)
+            ),
+            "Select",
+        ),
+        MenuEntry::new(format!("{KEY_FASTER_CHAR}/{KEY_SLOWER_CHAR}"), "Speed"),
+        MenuEntry::with_key(KEY_LIMITS, "Limits"),
+        MenuEntry::with_key(KEY_FOCUS, "Focus"),
+        MenuEntry::with_key(KEY_NEXT_FILTER, "Filter"),
+    ]);
 }
 
 /// Print on standard output as a table
@@ -513,36 +542,15 @@ impl<'t> TerminalDevice<'t> {
         is_tty(&io::stdin())
     }
 
-    /// Title of the outter box
-    fn title(&self) -> String {
+    /// Content of the status bar
+    fn status_bar(&self) -> String {
         let time_string = format!("{}", Local::now().format("%X"));
         let delay = human_duration(self.every);
-        format!(" {time_string} / {delay} ")
-    }
-
-    /// The main menu
-    fn menu(&self) -> Vec<MenuEntry> {
-        let display_limits = Cow::Borrowed(match self.display_limits {
-            LimitKind::None => "Limit:Off",
-            _ => "Limit:On",
-        });
-        let key_up_down = format!(
-            "{}/{}",
-            MenuEntry::key_name(Key::Up),
-            MenuEntry::key_name(Key::Down)
-        );
-        let key_fast_slow = format!("{KEY_FASTER_CHAR}/{KEY_SLOWER_CHAR}");
-        vec![
-            MenuEntry::with_key(KEY_QUIT, Cow::Borrowed("Quit")),
-            MenuEntry::new(key_up_down, Cow::Borrowed("Select")),
-            MenuEntry::new(key_fast_slow, Cow::Borrowed("Speed")),
-            MenuEntry::with_key(KEY_LIMITS, display_limits),
-            MenuEntry::with_key(KEY_FOCUS, Cow::Borrowed("Focus")),
-            MenuEntry::with_key(
-                KEY_NEXT_FILTER,
-                Cow::Owned(format!("Filter:{}", self.filters.current())),
-            ),
-        ]
+        format!(
+            "{time_string} -- interval:{delay} -- limit:{} -- filter:{}",
+            self.display_limits.as_ref(),
+            self.filters.current()
+        )
     }
 
     /// Draw the table of metrics and the menu.
@@ -556,26 +564,35 @@ impl<'t> TerminalDevice<'t> {
         col_widths: &[u16],
     ) -> anyhow::Result<()> {
         let offset = self.table_offset;
-        let title = self.title();
         let mut new_overflow = Area::default();
         let even_row_style = self.styles.even_row;
         let odd_row_style = self.styles.odd_row;
         let mut body_height = 0;
         let headers_height = self.headers_height as u16;
-        let menu_entries = self.menu();
+        let status_bar = Paragraph::new(Text::from(self.status_bar())).style(self.styles.status);
+        let menu = MAIN_MENU.with(|menu| MenuEntry::paragraph(menu));
 
         self.terminal.draw(|frame| {
             const BORDERS_SIZE: u16 = 2;
             const MENU_HEIGHT: u16 = 1;
+            const STATUS_HEIGHT: u16 = 1;
+            const FOOTER_HEIGHT: u16 = MENU_HEIGHT + STATUS_HEIGHT;
             let screen = frame.area();
-            let outter_area = Size::new(screen.width, screen.height - MENU_HEIGHT);
+            let outter_area = Size::new(screen.width, screen.height - FOOTER_HEIGHT);
             let inner_area = Size::new(
                 outter_area.width - BORDERS_SIZE,
                 outter_area.height - BORDERS_SIZE,
             );
             let rects = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Length(outter_area.height), Constraint::Min(0)].as_ref())
+                .constraints(
+                    [
+                        Constraint::Length(outter_area.height),
+                        Constraint::Min(0),
+                        Constraint::Min(0),
+                    ]
+                    .as_ref(),
+                )
                 .split(screen);
             let column_spacing = self.styles.column_spacing;
             let (_table_width, widths, hoverflow) =
@@ -588,13 +605,14 @@ impl<'t> TerminalDevice<'t> {
 
             let rows = style_rows(&mut rows, widths.len(), even_row_style, odd_row_style);
             let table = Table::new(rows, widths)
-                .block(Block::default().borders(Borders::ALL).title(title))
+                .block(Block::default().borders(Borders::ALL))
                 .header(Row::new(headers).height(headers_height))
                 .column_spacing(column_spacing);
             frame.render_widget(table, rects[0]);
 
-            let menu = MenuEntry::paragraph(&menu_entries);
-            frame.render_widget(menu, rects[1]);
+            frame.render_widget(status_bar, rects[1]);
+
+            frame.render_widget(menu, rects[2]);
             body_height = inner_area.height - headers_height;
         })?;
         self.overflow = new_overflow;
