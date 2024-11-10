@@ -524,8 +524,7 @@ impl<'t> TerminalDevice<'t> {
     fn menu(&self) -> Vec<MenuEntry> {
         let display_limits = Cow::Borrowed(match self.display_limits {
             LimitKind::None => "Limit:Off",
-            LimitKind::Soft => "Limit:Soft",
-            LimitKind::Hard => "Limit:Hard",
+            _ => "Limit:On",
         });
         let key_up_down = format!(
             "{}/{}",
@@ -776,9 +775,13 @@ impl<'t> TerminalDevice<'t> {
     ) -> Vec<Cell<'p>> {
         let column_count = cws.len();
         let mut row = Vec::with_capacity(column_count);
-        const LIMITS_TITLE: &str = "limits";
-        cws[0].check(LIMITS_TITLE);
-        row.push(rcell!(LIMITS_TITLE));
+        let limits_title = match display_limits {
+            LimitKind::None => "no limit",
+            LimitKind::Soft => "soft limits",
+            LimitKind::Hard => "hard limits",
+        };
+        cws[0].check(limits_title);
+        row.push(rcell!(limits_title));
         row.push(Cell::new(""));
         let mut col_index = 0;
         const NOT_APPLICABLE: &str = "n/a";

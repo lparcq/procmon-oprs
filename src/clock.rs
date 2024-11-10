@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020  Laurent Pelecq
+// Copyright (C) 2020-2024  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,6 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use libc::{nanosleep, timespec};
-use log::debug;
 use std::time::{Duration, Instant};
 
 /// Timer that expired at constant time
@@ -153,7 +152,7 @@ impl DriftMonitor {
                     self.notification_time = now;
                     if let Some(actual_elapsed) = now.checked_duration_since(self.start_time) {
                         let drift = actual_elapsed.as_secs_f64() - new_elapsed.as_secs_f64();
-                        debug!("drift {} seconds", drift);
+                        log::debug!("drift {} seconds", drift);
                     }
                 }
             }

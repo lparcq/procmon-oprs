@@ -14,7 +14,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use log::debug;
 use std::io::{self, BufRead, BufReader, Write};
 use std::iter::IntoIterator;
 use std::path::Path;
@@ -205,7 +204,7 @@ impl RrdTool {
         S: AsRef<str>,
     {
         let step = interval.as_secs();
-        debug!("rrd create {} step={}", dbname, step);
+        log::debug!("rrd create {} step={}", dbname, step);
         try_io!(write!(
             self.child_in,
             "create {} --start={} --step={}",
@@ -225,7 +224,7 @@ impl RrdTool {
     where
         I: std::iter::Iterator<Item = u64>,
     {
-        debug!("rrd update {}", dbname);
+        log::debug!("rrd update {}", dbname);
         try_write!(self.child_in, "update {} {}", dbname, timestamp.as_secs());
         for value in values {
             try_write!(self.child_in, ":{}", value);
@@ -249,7 +248,7 @@ impl RrdTool {
     {
         let start = start_time.as_secs();
         let end = end_time.as_secs();
-        debug!("rrd graph {} --start={} --end={}", filename, start, end);
+        log::debug!("rrd graph {} --start={} --end={}", filename, start, end);
         try_write!(
             self.child_in,
             "graph {} --start={} --end={}",
@@ -274,11 +273,11 @@ impl RrdTool {
     }
 
     pub fn close(&mut self) -> Result<(), Error> {
-        debug!("stopping rrdtool");
+        log::debug!("stopping rrdtool");
         try_writeln!(self.child_in, "quit");
-        debug!("waiting for rrdtool to stop");
+        log::debug!("waiting for rrdtool to stop");
         try_io!(self.process.wait());
-        debug!("rrdtool stopped");
+        log::debug!("rrdtool stopped");
         Ok(())
     }
 }
