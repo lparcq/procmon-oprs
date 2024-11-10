@@ -36,13 +36,16 @@ use crate::{
     clock::Timer,
     collector::{Collector, LimitKind, ProcessSamples},
     console::{is_tty, BuiltinTheme, Event, EventChannel, Key},
-    display::types::UnboundedSize,
     format::human_duration,
     metrics::FormattedMetric,
 };
 use num_traits::{ConstZero, Zero};
 
 use super::{DisplayDevice, PauseStatus, SliceIter};
+
+mod types;
+
+use types::UnboundedSize;
 
 /// Right aligned cell.
 macro_rules! rcell {

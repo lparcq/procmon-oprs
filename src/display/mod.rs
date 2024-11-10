@@ -22,8 +22,6 @@ pub mod null;
 pub mod term;
 pub mod text;
 
-mod types;
-
 pub enum PauseStatus {
     Quit,
     TimeOut,

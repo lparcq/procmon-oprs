@@ -102,7 +102,7 @@ pub(crate) mod process {
         pub(crate) fn exe(&self) -> ProcResult<PathBuf> {
             self.exe
                 .as_ref()
-                .map(|exe| PathBuf::from(exe))
+                .map(PathBuf::from)
                 .ok_or_else(|| new_error("no executable"))
         }
 
@@ -186,7 +186,7 @@ use process::Process;
 
 pub(crate) use process::reparent_process;
 
-static ORIGIN: LazyLock<Instant> = LazyLock::new(|| Instant::now());
+static ORIGIN: LazyLock<Instant> = LazyLock::new(Instant::now);
 
 #[derive(Debug)]
 pub(crate) struct ProcessBuilder {

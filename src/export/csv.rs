@@ -260,10 +260,10 @@ mod test {
         }
     }
 
-    fn write_csv_line<I, D: ToStr>(values: I) -> io::Result<String>
+    fn write_csv_line<I, D>(values: I) -> io::Result<String>
     where
         I: IntoIterator<Item = D>,
-        D: Display,
+        D: Display + ToStr,
     {
         let mut buf = io::Cursor::new(Vec::<u8>::new());
         let mut lout = CsvLineOutput::new(&mut buf, ',');

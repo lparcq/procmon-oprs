@@ -486,7 +486,7 @@ mod tests {
     use super::*;
     use crate::mocks::procfs::{reparent_process, ProcessBuilder};
 
-    fn sorted<T: Clone, I>(input: I) -> Vec<T>
+    fn sorted<T, I>(input: I) -> Vec<T>
     where
         T: Clone + Ord,
         I: std::iter::IntoIterator<Item = T>,
@@ -501,7 +501,7 @@ mod tests {
         processes
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Default)]
     struct ProcessFactory {
         pid: pid_t,
         count: usize,
@@ -544,14 +544,14 @@ mod tests {
 
         /// Builds a forest based on constraits on parent pids.
         ///
-        /// The vector `parents` gives the index of some parent of process.
+        /// The processes with pid from 0 to `count` are added in the forest.
         ///
         /// The first process has no parent. By default, process parent is the last process.
         ///
         /// Ex: [ (2, Some(0)), (3, None) ] means that the parent of process #2 is
         /// process #0 (the root) and that process #3 has no parent. It describes a
         /// forest of two trees.
-        fn from_parent_pids(
+        fn with_parent_pids(
             &mut self,
             constraints: &[(usize, Option<usize>)],
             count: usize,
@@ -573,12 +573,6 @@ mod tests {
         }
     }
 
-    impl Default for ProcessFactory {
-        fn default() -> Self {
-            Self { pid: 0, count: 0 }
-        }
-    }
-
     #[test]
     /// Make sure the factory builds correct processes.
     ///
@@ -591,7 +585,7 @@ mod tests {
         let mut factory = ProcessFactory::default();
         let parent_pids = &[0, 1, 2, 3, 1, 5, 0, 7];
         let constraints = &[(1, Some(0)), (4, Some(0)), (6, None)];
-        let processes = factory.from_parent_pids(constraints, 8);
+        let processes = factory.with_parent_pids(constraints, 8);
         assert_eq!(8, processes.len());
         for (expected_ppid, proc) in std::iter::zip(parent_pids, processes) {
             let parent_pid = proc.stat().unwrap().ppid;
@@ -655,7 +649,7 @@ mod tests {
     #[test]
     fn test_single_tree() {
         let mut factory = ProcessFactory::default();
-        let mut processes = factory.from_parent_pids(&[(3, Some(0)), (5, Some(2))], 6);
+        let mut processes = factory.with_parent_pids(&[(3, Some(0)), (5, Some(2))], 6);
 
         let mut forest = Forest::new();
         forest.refresh_from(processes.drain(..), |_| true);
@@ -678,7 +672,7 @@ mod tests {
     /// Build a forest of two trees and check that there are two roots.
     fn test_multi_trees() {
         let mut factory = ProcessFactory::default();
-        let mut processes = shuffle(factory.from_parent_pids(&[(4, None)], 8));
+        let mut processes = shuffle(factory.with_parent_pids(&[(4, None)], 8));
 
         let mut forest = Forest::new();
         forest.refresh_from(processes.drain(..), |_| true);
@@ -706,7 +700,7 @@ mod tests {
     /// - Other processes are hidden.
     fn test_predicate() {
         let mut factory = ProcessFactory::default();
-        let mut processes = factory.from_parent_pids(&[(4, Some(2)), (5, Some(0))], 8);
+        let mut processes = factory.with_parent_pids(&[(4, Some(2)), (5, Some(0))], 8);
         let proc3_pid = processes[3].pid();
         let proc4_pid = processes[4].pid();
         let proc6_pid = processes[6].pid();
@@ -737,7 +731,7 @@ mod tests {
     /// \_5_6_7
     fn test_refresh_different_predicates() {
         let mut factory = ProcessFactory::default();
-        let processes1 = factory.from_parent_pids(&[(4, Some(2)), (5, Some(0))], 8);
+        let processes1 = factory.with_parent_pids(&[(4, Some(2)), (5, Some(0))], 8);
         let processes2 = processes1.clone();
         let proc3_pid = processes1[3].pid();
         let proc4_pid = processes1[4].pid();
@@ -781,7 +775,7 @@ mod tests {
     /// \_3_4
     fn test_refresh_with_old_processes() {
         let mut factory = ProcessFactory::default();
-        let mut processes1 = factory.from_parent_pids(&[(3, Some(0))], 5);
+        let mut processes1 = factory.with_parent_pids(&[(3, Some(0))], 5);
         let proc2_pid = processes1[2].pid();
         let mut processes2 = processes1.clone();
 
@@ -796,7 +790,7 @@ mod tests {
         processes2.push(proc);
 
         loop {
-            ttl = ttl.checked_sub(1).unwrap_or(0);
+            ttl = ttl.saturating_sub(1);
             forest.refresh_from(processes2.clone().drain(..), |_| true);
             match forest.get_process(proc_pid) {
                 Some(info) => assert_eq!(ttl, info.process().ttl().unwrap()),
@@ -824,7 +818,7 @@ mod tests {
     /// \_3_4
     fn test_refresh_with_root_stopped() {
         let mut factory = ProcessFactory::default();
-        let processes1 = factory.from_parent_pids(&[(3, Some(0))], 5);
+        let processes1 = factory.with_parent_pids(&[(3, Some(0))], 5);
         let mut root = processes1[0].clone();
         let root_pid = root.pid();
         root.set_ttl(1);
@@ -858,7 +852,7 @@ mod tests {
     /// A process dies and another process gets the same PID.
     fn test_refresh_pid_reused() {
         let mut factory = ProcessFactory::default();
-        let processes1 = factory.from_parent_pids(&[(2, Some(0))], 3);
+        let processes1 = factory.with_parent_pids(&[(2, Some(0))], 3);
         let (first_proc_pid, first_proc_start) = {
             let proc = &processes1[1];
             (proc.pid(), proc.stat().unwrap().starttime)
