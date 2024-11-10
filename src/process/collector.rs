@@ -23,9 +23,9 @@ use std::{
 };
 use strum::{AsRefStr, IntoEnumIterator};
 
-use crate::format::Formatter;
-
-use super::{Aggregation, FormattedMetric, Limit, LimitValue, MetricId, ProcessStat, SystemStat};
+use super::{
+    format, Aggregation, FormattedMetric, Limit, LimitValue, MetricId, ProcessStat, SystemStat,
+};
 
 /// Tell if it makes sense to track metric changes
 ///
@@ -63,7 +63,7 @@ impl FormattedLimit {
         Self { soft, hard }
     }
 
-    fn limit_to_string(value: LimitValue, fmt: Formatter) -> String {
+    fn limit_to_string(value: LimitValue, fmt: format::Formatter) -> String {
         match value {
             LimitValue::Unlimited => UNLIMITED.to_string(),
             LimitValue::Value(value) => fmt(value),
@@ -146,7 +146,7 @@ impl Sample {
     fn push(&mut self, metric: &FormattedMetric, ag: Aggregation, value: u64) {
         self.values.push(value);
         self.strings.push(match ag {
-            Aggregation::Ratio => crate::format::ratio(value),
+            Aggregation::Ratio => format::ratio(value),
             _ => (metric.format)(value),
         });
         self.trends.push(Ordering::Equal);
@@ -181,7 +181,7 @@ impl Sample {
             let offset = self.values.len() - self.strings.len();
             let index = index - offset;
             self.strings[index] = match ag {
-                Aggregation::Ratio => crate::format::ratio(value),
+                Aggregation::Ratio => format::ratio(value),
                 _ => (metric.format)(value),
             };
             if track_change {

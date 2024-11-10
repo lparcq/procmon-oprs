@@ -16,13 +16,20 @@
 
 use libc::pid_t;
 use log::error;
-use std::path::{Path, PathBuf};
+use std::{
+    io::{self, Read},
+    path::{Path, PathBuf},
+};
 
-use crate::utils::{basename, read_pid_file};
+#[cfg(not(test))]
+use std::fs;
+
+#[cfg(test)]
+use super::mocks::fs;
 
 use super::{
-    Collector, Forest as ProcessForest, Limit, Process, ProcessError, ProcessStat, SystemConf,
-    SystemStat,
+    process_name, Collector, Forest as ProcessForest, Limit, Process, ProcessError, ProcessStat,
+    SystemConf, SystemStat,
 };
 
 #[derive(thiserror::Error, Debug)]
@@ -31,9 +38,13 @@ pub enum TargetError {
     InvalidProcessId(pid_t),
     #[error("{0}: invalid path")]
     InvalidPath(PathBuf),
+    #[error("{0}: invalid process id file")]
+    InvalidPidFile(PathBuf),
     #[error("{0}")]
     ProcessError(ProcessError),
 }
+
+pub type TargetResult<T> = Result<T, TargetError>;
 
 /// Different way of identifying processes
 #[derive(Debug)]
@@ -42,6 +53,36 @@ pub enum TargetId {
     PidFile(PathBuf),
     ProcessName(String),
     System,
+}
+
+/// Base name of a file with or without extension
+fn basename<P>(path: P, no_extension: bool) -> Option<String>
+where
+    P: AsRef<Path>,
+{
+    let basename: Option<&std::ffi::OsStr> = if no_extension {
+        path.as_ref().file_stem()
+    } else {
+        path.as_ref().file_name()
+    };
+    basename.and_then(|name| name.to_str()).map(String::from)
+}
+
+/// Read file content
+fn read_file_content(filename: &Path) -> io::Result<String> {
+    let mut file = fs::File::open(filename)?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)?;
+    Ok(content)
+}
+
+/// Read a PID file and returns the PID it contains
+fn read_pid_file(pid_file: &Path) -> TargetResult<pid_t> {
+    read_file_content(pid_file)
+        .map_err(|_| TargetError::InvalidPath(pid_file.to_path_buf()))?
+        .trim()
+        .parse::<i32>()
+        .map_err(|_| TargetError::InvalidPidFile(pid_file.to_path_buf()))
 }
 
 /// Process defined by a pid.
@@ -56,7 +97,7 @@ struct Target<'a> {
 
 impl<'a> Target<'a> {
     fn new(process: Process, system_conf: &'a SystemConf) -> Self {
-        let name = crate::process::process_name(&process);
+        let name = process_name(&process);
         Self {
             name,
             process: Some(process),
@@ -65,7 +106,7 @@ impl<'a> Target<'a> {
         }
     }
 
-    fn with_pid_file<P>(pid_file: P, system_conf: &'a SystemConf) -> Result<Self, TargetError>
+    fn with_pid_file<P>(pid_file: P, system_conf: &'a SystemConf) -> TargetResult<Self>
     where
         P: AsRef<Path>,
     {
@@ -172,11 +213,7 @@ impl<'a> TargetContainer<'a> {
         collector.finish();
     }
 
-    pub fn push(
-        &mut self,
-        target_id: &TargetId,
-        forest: &ProcessForest,
-    ) -> Result<(), TargetError> {
+    pub fn push(&mut self, target_id: &TargetId, forest: &ProcessForest) -> TargetResult<()> {
         match target_id {
             TargetId::System => {
                 self.with_system = true;
@@ -211,7 +248,7 @@ impl<'a> TargetContainer<'a> {
         Ok(())
     }
 
-    pub fn push_all(&mut self, target_ids: &[TargetId]) -> Result<(), TargetError> {
+    pub fn push_all(&mut self, target_ids: &[TargetId]) -> TargetResult<()> {
         let forest = {
             let mut forest = ProcessForest::new();
             forest.refresh().map_err(TargetError::ProcessError)?;
@@ -222,5 +259,23 @@ impl<'a> TargetContainer<'a> {
             self.push(target_id, &forest)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_basename() {
+        assert_eq!(
+            "file.pid",
+            super::basename(PathBuf::from("/a/file.pid"), false).unwrap()
+        );
+        assert_eq!(
+            "file",
+            super::basename(PathBuf::from("/a/file.pid"), true).unwrap()
+        );
     }
 }

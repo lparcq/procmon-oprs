@@ -30,6 +30,14 @@ use super::Process;
 
 use super::{FormattedMetric, MetricId};
 
+#[derive(thiserror::Error, Debug)]
+pub enum StatError {
+    #[error("cannot get kernel statistics: {0}")]
+    KernelStats(String),
+}
+
+pub type StatResult<T> = Result<T, StatError>;
+
 /// Elapsed time since a start time
 /// Since the boot time is in seconds since the Epoch, no need to be more precise than the second.
 fn elapsed_seconds_since(start_time: u64) -> u64 {
@@ -74,9 +82,10 @@ pub struct SystemConf {
 }
 
 impl SystemConf {
-    pub fn new() -> anyhow::Result<SystemConf> {
+    pub fn new() -> StatResult<SystemConf> {
         let ticks_per_second = procfs::ticks_per_second();
-        let kstat = KernelStats::current()?;
+        let kstat =
+            KernelStats::current().map_err(|err| StatError::KernelStats(format!("{:?}", err)))?;
         let page_size = procfs::page_size();
 
         Ok(SystemConf {

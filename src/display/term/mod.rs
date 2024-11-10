@@ -34,8 +34,9 @@ use termion::{
 use crate::{
     clock::Timer,
     console::{is_tty, BuiltinTheme, Event, EventChannel, Key},
-    format::human_duration,
-    process::{Aggregation, Collector, FormattedMetric, LimitKind, ProcessSamples},
+    process::{
+        format::human_duration, Aggregation, Collector, FormattedMetric, LimitKind, ProcessSamples,
+    },
 };
 use num_traits::{ConstZero, Zero};
 

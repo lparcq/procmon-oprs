@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020  Laurent Pelecq
+// Copyright (C) 2020-2024  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -28,9 +28,9 @@ use std::result;
 use std::str::FromStr;
 use strum::IntoEnumIterator;
 
-use crate::{
+use super::{
     format::{self, Formatter},
-    process::{Aggregation, AggregationSet, MetricId},
+    Aggregation, AggregationSet, MetricId,
 };
 
 const KILO: usize = 1000;
@@ -190,9 +190,7 @@ pub fn parse_metric_spec(
 #[cfg(test)]
 mod tests {
 
-    use super::{parse_metric_spec, parse_size, ParseError};
-    use crate::agg::Aggregation;
-    use crate::metrics::MetricId;
+    use super::{parse_metric_spec, parse_size, Aggregation, MetricId, ParseError};
 
     #[test]
     fn test_wo_raw_w_max() {

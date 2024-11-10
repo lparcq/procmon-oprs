@@ -15,11 +15,12 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use light_ini::{IniHandler, IniParser};
-use std::path::PathBuf;
-use std::str::FromStr;
+use std::{path::PathBuf, str::FromStr};
 use strum_macros::{EnumString, IntoStaticStr};
 
-pub use crate::{console::BuiltinTheme, parsers::parse_size};
+use crate::process::parsers::parse_size;
+
+pub use crate::console::BuiltinTheme;
 
 pub const DEFAULT_DELAY: f64 = 5.0;
 pub const LOG_FILE_NAME: &str = "settings";

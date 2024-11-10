@@ -22,6 +22,12 @@ mod metrics;
 mod stat;
 mod targets;
 
+#[cfg(test)]
+mod mocks;
+
+pub mod format;
+pub mod parsers;
+
 pub(crate) use self::agg::{Aggregation, AggregationSet};
 pub(crate) use self::collector::{Collector, LimitKind, ProcessSamples};
 pub(crate) use self::forest::{process_name, Forest, Process, ProcessError};

@@ -34,22 +34,15 @@ mod clock;
 mod console;
 mod display;
 mod export;
-mod format;
-mod parsers;
 mod process;
 mod sighdr;
-mod utils;
-
-#[cfg(test)]
-mod mocks;
 
 use application::Application;
 use cfg::{
     BuiltinTheme, DisplayMode, ExportType, LoggingLevel, LoggingSettings, MetricFormat,
     LOG_FILE_NAME,
 };
-use parsers::parse_size;
-use process::TargetId;
+use process::{parsers::parse_size, TargetId};
 
 const APP_NAME: &str = "oprs";
 

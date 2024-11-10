@@ -14,16 +14,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::format;
-
 use super::{
-    Aggregation, Collector, Forest, FormattedMetric, Limit, ProcessStat, SystemConf, SystemStat,
-    TargetContainer, TargetError, TargetId,
+    forest::ProcessResult, format, Aggregation, Collector, Forest, FormattedMetric, Limit,
+    ProcessStat, SystemConf, SystemStat, TargetContainer, TargetError, TargetId,
 };
 
 /// A process manager must define which processes must be followed.
 pub trait ProcessManager {
-    fn refresh(&mut self, collector: &mut Collector) -> anyhow::Result<bool>;
+    fn refresh(&mut self, collector: &mut Collector) -> ProcessResult<bool>;
 }
 
 /// A Process manager that process a fixed list of targets.
@@ -49,7 +47,7 @@ impl<'s> FlatProcessManager<'s> {
 }
 
 impl<'s> ProcessManager for FlatProcessManager<'s> {
-    fn refresh(&mut self, collector: &mut Collector) -> anyhow::Result<bool> {
+    fn refresh(&mut self, collector: &mut Collector) -> ProcessResult<bool> {
         let targets_updated = self.targets.refresh();
         self.targets.collect(collector);
         Ok(targets_updated)
@@ -77,7 +75,7 @@ impl<'s> ForestProcessManager<'s> {
 }
 
 impl<'s> ProcessManager for ForestProcessManager<'s> {
-    fn refresh(&mut self, collector: &mut Collector) -> anyhow::Result<bool> {
+    fn refresh(&mut self, collector: &mut Collector) -> ProcessResult<bool> {
         let mut system = SystemStat::new(self.system_conf);
         let system_info = format!(
             "[{} cores -- {}]",

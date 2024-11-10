@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020  Laurent Pelecq
+// Copyright (C) 2020-2024  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -20,12 +20,11 @@ use std::hash::Hash;
 use std::result;
 use strum_macros::{EnumIter, EnumMessage, EnumString, IntoStaticStr};
 
-use crate::{
+use super::{
     format::{self, Formatter},
     parsers::parse_metric_spec,
+    Aggregation, AggregationSet,
 };
-
-use super::{Aggregation, AggregationSet};
 
 const SHORT_NAME_MAX_LEN: usize = 10;
 

@@ -29,7 +29,8 @@ pub use procfs::{
 };
 
 #[cfg(test)]
-pub(crate) use crate::mocks::procfs::{
+pub(crate) use super::mocks::procfs::{
+    self,
     process::{self, all_processes, Process},
     ProcResult,
 };
@@ -85,6 +86,7 @@ pub struct ProcessInfo {
     start_time: u64,
     name: String,
     process: Process,
+    is_kernel: bool,
     hidden: bool,
 }
 
@@ -94,13 +96,15 @@ impl ProcessInfo {
         let stat = process
             .stat()
             .map_err(|_| ProcessError::UnknownProcess(pid))?;
-        let name = exe_name(&process).unwrap_or(command_name(&stat));
+        let name = exe_name(&process);
+        let is_kernel = name.is_some();
         Ok(Self {
             pid: stat.pid,
             parent_pid: stat.ppid,
             start_time: stat.starttime,
-            name,
+            name: name.unwrap_or(command_name(&stat)),
             process,
+            is_kernel,
             hidden: true,
         })
     }
@@ -119,6 +123,14 @@ impl ProcessInfo {
 
     pub fn process(&self) -> &Process {
         &self.process
+    }
+
+    /// Whether this is a kernel process.
+    ///
+    /// Assuming that processes without command line and exe is a kernel process.
+    /// On Linux, kernel processes are children of process 2.
+    pub fn is_kernel(&self) -> bool {
+        self.is_kernel
     }
 
     #[cfg(test)]
@@ -483,8 +495,11 @@ mod tests {
     use rand::seq::SliceRandom;
     use std::collections::HashMap;
 
-    use super::*;
-    use crate::mocks::procfs::{reparent_process, ProcessBuilder};
+    use super::{
+        pid_t,
+        procfs::{reparent_process, ProcessBuilder},
+        Forest, Process, ProcessInfo,
+    };
 
     fn sorted<T, I>(input: I) -> Vec<T>
     where
