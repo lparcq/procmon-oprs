@@ -19,17 +19,19 @@ use std::{
     io::Write,
     time::{Duration, SystemTime},
 };
-use strum::{EnumMessage, IntoEnumIterator};
+use strum::{EnumMessage, IntoEnumIterator, VariantArray};
 
 use crate::{
     cfg::{DisplayMode, ExportSettings, ExportType, MetricFormat, Settings},
     clock::{DriftMonitor, Timer},
     console::BuiltinTheme,
-    display::{DisplayDevice, NullDevice, PauseStatus, TerminalDevice, TextDevice},
+    display::{
+        Action, DisplayDevice, FilterLoop, NullDevice, PauseStatus, TerminalDevice, TextDevice,
+    },
     export::{CsvExporter, Exporter, RrdExporter},
     process::{
         Collector, FlatProcessManager, ForestProcessManager, FormattedMetric, MetricDataType,
-        MetricId, MetricNamesParser, ProcessManager, SystemConf, TargetId,
+        MetricId, MetricNamesParser, ProcessFilter, ProcessManager, SystemConf, TargetId,
     },
     sighdr::SignalHandler,
 };
@@ -115,11 +117,22 @@ impl<'s> Application<'s> {
 
     pub fn run(&self, target_ids: &[TargetId], system_conf: &'_ SystemConf) -> anyhow::Result<()> {
         info!("starting");
+        let filters = {
+            let filters = ProcessFilter::VARIANTS
+                .iter()
+                .map(|v| v.into())
+                .collect::<Vec<&'static str>>();
+            let current_filter = ProcessFilter::VARIANTS
+                .iter()
+                .position(|f| matches!(f, ProcessFilter::UserLand))
+                .unwrap_or(0);
+            FilterLoop::new(&filters, current_filter)
+        };
 
         if target_ids.is_empty() {
             match self.display_mode {
                 DisplayMode::Terminal => {
-                    let device = Box::new(TerminalDevice::new(self.every, self.theme)?);
+                    let device = Box::new(TerminalDevice::new(self.every, self.theme, filters)?);
                     let mut tmgt = ForestProcessManager::new(system_conf, &self.metrics)?;
                     self.run_loop(&mut tmgt, device, true)?;
                 }
@@ -130,7 +143,7 @@ impl<'s> Application<'s> {
             let device: Box<dyn DisplayDevice> = match self.display_mode {
                 DisplayMode::Terminal => {
                     is_interactive = true;
-                    Box::new(TerminalDevice::new(self.every, self.theme)?)
+                    Box::new(TerminalDevice::new(self.every, self.theme, filters)?)
                 }
                 DisplayMode::Text => Box::new(TextDevice::new()),
                 _ => Box::new(NullDevice::new()),
@@ -191,8 +204,12 @@ impl<'s> Application<'s> {
                 }
             }
             if is_interactive {
-                if let PauseStatus::Quit = device.pause(&mut timer)? {
-                    break;
+                if let PauseStatus::Action(action) = device.pause(&mut timer)? {
+                    match action {
+                        Action::Quit => break,
+                        Action::Filter(n) => tmgt.set_filter(ProcessFilter::VARIANTS[n]),
+                        _ => (),
+                    }
                 }
             } else {
                 let mut remaining = Some(self.every);

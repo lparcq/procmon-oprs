@@ -25,7 +25,7 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
     Terminal,
 };
-use std::{cmp::Ordering, io, time::Duration};
+use std::{borrow::Cow, cmp::Ordering, io, time::Duration};
 use termion::{
     raw::{IntoRawMode, RawTerminal},
     screen::{AlternateScreen, IntoAlternateScreen},
@@ -227,14 +227,17 @@ const KEY_GOTO_TBL_LEFT: Key = Key::Home;
 const KEY_GOTO_TBL_RIGHT: Key = Key::End;
 const KEY_GOTO_TBL_TOP: Key = Key::CtrlHome;
 const KEY_LIMITS: Key = Key::Char('l');
+const KEY_NEXT_FILTER: Key = Key::Char('F');
 const KEY_QUIT: Key = Key::Esc;
 const KEY_SLOWER: Key = Key::Char(KEY_SLOWER_CHAR);
 const KEY_SLOWER_CHAR: char = '-';
 
-/// Action
+/// User action
+#[derive(Clone, Copy, Debug)]
 pub enum Action {
     None,
     DivideTimeout(u16),
+    Filter(usize),
     Focus,
     GotoTableBottom,
     GotoTableLeft,
@@ -251,69 +254,33 @@ pub enum Action {
     ToggleLimits,
 }
 
-impl From<Event> for Action {
-    fn from(evt: Event) -> Self {
-        match evt {
-            Event::Key(KEY_FASTER) => Action::DivideTimeout(2),
-            Event::Key(KEY_FOCUS) => Action::Focus,
-            Event::Key(KEY_GOTO_TBL_BOTTOM) => Action::GotoTableBottom,
-            Event::Key(KEY_GOTO_TBL_LEFT) => Action::GotoTableLeft,
-            Event::Key(KEY_GOTO_TBL_RIGHT) => Action::GotoTableRight,
-            Event::Key(KEY_GOTO_TBL_TOP) => Action::GotoTableTop,
-            Event::Key(KEY_SLOWER) => Action::MultiplyTimeout(2),
-            Event::Key(KEY_QUIT) | Event::Key(Key::Ctrl('c')) => Action::Quit,
-            Event::Key(Key::PageDown) => Action::ScrollDown,
-            Event::Key(Key::PageUp) => Action::ScrollUp,
-            Event::Key(Key::Down) => Action::SelectDown,
-            Event::Key(Key::Left) => Action::ScrollLeft,
-            Event::Key(Key::Right) => Action::ScrollRight,
-            Event::Key(Key::Up) => Action::SelectUp,
-            Event::Key(KEY_LIMITS) => Action::ToggleLimits,
-            _ => Action::None,
+/// A list of filters with a current value.
+pub struct FilterLoop {
+    /// Filter names
+    names: Vec<&'static str>,
+    /// Current filter
+    current: usize,
+}
+
+impl FilterLoop {
+    pub fn new(names: &[&'static str], current: usize) -> Self {
+        Self {
+            names: names.to_vec(),
+            current,
         }
     }
-}
 
-fn key_name(key: Key) -> String {
-    match key {
-        Key::Backspace => "⌫".to_string(),
-        Key::Left => "←".to_string(),
-        Key::Right => "→".to_string(),
-        Key::Up => "↑".to_string(),
-        Key::Down => "↓".to_string(),
-        Key::PageUp => "⇞".to_string(),
-        Key::PageDown => "⇟".to_string(),
-        Key::Home => "⇱".to_string(),
-        Key::CtrlHome => "^⇱".to_string(),
-        Key::End => "⇲".to_string(),
-        Key::CtrlEnd => "^⇲".to_string(),
-        Key::BackTab => "⇤".to_string(),
-        Key::Delete => "⌧".to_string(),
-        Key::Insert => "Ins".to_string(),
-        Key::F(num) => format!("F{num}"),
-        Key::Char('\t') => "⇥".to_string(),
-        Key::Char(ch) => format!("{ch}"),
-        Key::Alt(ch) => format!("M-{ch}"),
-        Key::Ctrl(ch) => format!("C-{ch}"),
-        Key::Null => "\\0".to_string(),
-        KEY_QUIT => "Esc".to_string(),
-        _ => "?".to_string(),
+    fn current(&self) -> &'static str {
+        self.names[self.current]
     }
-}
 
-fn menu_paragraph(entries: &[(String, &'static str)]) -> Paragraph<'static> {
-    let mut spans = Vec::new();
-    let mut sep = "";
-    entries.iter().for_each(|(key, action)| {
-        spans.push(Span::raw(sep));
-        spans.push(Span::styled(
-            key.to_string(),
-            Style::default().add_modifier(Modifier::REVERSED),
-        ));
-        spans.push(Span::raw(format!(" {action}")));
-        sep = "  ";
-    });
-    Paragraph::new(Line::from(spans)).alignment(Alignment::Left)
+    fn next(&mut self) -> usize {
+        self.current += 1;
+        if self.current >= self.names.len() {
+            self.current = 0;
+        }
+        self.current
+    }
 }
 
 /// Navigation arrows dependending on table overflows
@@ -421,10 +388,73 @@ impl MaxLength {
     }
 }
 
+struct MenuEntry {
+    key: String,
+    label: String,
+}
+
+impl MenuEntry {
+    fn new(key: String, label: Cow<str>) -> Self {
+        let label = match label {
+            Cow::Borrowed(s) => s.to_string(),
+            Cow::Owned(s) => s,
+        };
+        Self { key, label }
+    }
+
+    fn with_key(key: Key, label: Cow<str>) -> Self {
+        Self::new(MenuEntry::key_name(key), label)
+    }
+
+    fn key_name(key: Key) -> String {
+        match key {
+            Key::Backspace => "⌫".to_string(),
+            Key::Left => "←".to_string(),
+            Key::Right => "→".to_string(),
+            Key::Up => "↑".to_string(),
+            Key::Down => "↓".to_string(),
+            Key::PageUp => "⇞".to_string(),
+            Key::PageDown => "⇟".to_string(),
+            Key::Home => "⇱".to_string(),
+            Key::CtrlHome => "^⇱".to_string(),
+            Key::End => "⇲".to_string(),
+            Key::CtrlEnd => "^⇲".to_string(),
+            Key::BackTab => "⇤".to_string(),
+            Key::Delete => "⌧".to_string(),
+            Key::Insert => "Ins".to_string(),
+            Key::F(num) => format!("F{num}"),
+            Key::Char('\t') => "⇥".to_string(),
+            Key::Char(ch) => format!("{ch}"),
+            Key::Alt(ch) => format!("M-{ch}"),
+            Key::Ctrl(ch) => format!("C-{ch}"),
+            Key::Null => "\\0".to_string(),
+            KEY_QUIT => "Esc".to_string(),
+            _ => "?".to_string(),
+        }
+    }
+
+    fn paragraph(entries: &[MenuEntry]) -> Paragraph<'static> {
+        let mut spans = Vec::new();
+        let mut sep = "";
+        entries.iter().for_each(|entry| {
+            spans.push(Span::raw(sep));
+            spans.push(Span::styled(
+                entry.key.to_string(),
+                Style::default().add_modifier(Modifier::REVERSED),
+            ));
+            spans.push(Span::raw(format!(" {}", entry.label)));
+            sep = "  ";
+        });
+        Paragraph::new(Line::from(spans)).alignment(Alignment::Left)
+    }
+}
+
 /// Print on standard output as a table
 pub struct TerminalDevice<'t> {
     /// Interval to update the screen
     every: Duration,
+    /// Filters
+    filters: FilterLoop,
     /// Channel for input events
     events: EventChannel,
     /// Terminal
@@ -452,13 +482,18 @@ pub struct TerminalDevice<'t> {
 }
 
 impl<'t> TerminalDevice<'t> {
-    pub fn new(every: Duration, theme: Option<BuiltinTheme>) -> anyhow::Result<Self> {
+    pub fn new(
+        every: Duration,
+        theme: Option<BuiltinTheme>,
+        filters: FilterLoop,
+    ) -> anyhow::Result<Self> {
         let screen = io::stdout().into_raw_mode()?.into_alternate_screen()?;
         let backend = TermionBackend::new(Box::new(screen));
         let terminal = Terminal::new(backend)?;
 
         Ok(TerminalDevice {
             every,
+            filters,
             events: EventChannel::new(),
             terminal,
             table_offset: Default::default(),
@@ -486,21 +521,28 @@ impl<'t> TerminalDevice<'t> {
     }
 
     /// The main menu
-    fn menu(&self) -> Vec<(String, &'static str)> {
-        let display_limits = match self.display_limits {
+    fn menu(&self) -> Vec<MenuEntry> {
+        let display_limits = Cow::Borrowed(match self.display_limits {
             LimitKind::None => "Limit:Off",
             LimitKind::Soft => "Limit:Soft",
             LimitKind::Hard => "Limit:Hard",
-        };
+        });
+        let key_up_down = format!(
+            "{}/{}",
+            MenuEntry::key_name(Key::Up),
+            MenuEntry::key_name(Key::Down)
+        );
+        let key_fast_slow = format!("{KEY_FASTER_CHAR}/{KEY_SLOWER_CHAR}");
         vec![
-            (key_name(KEY_QUIT), "Quit"),
-            (
-                format!("{}/{}", key_name(Key::Up), key_name(Key::Down)),
-                "Select",
+            MenuEntry::with_key(KEY_QUIT, Cow::Borrowed("Quit")),
+            MenuEntry::new(key_up_down, Cow::Borrowed("Select")),
+            MenuEntry::new(key_fast_slow, Cow::Borrowed("Speed")),
+            MenuEntry::with_key(KEY_LIMITS, display_limits),
+            MenuEntry::with_key(KEY_FOCUS, Cow::Borrowed("Focus")),
+            MenuEntry::with_key(
+                KEY_NEXT_FILTER,
+                Cow::Owned(format!("Filter:{}", self.filters.current())),
             ),
-            (format!("{KEY_FASTER_CHAR}/{KEY_SLOWER_CHAR}"), "Speed"),
-            (key_name(KEY_LIMITS), display_limits),
-            (key_name(KEY_FOCUS), "Focus"),
         ]
     }
 
@@ -552,7 +594,7 @@ impl<'t> TerminalDevice<'t> {
                 .column_spacing(column_spacing);
             frame.render_widget(table, rects[0]);
 
-            let menu = menu_paragraph(&menu_entries);
+            let menu = MenuEntry::paragraph(&menu_entries);
             frame.render_widget(menu, rects[1]);
             body_height = inner_area.height - headers_height;
         })?;
@@ -562,13 +604,34 @@ impl<'t> TerminalDevice<'t> {
         Ok(())
     }
 
+    fn action_from_event(&mut self, evt: Event) -> Action {
+        match evt {
+            Event::Key(KEY_FASTER) => Action::DivideTimeout(2),
+            Event::Key(KEY_FOCUS) => Action::Focus,
+            Event::Key(KEY_GOTO_TBL_BOTTOM) => Action::GotoTableBottom,
+            Event::Key(KEY_GOTO_TBL_LEFT) => Action::GotoTableLeft,
+            Event::Key(KEY_GOTO_TBL_RIGHT) => Action::GotoTableRight,
+            Event::Key(KEY_GOTO_TBL_TOP) => Action::GotoTableTop,
+            Event::Key(KEY_NEXT_FILTER) => Action::Filter(self.filters.next()),
+            Event::Key(KEY_SLOWER) => Action::MultiplyTimeout(2),
+            Event::Key(KEY_QUIT) | Event::Key(Key::Ctrl('c')) => Action::Quit,
+            Event::Key(Key::PageDown) => Action::ScrollDown,
+            Event::Key(Key::PageUp) => Action::ScrollUp,
+            Event::Key(Key::Down) => Action::SelectDown,
+            Event::Key(Key::Left) => Action::ScrollLeft,
+            Event::Key(Key::Right) => Action::ScrollRight,
+            Event::Key(Key::Up) => Action::SelectUp,
+            Event::Key(KEY_LIMITS) => Action::ToggleLimits,
+            _ => Action::None,
+        }
+    }
+
     /// Execute an interactive action.
-    fn react(&mut self, action: Action, timer: &mut Timer) -> bool {
+    fn react(&mut self, action: Action, timer: &mut Timer) {
         const MAX_TIMEOUT_SECS: u64 = 24 * 3_600; // 24 hours
         const MIN_TIMEOUT_MSECS: u128 = 1;
         match action {
-            Action::None => {}
-            Action::Quit => return false,
+            Action::Filter(_) | Action::None | Action::Quit => {}
             Action::MultiplyTimeout(factor) => {
                 let delay = timer.get_delay();
                 if delay.as_secs() * (factor as u64) < MAX_TIMEOUT_SECS {
@@ -625,7 +688,6 @@ impl<'t> TerminalDevice<'t> {
             Action::GotoTableLeft => self.table_offset.horizontal_home(),
             Action::GotoTableRight => self.table_offset.horizontal_end(),
         }
-        true
     }
 
     /// Make the row of headers.
@@ -674,14 +736,14 @@ impl<'t> TerminalDevice<'t> {
     ) -> Vec<Cell<'p>> {
         let column_count = cws.len();
         let mut row = Vec::with_capacity(column_count);
-        let mut col_index = 0;
-        cws[col_index].check(ps.name());
-        col_index += 1;
         let name_style = styles.name_style(is_selected);
         let name = {
             let name = ps.name();
             format!("{:>width$}", name, width = indent + name.len())
         };
+        let mut col_index = 0;
+        cws[col_index].check(&name);
+        col_index += 1;
         row.push(Cell::from(name).style(name_style));
         let pid = format!("{}", ps.pid());
         cws[col_index].check(&pid);
@@ -859,12 +921,9 @@ impl<'t> DisplayDevice for TerminalDevice<'t> {
     fn pause(&mut self, timer: &mut Timer) -> anyhow::Result<PauseStatus> {
         if let Some(timeout) = timer.remaining() {
             if let Some(evt) = self.events.receive_timeout(timeout)? {
-                let action = Action::from(evt);
-                if !self.react(action, timer) {
-                    Ok(PauseStatus::Quit)
-                } else {
-                    Ok(PauseStatus::Interrupted)
-                }
+                let action = self.action_from_event(evt);
+                self.react(action, timer);
+                Ok(PauseStatus::Action(action))
             } else {
                 Ok(PauseStatus::TimeOut)
             }

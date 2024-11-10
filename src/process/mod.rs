@@ -30,8 +30,10 @@ pub mod parsers;
 
 pub(crate) use self::agg::{Aggregation, AggregationSet};
 pub(crate) use self::collector::{Collector, LimitKind, ProcessSamples};
-pub(crate) use self::forest::{process_name, Forest, Process, ProcessError};
-pub(crate) use self::managers::{FlatProcessManager, ForestProcessManager, ProcessManager};
+pub(crate) use self::forest::{process_name, Forest, Process, ProcessError, ProcessInfo};
+pub(crate) use self::managers::{
+    FlatProcessManager, ForestProcessManager, ProcessFilter, ProcessManager,
+};
 pub(crate) use self::metrics::{FormattedMetric, MetricDataType, MetricId, MetricNamesParser};
 pub(crate) use self::stat::{Limit, LimitValue, ProcessStat, SystemConf, SystemStat};
 pub(crate) use self::targets::{TargetContainer, TargetError, TargetId};

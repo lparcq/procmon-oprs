@@ -97,7 +97,7 @@ impl ProcessInfo {
             .stat()
             .map_err(|_| ProcessError::UnknownProcess(pid))?;
         let name = exe_name(&process);
-        let is_kernel = name.is_some();
+        let is_kernel = name.is_none();
         Ok(Self {
             pid: stat.pid,
             parent_pid: stat.ppid,
@@ -133,13 +133,11 @@ impl ProcessInfo {
         self.is_kernel
     }
 
-    #[cfg(test)]
     pub fn hidden(&self) -> bool {
         self.hidden
     }
 
-    #[cfg(test)]
-    pub fn _hide(&mut self) {
+    pub fn hide(&mut self) {
         self.hidden = true;
     }
 
@@ -186,8 +184,13 @@ impl<'a, 'b> Iterator for Descendants<'a, 'b> {
 #[derive(Debug)]
 /// State used during refresh
 struct RefreshState {
+    /// Map of processes that have been found but not selected.
     processes: BTreeMap<pid_t, ProcessInfo>,
+    /// Set of nodes to remove at the end of the refresh.
     old_nodes: BTreeSet<NodeId>,
+    /// Set of PID of parents of selected nodes.
+    parent_pids: BTreeSet<pid_t>,
+    /// The forest is changed if there are new processes or processes that die.
     changed: bool,
 }
 
@@ -195,12 +198,14 @@ impl RefreshState {
     fn new(arena: &Arena<ProcessInfo>) -> Self {
         Self {
             processes: BTreeMap::new(),
-            old_nodes: BTreeSet::from_iter(
-                arena
-                    .iter()
-                    .filter(|node| !node.is_removed())
-                    .map(|node| arena.get_node_id(node).unwrap()),
-            ),
+            old_nodes: BTreeSet::from_iter(arena.iter().filter_map(|node| {
+                if node.is_removed() {
+                    None
+                } else {
+                    Some(arena.get_node_id(node).unwrap())
+                }
+            })),
+            parent_pids: BTreeSet::new(),
             changed: false,
         }
     }
@@ -297,7 +302,7 @@ impl Forest {
     }
 
     /// Add a process in the tree
-    fn add_node(&mut self, state: &mut RefreshState, info: ProcessInfo) {
+    fn add_node(&mut self, state: &mut RefreshState, info: ProcessInfo) -> NodeId {
         let pid = info.pid();
         let parent_pid = info.parent_pid();
 
@@ -309,6 +314,7 @@ impl Forest {
                     let new_parent_pid = info.parent_pid();
                     if prev_info.parent_pid() == new_parent_pid {
                         state.remove_old_node(prev_node_id);
+                        *prev_node_id
                     } else {
                         // Same process but reparented. Insert the new info where the
                         // previous was by making the new the parent of the previous one
@@ -333,6 +339,7 @@ impl Forest {
                         log::debug!("indextree[{}]: {prev_node_id}.remove()", std::line!());
                         prev_node_id.remove(&mut self.arena);
                         self.attach_node(state, node_id, pid, new_parent_pid);
+                        node_id
                     }
                 } else {
                     // Process ID has been reused. If the process had children,
@@ -342,12 +349,14 @@ impl Forest {
                     let node_id = self.arena.new_node(info);
                     log::debug!("indextree[{}]: new_node {node_id}", std::line!());
                     self.attach_node(state, node_id, pid, parent_pid);
+                    node_id
                 }
             }
             None => {
                 let node_id = self.arena.new_node(info);
                 log::debug!("indextree[{}]: new_node {node_id}", std::line!());
                 self.attach_node(state, node_id, pid, parent_pid);
+                node_id
             }
         }
     }
@@ -368,14 +377,22 @@ impl Forest {
         }
     }
 
-    /// Transfer a process and it's parents in the forest.
+    /// Transfer a process and its parents in the forest.
     ///
     /// It takes processes in the first list.
     fn transfer_ascendants(&mut self, state: &mut RefreshState, pid: pid_t) {
         let mut pid = pid;
-        while let Some(info) = state.processes.remove(&pid) {
-            pid = info.parent_pid();
-            self.add_node(state, info);
+        loop {
+            match state.processes.remove(&pid) {
+                Some(info) => {
+                    pid = info.parent_pid();
+                    self.add_node(state, info);
+                }
+                None => {
+                    state.parent_pids.insert(pid);
+                    break;
+                }
+            }
         }
     }
 
@@ -401,7 +418,7 @@ impl Forest {
                 Some(_) => {
                     // If process has children, just hide it.
                     if let Some(node) = self.arena.get_mut(node_id) {
-                        node.get_mut()._hide();
+                        node.get_mut().hide();
                     }
                 }
                 None => {
@@ -440,6 +457,20 @@ impl Forest {
         self.iter_roots().map(|p| p.pid()).collect::<Vec<pid_t>>()
     }
 
+    /// Hide all processes
+    fn hide_all_processes(&mut self) {
+        self.arena
+            .iter_mut()
+            .filter_map(|node| {
+                if node.is_removed() {
+                    None
+                } else {
+                    Some(node.get_mut())
+                }
+            })
+            .for_each(|pinfo| pinfo.hide());
+    }
+
     /// Refreshes the forest and return if it has changed.
     pub fn refresh_from<I, P>(&mut self, processes: I, predicate: P) -> bool
     where
@@ -447,16 +478,22 @@ impl Forest {
         P: Fn(&ProcessInfo) -> bool,
     {
         log::debug!("refresh");
+        self.hide_all_processes();
         let mut state = RefreshState::new(&self.arena);
         for process in processes {
             let pid = process.pid();
             let is_alive = process.is_alive();
             match ProcessInfo::new(process) {
-                Ok(mut info) => {
-                    if is_alive && predicate(&info) {
-                        info.show();
+                Ok(info) => {
+                    let is_visible = is_alive && predicate(&info);
+                    if is_visible || state.parent_pids.contains(&pid) {
                         self.transfer_ascendants(&mut state, info.parent_pid());
-                        self.add_node(&mut state, info);
+                        let node_id = self.add_node(&mut state, info);
+                        if is_visible {
+                            self.arena
+                                .get_mut(node_id)
+                                .map(|node| node.get_mut().show());
+                        }
                     } else {
                         state.processes.insert(pid, info);
                     }
@@ -493,7 +530,7 @@ impl Forest {
 mod tests {
 
     use rand::seq::SliceRandom;
-    use std::collections::HashMap;
+    use std::collections::{BTreeSet, HashMap};
 
     use super::{
         pid_t,
@@ -745,20 +782,50 @@ mod tests {
     /// |   \_4
     /// \_5_6_7
     fn test_refresh_different_predicates() {
+        pub fn test_predicate<I>(
+            forest: &mut Forest,
+            stage: &str,
+            processes: I,
+            all_pids: &[pid_t],
+            selected_pids: &[pid_t],
+        ) where
+            I: Iterator<Item = Process>,
+        {
+            let pset = BTreeSet::from_iter(selected_pids.into_iter());
+            forest.refresh_from(processes, |p| pset.contains(&p.pid()));
+            for (n, pid) in all_pids.iter().enumerate() {
+                let is_selected = pset.contains(pid);
+                let is_hidden = match forest.get_process(*pid) {
+                    Some(p) => p.hidden(),
+                    None => true,
+                };
+                assert_eq!(
+                    is_selected, !is_hidden,
+                    "{stage}: process #{n} pid:{pid} selected:{is_selected} hidden:{is_hidden}"
+                );
+            }
+        }
+
         let mut factory = ProcessFactory::default();
         let processes1 = factory.with_parent_pids(&[(4, Some(2)), (5, Some(0))], 8);
         let processes2 = processes1.clone();
-        let proc3_pid = processes1[3].pid();
-        let proc4_pid = processes1[4].pid();
+        let pids = processes1.iter().map(Process::pid).collect::<Vec<pid_t>>();
 
         let mut forest = Forest::new();
-        forest.refresh_from(shuffle(processes1).drain(..), |p| p.pid() == proc3_pid);
-        assert!(forest.get_process(proc3_pid).is_some());
-        assert!(forest.get_process(proc4_pid).is_none());
-
-        forest.refresh_from(shuffle(processes2).drain(..), |p| p.pid() == proc4_pid);
-        assert!(forest.get_process(proc3_pid).is_none());
-        assert!(forest.get_process(proc4_pid).is_some());
+        test_predicate(
+            &mut forest,
+            "loop1",
+            shuffle(processes1).drain(..),
+            &pids,
+            &[pids[2], pids[3], pids[6], pids[7]],
+        );
+        test_predicate(
+            &mut forest,
+            "loop2",
+            shuffle(processes2).drain(..),
+            &pids,
+            &[pids[3], pids[6], pids[7]],
+        );
     }
 
     #[test]

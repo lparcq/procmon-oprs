@@ -14,13 +14,24 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use strum_macros::{IntoStaticStr, VariantArray};
+
 use super::{
     forest::ProcessResult, format, Aggregation, Collector, Forest, FormattedMetric, Limit,
-    ProcessStat, SystemConf, SystemStat, TargetContainer, TargetError, TargetId,
+    ProcessInfo, ProcessStat, SystemConf, SystemStat, TargetContainer, TargetError, TargetId,
 };
+
+/// High-level filter on processes
+#[derive(Clone, Copy, Debug, IntoStaticStr, VariantArray)]
+pub enum ProcessFilter {
+    All,
+    UserLand,
+}
 
 /// A process manager must define which processes must be followed.
 pub trait ProcessManager {
+    fn set_filter(&mut self, _filter: ProcessFilter) {}
+
     fn refresh(&mut self, collector: &mut Collector) -> ProcessResult<bool>;
 }
 
@@ -59,6 +70,7 @@ pub struct ForestProcessManager<'s> {
     system_conf: &'s SystemConf,
     system_limits: Vec<Option<Limit>>,
     forest: Forest,
+    filter: ProcessFilter,
 }
 
 impl<'s> ForestProcessManager<'s> {
@@ -70,11 +82,24 @@ impl<'s> ForestProcessManager<'s> {
             system_conf,
             system_limits: vec![None; metrics.len()],
             forest: Forest::new(),
+            filter: ProcessFilter::UserLand,
         })
+    }
+
+    fn filter_all(_pi: &ProcessInfo) -> bool {
+        true
+    }
+
+    fn filter_user_land(pi: &ProcessInfo) -> bool {
+        !pi.is_kernel()
     }
 }
 
 impl<'s> ProcessManager for ForestProcessManager<'s> {
+    fn set_filter(&mut self, filter: ProcessFilter) {
+        self.filter = filter;
+    }
+
     fn refresh(&mut self, collector: &mut Collector) -> ProcessResult<bool> {
         let mut system = SystemStat::new(self.system_conf);
         let system_info = format!(
@@ -84,6 +109,7 @@ impl<'s> ProcessManager for ForestProcessManager<'s> {
                 .map(format::size)
                 .unwrap_or("?".to_string())
         );
+        collector.rewind();
         collector.collect_system(&mut system);
         collector.record(
             &system_info,
@@ -92,16 +118,22 @@ impl<'s> ProcessManager for ForestProcessManager<'s> {
             &system.extract_metrics(collector.metrics()),
             &self.system_limits,
         );
-        self.forest.refresh()?;
+        self.forest.refresh_if(match self.filter {
+            ProcessFilter::All => ForestProcessManager::filter_all,
+            ProcessFilter::UserLand => ForestProcessManager::filter_user_land,
+        })?;
         for root_pid in self.forest.root_pids() {
-            self.forest.descendants(root_pid)?.for_each(|proc_info| {
-                let proc_stat = ProcessStat::with_parent_pid(
-                    proc_info.process(),
-                    proc_info.parent_pid(),
-                    self.system_conf,
-                );
-                collector.collect(proc_info.name(), proc_stat);
-            });
+            self.forest
+                .descendants(root_pid)?
+                .filter(|pinfo| !pinfo.hidden())
+                .for_each(|pinfo| {
+                    let proc_stat = ProcessStat::with_parent_pid(
+                        pinfo.process(),
+                        pinfo.parent_pid(),
+                        self.system_conf,
+                    );
+                    collector.collect(pinfo.name(), proc_stat);
+                });
         }
         Ok(false)
     }

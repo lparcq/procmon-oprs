@@ -26,9 +26,8 @@ pub mod term;
 pub mod text;
 
 pub enum PauseStatus {
-    Quit,
     TimeOut,
-    Interrupted,
+    Action(Action),
 }
 
 pub trait DisplayDevice {
@@ -47,6 +46,6 @@ pub trait DisplayDevice {
     }
 }
 
-pub use crate::display::null::NullDevice;
-pub use crate::display::term::TerminalDevice;
-pub use crate::display::text::TextDevice;
+pub use null::NullDevice;
+pub use term::{Action, FilterLoop, TerminalDevice};
+pub use text::TextDevice;
