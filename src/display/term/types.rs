@@ -147,3 +147,19 @@ mod test {
         assert_eq!(UnboundedSize::Infinite, UnboundedSize::Infinite.sub(7));
     }
 }
+
+/// Boolean properties applied to a 2-dimensions area.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Area<T> {
+    pub(crate) horizontal: T,
+    pub(crate) vertical: T,
+}
+
+impl<T> Area<T> {
+    pub fn new(horizontal: T, vertical: T) -> Self {
+        Self {
+            horizontal,
+            vertical,
+        }
+    }
+}

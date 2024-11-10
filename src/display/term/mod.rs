@@ -19,7 +19,7 @@ use itertools::izip;
 use libc::pid_t;
 use ratatui::{
     backend::TermionBackend,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Size},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
@@ -45,28 +45,13 @@ use super::{DisplayDevice, PauseStatus, SliceIter};
 
 mod types;
 
-use types::UnboundedSize;
+use types::{Area, UnboundedSize};
 
 /// Right aligned cell.
 macro_rules! rcell {
     ($s:expr) => {
         Cell::from(Text::from($s).alignment(Alignment::Right))
     };
-}
-
-#[derive(Debug, Default)]
-struct AreaBool {
-    horizontal: bool,
-    vertical: bool,
-}
-
-impl AreaBool {
-    fn new(horizontal: bool, vertical: bool) -> Self {
-        AreaBool {
-            horizontal,
-            vertical,
-        }
-    }
 }
 
 /// Area property with an horizontal and vertical value.
@@ -90,7 +75,7 @@ impl UnboundedArea {
     }
 
     fn scroll_down(&mut self, delta: usize) {
-        self.vertical = self.horizontal.add(delta);
+        self.vertical = self.vertical.add(delta);
     }
 
     fn home(&mut self) {
@@ -333,34 +318,21 @@ fn menu_paragraph(entries: &[(String, &'static str)]) -> Paragraph<'static> {
 }
 
 /// Navigation arrows dependending on table overflows
-fn navigation_arrows(
-    screen: Rect,
-    offset: UnboundedArea,
-    table_width: u16,
-    table_height: u16,
-    first_col_width: usize,
-) -> (Text<'static>, AreaBool) {
-    let (inner_width, inner_height) = (screen.width - 2, screen.height - 3);
-    let up_arrow = if offset.vertical.is_zero() {
-        "   "
-    } else {
-        "  ⬆  "
-    };
-    let voverflow = table_height > inner_height;
-    let down_arrow = if voverflow { "⬇" } else { " " };
-    let left_arrow = if offset.horizontal.is_zero() {
-        " "
-    } else {
-        "⬅"
-    };
-    let hoverflow = table_width > inner_width;
-    let right_arrow = if hoverflow { "➡" } else { " " };
-    let mut nav = Text::from(format!("{up_arrow:^first_col_width$}"));
-    nav.extend(Text::from(format!(
-        "{:^first_col_width$}",
-        format!("{left_arrow} {down_arrow} {right_arrow}",)
-    )));
-    (nav, AreaBool::new(hoverflow, voverflow))
+///
+/// # Arguments
+///
+/// * `shifted` - Area boolean saying if the first line or first column are hidden.
+/// * `overflow` - Area boolean saying if the end is visible.
+fn navigation_arrows(shifted: Area<bool>, overflows: Area<bool>) -> Text<'static> {
+    let up_arrow = if shifted.vertical { " " } else { "⬆" };
+    let down_arrow = if overflows.vertical { "⬇" } else { " " };
+    let left_arrow = if shifted.horizontal { " " } else { "⬅" };
+    let right_arrow = if overflows.horizontal { "➡" } else { " " };
+    Text::from(vec![
+        Line::from(up_arrow),
+        Line::from(format!("{left_arrow} {down_arrow} {right_arrow}")),
+    ])
+    .alignment(Alignment::Center)
 }
 
 /// Apply style to rows
@@ -389,33 +361,40 @@ fn style_rows<'a>(
 }
 
 /// Calculate widths constraints to avoid an overflow
+///
+/// # Arguments
+///
+/// * `inner_width` - The usable width to display the table.
 fn width_constraints(
-    screen_width: u16,
+    inner_width: u16,
     column_widths: &[u16],
     column_spacing: u16,
-) -> (u16, Vec<Constraint>) {
+) -> (u16, Vec<Constraint>, bool) {
     let mut total_width = 0;
     let mut constraints = Vec::with_capacity(column_widths.len());
     let mut current_column_spacing = 0;
+    let mut truncated = false;
     while constraints.len() < column_widths.len() {
         let index = constraints.len();
         let col_width = column_widths[index];
         let new_total_width = total_width + current_column_spacing + col_width;
-        if new_total_width < screen_width {
+        if new_total_width <= inner_width {
             constraints.push(Constraint::Length(col_width));
         } else {
-            let remaining = screen_width - total_width;
+            let remaining = inner_width - total_width;
             if remaining > column_spacing {
                 // Partial last column
                 constraints.push(Constraint::Length(remaining - column_spacing));
-                total_width = screen_width;
+                total_width = inner_width;
+                truncated = true;
             }
             break;
         }
         total_width = new_total_width;
         current_column_spacing = column_spacing;
     }
-    (total_width, constraints)
+    let hoverflow = constraints.len() < column_widths.len() || truncated;
+    (total_width, constraints, hoverflow)
 }
 
 /// Compute the maximum length of strings
@@ -456,7 +435,7 @@ pub struct TerminalDevice<'t> {
     /// Number of lines to scroll vertically up and down
     vertical_scroll: usize,
     /// Horizontal and vertical overflow (whether the table is bigger than the screen)
-    overflow: AreaBool,
+    overflow: Area<bool>,
     /// Column headers for metrics
     metric_headers: Vec<Text<'t>>,
     /// Slots where limits are displayed under the metric (only for raw metrics).
@@ -467,8 +446,8 @@ pub struct TerminalDevice<'t> {
     styles: Styles,
     /// Number of lines in the headers
     headers_height: usize,
-    /// Number of lines in the headers
-    table_visible_height: usize,
+    /// Number of available lines to display the table
+    body_height: usize,
     /// Selected line in the table
     selected: usize,
 }
@@ -485,13 +464,13 @@ impl<'t> TerminalDevice<'t> {
             terminal,
             table_offset: Default::default(),
             vertical_scroll: 1,
-            overflow: AreaBool::default(),
+            overflow: Area::default(),
             metric_headers: Vec::new(),
             limit_slots: Vec::new(),
             display_limits: LimitKind::None,
             styles: Styles::new(theme),
             headers_height: 0,
-            table_visible_height: 0,
+            body_height: 0,
             selected: 0,
         })
     }
@@ -538,34 +517,35 @@ impl<'t> TerminalDevice<'t> {
     ) -> anyhow::Result<()> {
         let offset = self.table_offset;
         let title = self.title();
-        let mut new_overflow = AreaBool::default();
+        let mut new_overflow = Area::default();
         let even_row_style = self.styles.even_row;
         let odd_row_style = self.styles.odd_row;
-        let mut table_visible_height = 0;
+        let mut body_height = 0;
         let headers_height = self.headers_height as u16;
         let menu_entries = self.menu();
 
         self.terminal.draw(|frame| {
+            const BORDERS_SIZE: u16 = 2;
+            const MENU_HEIGHT: u16 = 1;
             let screen = frame.area();
+            let outter_area = Size::new(screen.width, screen.height - MENU_HEIGHT);
+            let inner_area = Size::new(
+                outter_area.width - BORDERS_SIZE,
+                outter_area.height - BORDERS_SIZE,
+            );
             let rects = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Length(screen.height - 1), Constraint::Min(0)].as_ref())
+                .constraints([Constraint::Length(outter_area.height), Constraint::Min(0)].as_ref())
                 .split(screen);
             let column_spacing = self.styles.column_spacing;
-            let (table_width, widths) =
-                width_constraints(screen.width, col_widths, self.styles.column_spacing);
-            let table_height = 2u16 + nrows as u16;
-            let (nav, overflow) = navigation_arrows(
-                screen,
-                offset,
-                table_width,
-                table_height,
-                col_widths[0] as usize,
-            );
-            new_overflow = overflow;
+            let (_table_width, widths, hoverflow) =
+                width_constraints(inner_area.width, col_widths, self.styles.column_spacing);
+            let table_height = headers_height + nrows as u16;
+            new_overflow = Area::new(hoverflow, table_height > inner_area.height);
+            let shifted = Area::new(offset.horizontal.is_zero(), offset.vertical.is_zero());
+            let nav = navigation_arrows(shifted, new_overflow);
             headers[0] = Cell::from(nav);
 
-            const BORDERS_HEIGHT: u16 = 2;
             let rows = style_rows(&mut rows, widths.len(), even_row_style, odd_row_style);
             let table = Table::new(rows, widths)
                 .block(Block::default().borders(Borders::ALL).title(title))
@@ -573,18 +553,13 @@ impl<'t> TerminalDevice<'t> {
                 .column_spacing(column_spacing);
             frame.render_widget(table, rects[0]);
 
-            const MENU_HEIGHT: u16 = 1;
             let menu = menu_paragraph(&menu_entries);
             frame.render_widget(menu, rects[1]);
-            table_visible_height = screen.height - headers_height - BORDERS_HEIGHT - MENU_HEIGHT;
+            body_height = inner_area.height - headers_height;
         })?;
         self.overflow = new_overflow;
-        self.vertical_scroll = if table_visible_height > 2 {
-            table_visible_height / 2
-        } else {
-            1
-        } as usize;
-        self.table_visible_height = table_visible_height as usize;
+        self.vertical_scroll = if body_height > 2 { body_height / 2 } else { 1 } as usize;
+        self.body_height = body_height as usize;
         Ok(())
     }
 
@@ -622,7 +597,7 @@ impl<'t> TerminalDevice<'t> {
             }
             Action::ScrollRight => {
                 if self.overflow.horizontal {
-                    self.table_offset.scroll_right(1)
+                    self.table_offset.scroll_right(1);
                 }
             }
             Action::ScrollUp => self.table_offset.scroll_up(self.vertical_scroll),
@@ -634,25 +609,18 @@ impl<'t> TerminalDevice<'t> {
             Action::ScrollLeft => self.table_offset.scroll_left(1),
             Action::SelectUp => {
                 self.selected = self.selected.saturating_sub(1);
-                self.table_offset.recenter_vertically(
-                    self.selected,
-                    self.table_visible_height,
-                    false,
-                );
+                self.table_offset
+                    .recenter_vertically(self.selected, self.body_height, false);
             }
             Action::SelectDown => {
                 self.selected += 1;
-                self.table_offset.recenter_vertically(
-                    self.selected,
-                    self.table_visible_height,
-                    false,
-                );
+                self.table_offset
+                    .recenter_vertically(self.selected, self.body_height, false);
             }
-            Action::Focus => self.table_offset.recenter_vertically(
-                self.selected,
-                self.table_visible_height,
-                true,
-            ),
+            Action::Focus => {
+                self.table_offset
+                    .recenter_vertically(self.selected, self.body_height, true)
+            }
             Action::GotoTableTop => self.table_offset.home(),
             Action::GotoTableBottom => self.table_offset.vertical_end(),
             Action::GotoTableLeft => self.table_offset.horizontal_home(),
@@ -827,7 +795,7 @@ impl<'t> DisplayDevice for TerminalDevice<'t> {
         };
         let voffset = match self.table_offset.vertical {
             UnboundedSize::Value(offset) => offset,
-            UnboundedSize::Infinite => line_count.saturating_sub(self.table_visible_height),
+            UnboundedSize::Infinite => line_count.saturating_sub(self.body_height),
         };
         self.table_offset.set(hoffset, voffset);
         let nvisible_rows = nrows - voffset;
@@ -925,13 +893,15 @@ mod test {
         let column_widths = vec![FIRST_COLUMN_WIDTH, COLUMN_WIDTH, COLUMN_WIDTH];
         const COLUMN_SPACING: u16 = 1;
         const NCOLS: usize = 3;
-        let (table_width, widths) = width_constraints(SCREEN_WIDTH, &column_widths, COLUMN_SPACING);
+        let (table_width, widths, hoverflow) =
+            width_constraints(SCREEN_WIDTH, &column_widths, COLUMN_SPACING);
         const SPACED_COLUMN_WIDTH: u16 = COLUMN_WIDTH + COLUMN_SPACING;
         const EXPECTED_WIDTH: u16 = FIRST_COLUMN_WIDTH + (NCOLS as u16 - 1) * SPACED_COLUMN_WIDTH;
         assert_eq!(EXPECTED_WIDTH, table_width);
         assert_eq!(NCOLS, widths.len());
         assert_eq!(Constraint::Length(FIRST_COLUMN_WIDTH), widths[0]);
         assert_eq!(Constraint::Length(COLUMN_WIDTH), widths[1]);
+        assert!(!hoverflow);
     }
 
     #[test]
@@ -944,7 +914,8 @@ mod test {
         const COLUMN_WIDTH: u16 = 4;
         let column_widths = vec![FIRST_COLUMN_WIDTH, COLUMN_WIDTH, COLUMN_WIDTH, COLUMN_WIDTH];
         const COLUMN_SPACING: u16 = 1;
-        let (table_width, widths) = width_constraints(SCREEN_WIDTH, &column_widths, COLUMN_SPACING);
+        let (table_width, widths, hoverflow) =
+            width_constraints(SCREEN_WIDTH, &column_widths, COLUMN_SPACING);
         const SPACED_COLUMN_WIDTH: u16 = COLUMN_WIDTH + COLUMN_SPACING;
         let expected_width: u16 =
             FIRST_COLUMN_WIDTH + (column_widths.len() as u16 - 1) * SPACED_COLUMN_WIDTH;
@@ -953,6 +924,7 @@ mod test {
         assert_eq!(EXPECTED_NCOLS, widths.len());
         assert_eq!(Constraint::Length(FIRST_COLUMN_WIDTH), widths[0]);
         assert_eq!(Constraint::Length(COLUMN_WIDTH), widths[1]);
+        assert!(!hoverflow);
     }
 
     #[test]
@@ -972,12 +944,14 @@ mod test {
             COLUMN_WIDTH,
         ];
         const COLUMN_SPACING: u16 = 1;
-        let (table_width, widths) = width_constraints(SCREEN_WIDTH, &column_widths, COLUMN_SPACING);
+        let (table_width, widths, hoverflow) =
+            width_constraints(SCREEN_WIDTH, &column_widths, COLUMN_SPACING);
         const EXPECTED_NCOLS: usize = 5;
         assert_eq!(SCREEN_WIDTH, table_width);
         assert_eq!(EXPECTED_NCOLS, widths.len());
         assert_eq!(Constraint::Length(FIRST_COLUMN_WIDTH), widths[0]);
         assert_eq!(Constraint::Length(COLUMN_WIDTH), widths[1]);
         assert_eq!(Constraint::Length(2), widths[4]);
+        assert!(hoverflow);
     }
 }

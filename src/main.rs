@@ -326,7 +326,7 @@ fn start(opt: Opt) -> anyhow::Result<()> {
         }
         if must_print_backtrace {
             let bcktrc = std::backtrace::Backtrace::force_capture();
-            log::debug!("{}", bcktrc);
+            log::debug!("{bcktrc}");
         }
     }));
     let system_conf = process::SystemConf::new()?;
