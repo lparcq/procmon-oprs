@@ -22,10 +22,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use crate::{
-    agg::Aggregation,
     cfg::{ExportSettings, ExportType},
-    collector::{Collector, ProcessSamples},
-    metrics::{FormattedMetric, MetricDataType},
+    process::{Aggregation, Collector, FormattedMetric, MetricDataType, ProcessSamples},
 };
 
 use super::{Exporter, SliceIter};

@@ -23,12 +23,9 @@ use std::{
 };
 use strum::{AsRefStr, IntoEnumIterator};
 
-use crate::{
-    agg::Aggregation,
-    format::Formatter,
-    metrics::{FormattedMetric, MetricId},
-    process::{Limit, LimitValue, ProcessStat, SystemStat},
-};
+use crate::format::Formatter;
+
+use super::{Aggregation, FormattedMetric, Limit, LimitValue, MetricId, ProcessStat, SystemStat};
 
 /// Tell if it makes sense to track metric changes
 ///

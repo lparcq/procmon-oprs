@@ -26,10 +26,8 @@ use std::{
 };
 
 use crate::{
-    agg::Aggregation,
     cfg::{ExportSettings, ExportType},
-    collector::Collector,
-    metrics::FormattedMetric,
+    process::{Aggregation, Collector, FormattedMetric},
 };
 
 use super::{Exporter, SliceIter};

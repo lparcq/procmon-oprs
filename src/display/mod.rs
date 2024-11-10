@@ -16,7 +16,10 @@
 
 use std::slice::Iter as SliceIter;
 
-use crate::{clock::Timer, collector::Collector, metrics::FormattedMetric};
+use crate::{
+    clock::Timer,
+    process::{Collector, FormattedMetric},
+};
 
 pub mod null;
 pub mod term;

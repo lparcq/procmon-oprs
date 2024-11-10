@@ -22,18 +22,16 @@ use std::{
 use strum::{EnumMessage, IntoEnumIterator};
 
 use crate::{
-    agg::Aggregation,
     cfg::{DisplayMode, ExportSettings, ExportType, MetricFormat, Settings},
     clock::{DriftMonitor, Timer},
-    collector::Collector,
     console::BuiltinTheme,
     display::{DisplayDevice, NullDevice, PauseStatus, TerminalDevice, TextDevice},
     export::{CsvExporter, Exporter, RrdExporter},
-    format,
-    metrics::{FormattedMetric, MetricDataType, MetricId, MetricNamesParser},
-    process::{Forest, Limit, ProcessStat, SystemConf, SystemStat},
+    process::{
+        Collector, FlatProcessManager, ForestProcessManager, FormattedMetric, MetricDataType,
+        MetricId, MetricNamesParser, ProcessManager, SystemConf, TargetId,
+    },
     sighdr::SignalHandler,
-    targets::{TargetContainer, TargetError, TargetId},
 };
 
 /// Delay in seconds between two notifications for time drift
@@ -80,91 +78,6 @@ fn resolve_display_mode(mode: DisplayMode) -> Result<DisplayMode, Error> {
             }
         }
         _ => Ok(mode),
-    }
-}
-
-/// A process manager must define which processes must be followed.
-trait ProcessManager {
-    fn refresh(&mut self, collector: &mut Collector) -> anyhow::Result<bool>;
-}
-
-/// A Process manager that process a fixed list of targets.
-struct FlatProcessManager<'s> {
-    targets: TargetContainer<'s>,
-}
-
-impl<'s> FlatProcessManager<'s> {
-    fn new(
-        system_conf: &'s SystemConf,
-        metrics: &[FormattedMetric],
-        target_ids: &[TargetId],
-    ) -> Result<Self, TargetError> {
-        let with_system = metrics
-            .iter()
-            .any(|metric| metric.aggregations.has(Aggregation::Ratio));
-
-        let mut targets = TargetContainer::new(system_conf, with_system);
-        targets.push_all(target_ids)?;
-        targets.initialize(metrics.len());
-        Ok(Self { targets })
-    }
-}
-
-impl<'s> ProcessManager for FlatProcessManager<'s> {
-    fn refresh(&mut self, collector: &mut Collector) -> anyhow::Result<bool> {
-        let targets_updated = self.targets.refresh();
-        self.targets.collect(collector);
-        Ok(targets_updated)
-    }
-}
-
-/// A Process explorer that interactively displays the process tree.
-struct ForestProcessManager<'s> {
-    system_conf: &'s SystemConf,
-    system_limits: Vec<Option<Limit>>,
-    forest: Forest,
-}
-
-impl<'s> ForestProcessManager<'s> {
-    fn new(system_conf: &'s SystemConf, metrics: &[FormattedMetric]) -> Result<Self, TargetError> {
-        Ok(Self {
-            system_conf,
-            system_limits: vec![None; metrics.len()],
-            forest: Forest::new(),
-        })
-    }
-}
-
-impl<'s> ProcessManager for ForestProcessManager<'s> {
-    fn refresh(&mut self, collector: &mut Collector) -> anyhow::Result<bool> {
-        let mut system = SystemStat::new(self.system_conf);
-        let system_info = format!(
-            "[{} cores -- {}]",
-            SystemStat::num_cores().unwrap_or(0),
-            SystemStat::mem_total()
-                .map(format::size)
-                .unwrap_or("?".to_string())
-        );
-        collector.collect_system(&mut system);
-        collector.record(
-            &system_info,
-            0,
-            None,
-            &system.extract_metrics(collector.metrics()),
-            &self.system_limits,
-        );
-        self.forest.refresh()?;
-        for root_pid in self.forest.root_pids() {
-            self.forest.descendants(root_pid)?.for_each(|proc_info| {
-                let proc_stat = ProcessStat::with_parent_pid(
-                    proc_info.process(),
-                    proc_info.parent_pid(),
-                    self.system_conf,
-                );
-                collector.collect(proc_info.name(), proc_stat);
-            });
-        }
-        Ok(false)
     }
 }
 

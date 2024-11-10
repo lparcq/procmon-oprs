@@ -28,20 +28,16 @@ use std::{
     str::FromStr,
 };
 
-mod agg;
 mod application;
 mod cfg;
 mod clock;
-mod collector;
 mod console;
 mod display;
 mod export;
 mod format;
-mod metrics;
 mod parsers;
 mod process;
 mod sighdr;
-mod targets;
 mod utils;
 
 #[cfg(test)]
@@ -53,7 +49,7 @@ use cfg::{
     LOG_FILE_NAME,
 };
 use parsers::parse_size;
-use targets::TargetId;
+use process::TargetId;
 
 const APP_NAME: &str = "oprs";
 

@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::{collector::Collector, metrics::FormattedMetric};
+use crate::process::{Collector, FormattedMetric};
 
 use super::{DisplayDevice, SliceIter};
 

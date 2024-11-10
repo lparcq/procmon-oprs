@@ -29,9 +29,8 @@ use std::str::FromStr;
 use strum::IntoEnumIterator;
 
 use crate::{
-    agg::{Aggregation, AggregationSet},
     format::{self, Formatter},
-    metrics::MetricId,
+    process::{Aggregation, AggregationSet, MetricId},
 };
 
 const KILO: usize = 1000;

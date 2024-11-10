@@ -28,7 +28,7 @@ pub use procfs::process::{Limit, LimitValue};
 
 use super::Process;
 
-use crate::metrics::{FormattedMetric, MetricId};
+use super::{FormattedMetric, MetricId};
 
 /// Elapsed time since a start time
 /// Since the boot time is in seconds since the Epoch, no need to be more precise than the second.

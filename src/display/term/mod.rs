@@ -32,12 +32,10 @@ use termion::{
 };
 
 use crate::{
-    agg::Aggregation,
     clock::Timer,
-    collector::{Collector, LimitKind, ProcessSamples},
     console::{is_tty, BuiltinTheme, Event, EventChannel, Key},
     format::human_duration,
-    metrics::FormattedMetric,
+    process::{Aggregation, Collector, FormattedMetric, LimitKind, ProcessSamples},
 };
 use num_traits::{ConstZero, Zero};
 

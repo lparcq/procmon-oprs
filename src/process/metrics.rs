@@ -21,10 +21,11 @@ use std::result;
 use strum_macros::{EnumIter, EnumMessage, EnumString, IntoStaticStr};
 
 use crate::{
-    agg::{Aggregation, AggregationSet},
     format::{self, Formatter},
     parsers::parse_metric_spec,
 };
+
+use super::{Aggregation, AggregationSet};
 
 const SHORT_NAME_MAX_LEN: usize = 10;
 

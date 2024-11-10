@@ -18,12 +18,11 @@ use libc::pid_t;
 use log::error;
 use std::path::{Path, PathBuf};
 
-use crate::{
-    collector::Collector,
-    process::{
-        Forest as ProcessForest, Limit, Process, ProcessError, ProcessStat, SystemConf, SystemStat,
-    },
-    utils::*,
+use crate::utils::{basename, read_pid_file};
+
+use super::{
+    Collector, Forest as ProcessForest, Limit, Process, ProcessError, ProcessStat, SystemConf,
+    SystemStat,
 };
 
 #[derive(thiserror::Error, Debug)]

@@ -16,7 +16,7 @@
 
 use std::{slice::Iter as SliceIter, time::Duration};
 
-use crate::{collector::Collector, metrics::FormattedMetric};
+use crate::process::{Collector, FormattedMetric};
 
 mod csv;
 mod rrd;

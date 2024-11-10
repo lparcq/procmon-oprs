@@ -15,10 +15,8 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::{
-    agg::Aggregation,
-    collector::Collector,
     console::charset::{TableChar, TableCharSet},
-    metrics::FormattedMetric,
+    process::{Aggregation, Collector, FormattedMetric},
 };
 
 use super::{DisplayDevice, SliceIter};
