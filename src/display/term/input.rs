@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use bitmask_enum::bitmask;
 use getset::{Getters, Setters};
 use libc::pid_t;
 use smart_default::SmartDefault;
@@ -38,6 +39,7 @@ const KEY_GOTO_TBL_BOTTOM: Key = Key::CtrlEnd;
 const KEY_GOTO_TBL_LEFT: Key = Key::Home;
 const KEY_GOTO_TBL_RIGHT: Key = Key::End;
 const KEY_GOTO_TBL_TOP: Key = Key::CtrlHome;
+const KEY_HELP: Key = Key::Char('?');
 const KEY_LIMITS: Key = Key::Char('l');
 const KEY_NEXT_FILTER: Key = Key::Char('F');
 const KEY_SEARCH: Key = Key::Char('/');
@@ -60,6 +62,8 @@ pub enum Action {
     GotoTableLeft,
     GotoTableRight,
     GotoTableTop,
+    HelpEnter,
+    HelpExit,
     MultiplyTimeout(u16),
     Quit,
     ScrollDown,
@@ -78,27 +82,48 @@ pub enum Action {
 }
 
 /// Keymap
-#[derive(Clone, Copy, Debug)]
+#[bitmask(u8)]
 pub enum KeyMap {
     Main,
-    Search,
+    Help,
+    FixedSearch,
+    IncrementalSearch,
 }
 
 impl KeyMap {
     /// Convert an input event to an action
     pub fn action_from_event(self, evt: Event) -> Action {
-        match self {
-            KeyMap::Main => match evt {
+        if self.intersects(KeyMap::IncrementalSearch) {
+            match evt {
+                Event::Key(Key::Char('\n')) => Action::SearchExit,
+                Event::Key(Key::Char(c)) => Action::SearchPush(c),
+                Event::Key(Key::Backspace) => Action::SearchPop,
+                _ => Action::None,
+            }
+        } else if self.intersects(KeyMap::Help) {
+            match evt {
+                Event::Key(KEY_QUIT) => Action::HelpExit,
+                Event::Key(Key::PageDown) => Action::ScrollDown,
+                Event::Key(Key::PageUp) => Action::ScrollUp,
+                _ => Action::None,
+            }
+        } else {
+            match evt {
                 Event::Key(KEY_FASTER) => Action::DivideTimeout(2),
                 Event::Key(KEY_FOCUS) => Action::Focus,
                 Event::Key(KEY_GOTO_TBL_BOTTOM) => Action::GotoTableBottom,
                 Event::Key(KEY_GOTO_TBL_LEFT) => Action::GotoTableLeft,
                 Event::Key(KEY_GOTO_TBL_RIGHT) => Action::GotoTableRight,
                 Event::Key(KEY_GOTO_TBL_TOP) => Action::GotoTableTop,
+                Event::Key(KEY_HELP) => Action::HelpEnter,
                 Event::Key(KEY_NEXT_FILTER) => Action::FilterNext,
                 Event::Key(KEY_SEARCH) => Action::SearchEnter,
-                Event::Key(KEY_SEARCH_PREVIOUS) => Action::SearchPrevious,
-                Event::Key(KEY_SEARCH_NEXT) => Action::SearchNext,
+                Event::Key(KEY_SEARCH_PREVIOUS) if self.intersects(KeyMap::FixedSearch) => {
+                    Action::SearchPrevious
+                }
+                Event::Key(KEY_SEARCH_NEXT) if self.intersects(KeyMap::FixedSearch) => {
+                    Action::SearchNext
+                }
                 Event::Key(KEY_SLOWER) => Action::MultiplyTimeout(2),
                 Event::Key(KEY_QUIT) | Event::Key(Key::Ctrl('c')) => Action::Quit,
                 Event::Key(Key::PageDown) => Action::ScrollDown,
@@ -109,22 +134,9 @@ impl KeyMap {
                 Event::Key(Key::Up) => Action::SelectUp,
                 Event::Key(KEY_LIMITS) => Action::ToggleLimits,
                 _ => Action::None,
-            },
-            KeyMap::Search => match evt {
-                Event::Key(Key::Char('\n')) => Action::SearchExit,
-                Event::Key(Key::Char(c)) => Action::SearchPush(c),
-                Event::Key(Key::Backspace) => Action::SearchPop,
-                _ => Action::None,
-            },
+            }
         }
     }
-}
-
-/// Kind of menu
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum MenuKind {
-    Main,
-    Search,
 }
 
 /// Menu entry with a key and a label.
@@ -133,16 +145,16 @@ pub struct MenuEntry {
     key: String,
     #[getset(get = "pub")]
     label: &'static str,
-    pub kind: Option<MenuKind>,
+    pub keymap: KeyMap,
 }
 
 impl MenuEntry {
-    pub fn new(key: String, label: &'static str, kind: Option<MenuKind>) -> Self {
-        Self { key, label, kind }
+    pub fn new(key: String, label: &'static str, keymap: KeyMap) -> Self {
+        Self { key, label, keymap }
     }
 
-    pub fn with_key(key: Key, label: &'static str, kind: Option<MenuKind>) -> Self {
-        Self::new(MenuEntry::key_name(key), label, kind)
+    pub fn with_key(key: Key, label: &'static str, keymap: KeyMap) -> Self {
+        Self::new(MenuEntry::key_name(key), label, keymap)
     }
 
     pub fn key(&self) -> &str {
@@ -180,7 +192,12 @@ impl MenuEntry {
 /// Return the menu
 pub fn menu() -> Vec<MenuEntry> {
     vec![
-        MenuEntry::with_key(KEY_QUIT, "Quit", None),
+        MenuEntry::with_key(
+            KEY_QUIT,
+            "Quit",
+            KeyMap::Main | KeyMap::FixedSearch | KeyMap::Help,
+        ),
+        MenuEntry::with_key(KEY_HELP, "Help", KeyMap::Main),
         MenuEntry::new(
             format!(
                 "{}/{}",
@@ -188,21 +205,25 @@ pub fn menu() -> Vec<MenuEntry> {
                 MenuEntry::key_name(Key::Down)
             ),
             "Select",
-            Some(MenuKind::Main),
+            KeyMap::Main,
         ),
         MenuEntry::new(
             format!("{KEY_SEARCH_NEXT_CHAR}/{KEY_SEARCH_PREVIOUS_CHAR}",),
-            "Next/Prev Match",
-            Some(MenuKind::Search),
+            "Next/Prev",
+            KeyMap::FixedSearch,
         ),
-        MenuEntry::with_key(KEY_SEARCH, "Search", None),
-        MenuEntry::with_key(KEY_LIMITS, "Limits", None),
-        MenuEntry::with_key(KEY_FOCUS, "Focus", None),
-        MenuEntry::with_key(KEY_NEXT_FILTER, "Filter", None),
+        MenuEntry::with_key(KEY_SEARCH, "Search", KeyMap::Main | KeyMap::FixedSearch),
+        MenuEntry::with_key(KEY_LIMITS, "Limits", KeyMap::Main | KeyMap::FixedSearch),
+        MenuEntry::with_key(KEY_FOCUS, "Focus", KeyMap::Main | KeyMap::FixedSearch),
+        MenuEntry::with_key(
+            KEY_NEXT_FILTER,
+            "Filter",
+            KeyMap::Main | KeyMap::FixedSearch,
+        ),
         MenuEntry::new(
             format!("{KEY_FASTER_CHAR}/{KEY_SLOWER_CHAR}"),
             "Speed",
-            None,
+            KeyMap::Main | KeyMap::FixedSearch,
         ),
     ]
 }

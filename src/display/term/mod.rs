@@ -22,7 +22,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Position, Size},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table, Wrap},
     Terminal,
 };
 use std::{cmp::Ordering, io, time::Duration};
@@ -48,9 +48,7 @@ mod input;
 #[macro_use]
 mod types;
 
-use input::{
-    menu, Action, BookmarkAction, Bookmarks, KeyMap, MenuEntry, MenuKind, PidStatus, SearchEdit,
-};
+use input::{menu, Action, BookmarkAction, Bookmarks, KeyMap, MenuEntry, PidStatus, SearchEdit};
 use types::{Area, UnboundedArea};
 
 /// Right aligned cell.
@@ -59,6 +57,36 @@ macro_rules! rcell {
         Cell::from(Text::from($s).alignment(Alignment::Right))
     };
 }
+
+const HELP: &str = r#"Command help
+============
+
+Movements
+---------
+
+- Up and down: move the selection up and down.
+- Page up and down: scroll by pages.
+- Control-Home: go to first line.
+- Control-End: go to last line.
+- f: Go back to the selected line.
+- Left and Right: move the columns left or right.
+- Home: go to first column.
+- End: go to last column.
+
+Searching
+---------
+
+Start an incremental search with '/'. Hit enter to validate the search string.
+
+Move to the next match with 'n' and the previous match with 'N'.
+
+Miscellaneous
+-------------
+
+The soft or hard limits are displayed by hitting 'l' but only for the selected process.
+
+By default, only userland processes are displayed. Use 'F' to change.
+"#;
 
 /// User action that has an impact on the application.
 #[derive(Clone, Copy, Debug)]
@@ -308,15 +336,12 @@ fn width_constraints(
     (total_width, constraints, hoverflow)
 }
 
-fn menu_line(entries: &[MenuEntry], menu_kind: MenuKind) -> Text<'static> {
+fn menu_line(entries: &[MenuEntry], keymap: KeyMap) -> Text<'static> {
     let mut spans = Vec::new();
     let mut sep = "";
     entries
         .iter()
-        .filter(move |e| match e.kind {
-            Some(entry_kind) => menu_kind == entry_kind,
-            None => true,
-        })
+        .filter(|e| e.keymap.intersects(keymap))
         .for_each(|entry| {
             spans.push(Span::raw(sep));
             spans.push(Span::styled(
@@ -354,6 +379,12 @@ impl MaxLength {
     }
 }
 
+#[derive(Debug)]
+enum Pane {
+    Tree,
+    Help,
+}
+
 /// Print on standard output as a table
 pub struct TerminalDevice<'t> {
     /// Interval to update the screen
@@ -366,6 +397,8 @@ pub struct TerminalDevice<'t> {
     terminal: Terminal<TermionBackend<Box<AlternateScreen<RawTerminal<io::Stdout>>>>>,
     /// Horizontal and vertical offset
     table_offset: UnboundedArea,
+    /// Pane offset (except for the table)
+    pane_offset: u16,
     /// Number of lines to scroll vertically up and down
     vertical_scroll: usize,
     /// Horizontal and vertical overflow (whether the table is bigger than the screen)
@@ -386,6 +419,10 @@ pub struct TerminalDevice<'t> {
     bookmarks: Bookmarks,
     /// Menu
     menu: Vec<MenuEntry>,
+    /// Pane
+    pane: Pane,
+    /// Help height
+    help_height: usize,
 }
 
 impl<'t> TerminalDevice<'t> {
@@ -404,6 +441,7 @@ impl<'t> TerminalDevice<'t> {
             events: EventChannel::new(),
             terminal,
             table_offset: Default::default(),
+            pane_offset: 0,
             vertical_scroll: 1,
             overflow: Area::default(),
             metric_headers: Vec::new(),
@@ -414,6 +452,8 @@ impl<'t> TerminalDevice<'t> {
             body_height: 0,
             bookmarks: Bookmarks::default(),
             menu: menu(),
+            pane: Pane::Tree,
+            help_height: HELP.lines().count(),
         })
     }
 
@@ -422,8 +462,12 @@ impl<'t> TerminalDevice<'t> {
     }
 
     fn keymap(&self) -> KeyMap {
-        if self.bookmarks.is_incremental_search() {
-            KeyMap::Search
+        if matches!(self.pane, Pane::Help) {
+            KeyMap::Help
+        } else if self.bookmarks.is_incremental_search() {
+            KeyMap::IncrementalSearch
+        } else if self.bookmarks.is_search() {
+            KeyMap::FixedSearch
         } else {
             KeyMap::Main
         }
@@ -443,7 +487,7 @@ impl<'t> TerminalDevice<'t> {
     /// Draw the table of metrics and the menu.
     ///
     /// Return the table visible height.
-    fn draw(
+    fn draw_tree(
         &mut self,
         mut headers: Vec<Cell>,
         mut rows: Vec<Vec<Cell>>,
@@ -465,14 +509,7 @@ impl<'t> TerminalDevice<'t> {
                 self.bookmarks.search_pattern().unwrap()
             ))
         } else {
-            menu_line(
-                &self.menu,
-                if self.bookmarks.is_search() {
-                    MenuKind::Search
-                } else {
-                    MenuKind::Main
-                },
-            )
+            menu_line(&self.menu, self.keymap())
         };
 
         self.terminal.draw(|frame| {
@@ -534,6 +571,11 @@ impl<'t> TerminalDevice<'t> {
         const MIN_TIMEOUT_MSECS: u128 = 1;
         match action {
             Action::None | Action::Quit => {}
+            Action::HelpEnter => {
+                self.pane = Pane::Help;
+                self.pane_offset = 0;
+            }
+            Action::HelpExit => self.pane = Pane::Tree,
             Action::FilterNext => self.filters.advance(),
             Action::MultiplyTimeout(factor) => {
                 let delay = timer.get_delay();
@@ -565,16 +607,26 @@ impl<'t> TerminalDevice<'t> {
                     self.table_offset.scroll_right(1);
                 }
             }
-            Action::ScrollUp => {
-                self.bookmarks.clear_search();
-                self.table_offset.scroll_up(self.vertical_scroll);
-            }
-            Action::ScrollDown => {
-                self.bookmarks.clear_search();
-                if self.overflow.vertical {
-                    self.table_offset.scroll_down(self.vertical_scroll);
+            Action::ScrollUp => match self.pane {
+                Pane::Tree => {
+                    self.bookmarks.clear_search();
+                    self.table_offset.scroll_up(self.vertical_scroll);
                 }
-            }
+                Pane::Help => {
+                    self.pane_offset = self.pane_offset.saturating_sub(self.vertical_scroll as u16);
+                }
+            },
+            Action::ScrollDown => match self.pane {
+                Pane::Tree => {
+                    self.bookmarks.clear_search();
+                    if self.overflow.vertical {
+                        self.table_offset.scroll_down(self.vertical_scroll);
+                    }
+                }
+                Pane::Help => {
+                    self.pane_offset += self.vertical_scroll as u16;
+                }
+            },
             Action::ScrollLeft => self.table_offset.scroll_left(1),
             Action::SelectUp => {
                 self.bookmarks.clear_search();
@@ -726,54 +778,8 @@ impl<'t> TerminalDevice<'t> {
         });
         row
     }
-}
 
-impl<'t> DisplayDevice for TerminalDevice<'t> {
-    fn open(&mut self, metrics: SliceIter<FormattedMetric>) -> anyhow::Result<()> {
-        let mut last_id = None;
-
-        Collector::for_each_computed_metric(metrics, |id, ag| {
-            let mut header = id
-                .as_str()
-                .split(":")
-                .map(str::to_string)
-                .collect::<Vec<String>>();
-            self.headers_height = std::cmp::max(self.headers_height, header.len());
-            if last_id.is_none() || last_id.unwrap() != id {
-                last_id = Some(id);
-                self.limit_slots.push(true);
-            } else {
-                let name = format!(
-                    "{} ({})",
-                    header.pop().unwrap(),
-                    match ag {
-                        Aggregation::None => "none", // never used
-                        Aggregation::Min => "min",
-                        Aggregation::Max => "max",
-                        Aggregation::Ratio => "%",
-                    }
-                );
-                header.push(name);
-                self.limit_slots.push(false);
-            }
-            self.metric_headers.push(Text::from(
-                header
-                    .iter()
-                    .map(|s| Line::from(s.to_string()))
-                    .collect::<Vec<Line>>(),
-            ));
-        });
-        self.terminal.hide_cursor()?;
-        Ok(())
-    }
-
-    /// Show the cursor on exit.
-    fn close(&mut self) -> anyhow::Result<()> {
-        self.terminal.show_cursor()?;
-        Ok(())
-    }
-
-    fn render(&mut self, collector: &Collector, _targets_updated: bool) -> anyhow::Result<()> {
+    fn render_tree(&mut self, collector: &Collector, _targets_updated: bool) -> anyhow::Result<()> {
         let line_count = collector.line_count();
         let ncols = self.metric_headers.len() + 2; // process name, PID, metric1, ...
         let nrows = line_count + 2; // metric title, metric subtitle, process1, ...
@@ -849,8 +855,96 @@ impl<'t> DisplayDevice for TerminalDevice<'t> {
         };
 
         let col_widths = cws.iter().map(MaxLength::len).collect::<Vec<u16>>();
-        self.draw(headers, rows, nvisible_rows, &col_widths)?;
+        self.draw_tree(headers, rows, nvisible_rows, &col_widths)?;
         Ok(())
+    }
+
+    fn render_help(&mut self) -> anyhow::Result<()> {
+        let menu = menu_line(&self.menu, self.keymap());
+        let help_height = self.help_height as u16;
+        let mut pane_offset = self.pane_offset;
+
+        self.terminal.draw(|frame| {
+            const BORDERS_SIZE: u16 = 2;
+            const MENU_HEIGHT: u16 = 1;
+            let screen = frame.area();
+            let body_height = screen.height - MENU_HEIGHT;
+            let rects = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(body_height), Constraint::Min(0)].as_ref())
+                .split(screen);
+            let inner_height = body_height - BORDERS_SIZE;
+            let max_pane_offset = help_height.saturating_sub(inner_height / 2);
+            if pane_offset > max_pane_offset {
+                pane_offset = max_pane_offset;
+            }
+            let help = Paragraph::new(HELP)
+                .block(
+                    Block::new()
+                        .title(" Oprs ")
+                        .title_alignment(Alignment::Center)
+                        .borders(Borders::ALL),
+                )
+                .wrap(Wrap { trim: false })
+                .scroll((pane_offset, 0));
+            frame.render_widget(help, rects[0]);
+            frame.render_widget(Paragraph::new(menu), rects[1]);
+        })?;
+        self.pane_offset = pane_offset;
+        Ok(())
+    }
+}
+
+impl<'t> DisplayDevice for TerminalDevice<'t> {
+    fn open(&mut self, metrics: SliceIter<FormattedMetric>) -> anyhow::Result<()> {
+        let mut last_id = None;
+
+        Collector::for_each_computed_metric(metrics, |id, ag| {
+            let mut header = id
+                .as_str()
+                .split(":")
+                .map(str::to_string)
+                .collect::<Vec<String>>();
+            self.headers_height = std::cmp::max(self.headers_height, header.len());
+            if last_id.is_none() || last_id.unwrap() != id {
+                last_id = Some(id);
+                self.limit_slots.push(true);
+            } else {
+                let name = format!(
+                    "{} ({})",
+                    header.pop().unwrap(),
+                    match ag {
+                        Aggregation::None => "none", // never used
+                        Aggregation::Min => "min",
+                        Aggregation::Max => "max",
+                        Aggregation::Ratio => "%",
+                    }
+                );
+                header.push(name);
+                self.limit_slots.push(false);
+            }
+            self.metric_headers.push(Text::from(
+                header
+                    .iter()
+                    .map(|s| Line::from(s.to_string()))
+                    .collect::<Vec<Line>>(),
+            ));
+        });
+        self.terminal.hide_cursor()?;
+        Ok(())
+    }
+
+    /// Show the cursor on exit.
+    fn close(&mut self) -> anyhow::Result<()> {
+        self.terminal.show_cursor()?;
+        Ok(())
+    }
+
+    fn render(&mut self, collector: &Collector, targets_updated: bool) -> anyhow::Result<()> {
+        match self.pane {
+            Pane::Tree => self.render_tree(collector, targets_updated),
+            Pane::Help => self.render_help(),
+        }
     }
 
     /// Wait for a user input or a timeout.
