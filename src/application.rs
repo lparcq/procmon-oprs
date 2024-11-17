@@ -26,7 +26,7 @@ use crate::{
     clock::{DriftMonitor, Timer},
     console::BuiltinTheme,
     display::{
-        Action, DisplayDevice, FilterLoop, NullDevice, PauseStatus, TerminalDevice, TextDevice,
+        DisplayDevice, FilterLoop, Interaction, NullDevice, PauseStatus, TerminalDevice, TextDevice,
     },
     export::{CsvExporter, Exporter, RrdExporter},
     process::{
@@ -206,9 +206,9 @@ impl<'s> Application<'s> {
             if is_interactive {
                 if let PauseStatus::Action(action) = device.pause(&mut timer)? {
                     match action {
-                        Action::Quit => break,
-                        Action::Filter(n) => tmgt.set_filter(ProcessFilter::VARIANTS[n]),
-                        _ => (),
+                        Interaction::Quit => break,
+                        Interaction::Filter(n) => tmgt.set_filter(ProcessFilter::VARIANTS[n]),
+                        Interaction::None => (),
                     }
                 }
             } else {

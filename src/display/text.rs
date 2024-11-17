@@ -16,7 +16,7 @@
 
 use crate::{
     console::charset::{TableChar, TableCharSet},
-    process::{Aggregation, Collector, FormattedMetric},
+    process::{Aggregation, Collector, FormattedMetric, ProcessIdentity},
 };
 
 use super::{DisplayDevice, SliceIter};

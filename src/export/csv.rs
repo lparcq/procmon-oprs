@@ -27,7 +27,7 @@ use std::{
 
 use crate::{
     cfg::{ExportSettings, ExportType},
-    process::{Aggregation, Collector, FormattedMetric},
+    process::{Aggregation, Collector, FormattedMetric, ProcessIdentity},
 };
 
 use super::{Exporter, SliceIter};

@@ -203,6 +203,12 @@ impl From<&[&str]> for Sample {
     }
 }
 
+/// Process identity with a name and a PID
+pub trait ProcessIdentity {
+    fn name(&self) -> &str;
+    fn pid(&self) -> pid_t;
+}
+
 /// A list of computed samples for a process
 pub struct ProcessSamples {
     name: String,
@@ -224,14 +230,6 @@ impl ProcessSamples {
             parent_pid,
             samples,
         }
-    }
-
-    pub fn name(&self) -> &str {
-        self.name.as_str()
-    }
-
-    pub fn pid(&self) -> pid_t {
-        self.pid
     }
 
     pub fn parent_pid(&self) -> Option<pid_t> {
@@ -262,6 +260,26 @@ impl ProcessSamples {
                 .collect::<Vec<&str>>()
                 .join(", ")
         )
+    }
+}
+
+impl ProcessIdentity for ProcessSamples {
+    fn name(&self) -> &str {
+        self.name.as_str()
+    }
+
+    fn pid(&self) -> pid_t {
+        self.pid
+    }
+}
+
+impl ProcessIdentity for &ProcessSamples {
+    fn name(&self) -> &str {
+        self.name.as_str()
+    }
+
+    fn pid(&self) -> pid_t {
+        self.pid
     }
 }
 

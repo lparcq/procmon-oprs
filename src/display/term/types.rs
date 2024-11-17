@@ -20,6 +20,12 @@ use std::{
     ops::{Add, Sub},
 };
 
+macro_rules! void {
+    ($e:expr) => {{
+        let _ = $e;
+    }};
+}
+
 /// Unsigned integer type with an infinite value.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Unbounded<T: Clone + Copy + Default> {
@@ -127,7 +133,92 @@ impl<T: Clone + Copy + Default + Add<Output = T> + Sub<Output = T> + PartialEq +
     }
 }
 
-pub(crate) type UnboundedSize = Unbounded<usize>;
+pub type UnboundedSize = Unbounded<usize>;
+
+/// Area an unbounded horizontal and vertical value.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct UnboundedArea {
+    pub horizontal: UnboundedSize,
+    pub vertical: UnboundedSize,
+}
+
+impl UnboundedArea {
+    pub fn scroll_left(&mut self, delta: usize) {
+        self.horizontal = self.horizontal.sub(delta);
+    }
+
+    pub fn scroll_right(&mut self, delta: usize) {
+        self.horizontal = self.horizontal.add(delta);
+    }
+
+    pub fn scroll_up(&mut self, delta: usize) {
+        self.vertical = self.vertical.sub(delta);
+    }
+
+    pub fn scroll_down(&mut self, delta: usize) {
+        self.vertical = self.vertical.add(delta);
+    }
+
+    pub fn home(&mut self) {
+        *self = Self::default();
+    }
+
+    pub fn set_horizontal(&mut self, horizontal: usize) {
+        self.horizontal = UnboundedSize::Value(horizontal);
+    }
+
+    pub fn set_vertical(&mut self, vertical: usize) {
+        self.vertical = UnboundedSize::Value(vertical);
+    }
+
+    /// Replace infinite values by integer or keep the current ones if finite.
+    pub fn set_bounds(&mut self, horizontal: usize, vertical: usize) -> (usize, usize) {
+        (
+            match self.horizontal {
+                UnboundedSize::Infinite => {
+                    self.set_horizontal(horizontal);
+                    horizontal
+                }
+                UnboundedSize::Value(horizontal) => horizontal,
+            },
+            match self.vertical {
+                UnboundedSize::Infinite => {
+                    self.set_vertical(vertical);
+                    vertical
+                }
+                UnboundedSize::Value(vertical) => vertical,
+            },
+        )
+    }
+
+    pub fn horizontal_home(&mut self) {
+        self.horizontal = UnboundedSize::ZERO;
+    }
+
+    pub fn horizontal_end(&mut self) {
+        self.horizontal = UnboundedSize::Infinite;
+    }
+
+    pub fn vertical_end(&mut self) {
+        self.vertical = UnboundedSize::Infinite;
+    }
+}
+
+/// Boolean properties applied to a 2-dimensions area.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Area<T> {
+    pub(crate) horizontal: T,
+    pub(crate) vertical: T,
+}
+
+impl<T> Area<T> {
+    pub fn new(horizontal: T, vertical: T) -> Self {
+        Self {
+            horizontal,
+            vertical,
+        }
+    }
+}
 
 #[cfg(test)]
 mod test {
@@ -145,21 +236,5 @@ mod test {
         assert_eq!(UnboundedSize::Value(4), UnboundedSize::Value(7).sub(3));
         assert_eq!(UnboundedSize::Value(0), UnboundedSize::Value(3).sub(7));
         assert_eq!(UnboundedSize::Infinite, UnboundedSize::Infinite.sub(7));
-    }
-}
-
-/// Boolean properties applied to a 2-dimensions area.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) struct Area<T> {
-    pub(crate) horizontal: T,
-    pub(crate) vertical: T,
-}
-
-impl<T> Area<T> {
-    pub fn new(horizontal: T, vertical: T) -> Self {
-        Self {
-            horizontal,
-            vertical,
-        }
     }
 }

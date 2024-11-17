@@ -490,9 +490,9 @@ impl Forest {
                         self.transfer_ascendants(&mut state, info.parent_pid());
                         let node_id = self.add_node(&mut state, info);
                         if is_visible {
-                            self.arena
-                                .get_mut(node_id)
-                                .map(|node| node.get_mut().show());
+                            if let Some(node) = self.arena.get_mut(node_id) {
+                                node.get_mut().show()
+                            }
                         }
                     } else {
                         state.processes.insert(pid, info);
@@ -530,7 +530,10 @@ impl Forest {
 mod tests {
 
     use rand::seq::SliceRandom;
-    use std::collections::{BTreeSet, HashMap};
+    use std::{
+        collections::{BTreeSet, HashMap},
+        iter::IntoIterator,
+    };
 
     use super::{
         pid_t,
@@ -541,7 +544,7 @@ mod tests {
     fn sorted<T, I>(input: I) -> Vec<T>
     where
         T: Clone + Ord,
-        I: std::iter::IntoIterator<Item = T>,
+        I: IntoIterator<Item = T>,
     {
         let mut v = input.into_iter().collect::<Vec<T>>();
         v.sort();

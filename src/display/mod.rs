@@ -25,9 +25,11 @@ pub mod null;
 pub mod term;
 pub mod text;
 
+/// Status of the device when returning from a pause.
+#[derive(Debug)]
 pub enum PauseStatus {
     TimeOut,
-    Action(Action),
+    Action(Interaction),
 }
 
 pub trait DisplayDevice {
@@ -47,5 +49,5 @@ pub trait DisplayDevice {
 }
 
 pub use null::NullDevice;
-pub use term::{Action, FilterLoop, TerminalDevice};
+pub use term::{FilterLoop, Interaction, TerminalDevice};
 pub use text::TextDevice;

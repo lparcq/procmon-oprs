@@ -1,6 +1,6 @@
 [package]
 name = "procmon-oprs"
-version = "0.21.0"
+version = "0.22.0"
 authors = ["Laurent Pelecq <lpelecq+rust@circoise.eu>"]
 description = "A process monitor for Linux"
 readme = "README.md"
@@ -20,6 +20,7 @@ argh = "0.1"
 chrono = "0.4"
 console = "0"
 ctrlc = { version = "3.0", features = ["termination"] }
+getset = "0.1"
 indextree = "4"
 itertools = "0.13"
 libc = "0.2"
@@ -30,6 +31,7 @@ nom = "7"
 num-traits = "0.2"
 procfs = "0.17"
 simplelog = "0.12"
+smart-default = "0.7"
 strum = "0.26"
 strum_macros = "0.26"
 termion = "4"

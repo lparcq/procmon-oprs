@@ -23,7 +23,9 @@ use std::time::Duration;
 
 use crate::{
     cfg::{ExportSettings, ExportType},
-    process::{Aggregation, Collector, FormattedMetric, MetricDataType, ProcessSamples},
+    process::{
+        Aggregation, Collector, FormattedMetric, MetricDataType, ProcessIdentity, ProcessSamples,
+    },
 };
 
 use super::{Exporter, SliceIter};

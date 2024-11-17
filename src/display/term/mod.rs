@@ -19,7 +19,7 @@ use itertools::izip;
 use libc::pid_t;
 use ratatui::{
     backend::TermionBackend,
-    layout::{Alignment, Constraint, Direction, Layout, Size},
+    layout::{Alignment, Constraint, Direction, Layout, Position, Size},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
@@ -33,18 +33,25 @@ use termion::{
 
 use crate::{
     clock::Timer,
-    console::{is_tty, BuiltinTheme, Event, EventChannel, Key},
+    console::{is_tty, BuiltinTheme, EventChannel},
     process::{
-        format::human_duration, Aggregation, Collector, FormattedMetric, LimitKind, ProcessSamples,
+        format::human_duration, Aggregation, Collector, FormattedMetric, LimitKind,
+        ProcessIdentity, ProcessSamples,
     },
 };
-use num_traits::{ConstZero, Zero};
+use num_traits::Zero;
 
 use super::{DisplayDevice, PauseStatus, SliceIter};
 
+mod input;
+
+#[macro_use]
 mod types;
 
-use types::{Area, UnboundedSize};
+use input::{
+    menu, Action, BookmarkAction, Bookmarks, KeyMap, MenuEntry, MenuKind, PidStatus, SearchEdit,
+};
+use types::{Area, UnboundedArea};
 
 /// Right aligned cell.
 macro_rules! rcell {
@@ -53,59 +60,12 @@ macro_rules! rcell {
     };
 }
 
-/// Area property with an horizontal and vertical value.
-#[derive(Clone, Copy, Debug, Default)]
-struct UnboundedArea {
-    horizontal: UnboundedSize,
-    vertical: UnboundedSize,
-}
-
-impl UnboundedArea {
-    fn scroll_left(&mut self, delta: usize) {
-        self.horizontal = self.horizontal.sub(delta);
-    }
-
-    fn scroll_right(&mut self, delta: usize) {
-        self.horizontal = self.horizontal.add(delta);
-    }
-
-    fn scroll_up(&mut self, delta: usize) {
-        self.vertical = self.vertical.sub(delta);
-    }
-
-    fn scroll_down(&mut self, delta: usize) {
-        self.vertical = self.vertical.add(delta);
-    }
-
-    fn home(&mut self) {
-        *self = Self::default();
-    }
-
-    fn set(&mut self, horizontal: usize, vertical: usize) {
-        self.horizontal = UnboundedSize::Value(horizontal);
-        self.vertical = UnboundedSize::Value(vertical);
-    }
-
-    fn horizontal_home(&mut self) {
-        self.horizontal = UnboundedSize::ZERO;
-    }
-
-    fn horizontal_end(&mut self) {
-        self.horizontal = UnboundedSize::Infinite;
-    }
-
-    fn vertical_end(&mut self) {
-        self.vertical = UnboundedSize::Infinite;
-    }
-
-    fn recenter_vertically(&mut self, center: usize, height: usize, force: bool) {
-        let center = UnboundedSize::Value(center);
-        let low = self.vertical;
-        let high = self.vertical + UnboundedSize::Value(height);
-        if force || center < low || center >= high {
-            self.vertical = center.sub(height / 2);
-        }
-    }
+/// User action that has an impact on the application.
+#[derive(Clone, Copy, Debug)]
+pub enum Interaction {
+    None,
+    Filter(usize),
+    Quit,
 }
 
 /// Theme styles
@@ -122,6 +82,8 @@ struct Styles {
     unselected: Style,
     /// Selected line
     selected: Style,
+    /// Matching line
+    matching: Style,
     /// Status line
     status: Style,
     /// Space between columns in number of characters
@@ -141,7 +103,8 @@ impl Styles {
                 increase: Style::default().fg(Color::Rgb(235, 45, 83)),
                 decrease: Style::default().fg(Color::Rgb(166, 255, 77)),
                 unselected: bold,
-                selected: bold_reversed,
+                selected: Style::default().fg(Color::Black).bg(Color::LightMagenta),
+                matching: Style::default().fg(Color::LightMagenta),
                 status: white_on_blue,
                 column_spacing: 2,
             },
@@ -151,7 +114,8 @@ impl Styles {
                 increase: Style::default().fg(Color::Rgb(220, 20, 60)),
                 decrease: Style::default().fg(Color::Rgb(102, 204, 00)),
                 unselected: bold,
-                selected: bold_reversed,
+                selected: Style::default().fg(Color::White).bg(Color::Magenta),
+                matching: Style::default().fg(Color::Magenta),
                 status: white_on_blue,
                 column_spacing: 2,
             },
@@ -161,7 +125,8 @@ impl Styles {
                 increase: Style::default().fg(Color::LightMagenta),
                 decrease: Style::default().fg(Color::LightGreen),
                 unselected: bold,
-                selected: bold_reversed,
+                selected: Style::default().fg(Color::Black).bg(Color::LightMagenta),
+                matching: Style::default().fg(Color::LightMagenta),
                 status: white_on_blue,
                 column_spacing: 2,
             },
@@ -171,7 +136,8 @@ impl Styles {
                 increase: Style::default().fg(Color::Red),
                 decrease: Style::default().fg(Color::Green),
                 unselected: bold,
-                selected: bold_reversed,
+                selected: Style::default().fg(Color::White).bg(Color::Magenta),
+                matching: Style::default().fg(Color::Magenta),
                 status: white_on_blue,
                 column_spacing: 2,
             },
@@ -182,17 +148,18 @@ impl Styles {
                 decrease: bold,
                 unselected: bold,
                 selected: bold_reversed,
+                matching: Style::default().add_modifier(Modifier::UNDERLINED),
                 status: bold_reversed,
                 column_spacing: 2,
             },
         }
     }
 
-    fn name_style(&self, is_selected: bool) -> Style {
-        if is_selected {
-            self.selected
-        } else {
-            self.unselected
+    fn name_style(&self, status: PidStatus) -> Style {
+        match status {
+            PidStatus::Unknown => self.unselected,
+            PidStatus::Selected => self.selected,
+            PidStatus::Matching => self.matching,
         }
     }
 
@@ -233,42 +200,6 @@ impl PidStack {
     }
 }
 
-/// Standard keys
-const KEY_FASTER: Key = Key::Char(KEY_FASTER_CHAR);
-const KEY_FASTER_CHAR: char = '+';
-const KEY_FOCUS: Key = Key::Char('f');
-const KEY_GOTO_TBL_BOTTOM: Key = Key::CtrlEnd;
-const KEY_GOTO_TBL_LEFT: Key = Key::Home;
-const KEY_GOTO_TBL_RIGHT: Key = Key::End;
-const KEY_GOTO_TBL_TOP: Key = Key::CtrlHome;
-const KEY_LIMITS: Key = Key::Char('l');
-const KEY_NEXT_FILTER: Key = Key::Char('F');
-const KEY_QUIT: Key = Key::Esc;
-const KEY_SLOWER: Key = Key::Char(KEY_SLOWER_CHAR);
-const KEY_SLOWER_CHAR: char = '-';
-
-/// User action
-#[derive(Clone, Copy, Debug)]
-pub enum Action {
-    None,
-    DivideTimeout(u16),
-    Filter(usize),
-    Focus,
-    GotoTableBottom,
-    GotoTableLeft,
-    GotoTableRight,
-    GotoTableTop,
-    MultiplyTimeout(u16),
-    Quit,
-    ScrollDown,
-    ScrollLeft,
-    ScrollRight,
-    ScrollUp,
-    SelectDown,
-    SelectUp,
-    ToggleLimits,
-}
-
 /// A list of filters with a current value.
 pub struct FilterLoop {
     /// Filter names
@@ -285,16 +216,15 @@ impl FilterLoop {
         }
     }
 
-    fn current(&self) -> &'static str {
+    fn current_name(&self) -> &'static str {
         self.names[self.current]
     }
 
-    fn next(&mut self) -> usize {
+    fn advance(&mut self) {
         self.current += 1;
         if self.current >= self.names.len() {
             self.current = 0;
         }
-        self.current
     }
 }
 
@@ -378,6 +308,27 @@ fn width_constraints(
     (total_width, constraints, hoverflow)
 }
 
+fn menu_line(entries: &[MenuEntry], menu_kind: MenuKind) -> Text<'static> {
+    let mut spans = Vec::new();
+    let mut sep = "";
+    entries
+        .iter()
+        .filter(move |e| match e.kind {
+            Some(entry_kind) => menu_kind == entry_kind,
+            None => true,
+        })
+        .for_each(|entry| {
+            spans.push(Span::raw(sep));
+            spans.push(Span::styled(
+                entry.key().to_string(),
+                Style::default().add_modifier(Modifier::REVERSED),
+            ));
+            spans.push(Span::raw(format!(" {}", entry.label())));
+            sep = "  ";
+        });
+    Text::from(Line::from(spans))
+}
+
 /// Compute the maximum length of strings
 #[derive(Clone, Copy, Debug, Default)]
 struct MaxLength(u16);
@@ -401,81 +352,6 @@ impl MaxLength {
             self.0 = l
         }
     }
-}
-
-struct MenuEntry {
-    key: String,
-    label: &'static str,
-}
-
-impl MenuEntry {
-    fn new(key: String, label: &'static str) -> Self {
-        Self { key, label }
-    }
-
-    fn with_key(key: Key, label: &'static str) -> Self {
-        Self::new(MenuEntry::key_name(key), label)
-    }
-
-    fn key_name(key: Key) -> String {
-        match key {
-            Key::Backspace => "⌫".to_string(),
-            Key::Left => "←".to_string(),
-            Key::Right => "→".to_string(),
-            Key::Up => "↑".to_string(),
-            Key::Down => "↓".to_string(),
-            Key::PageUp => "⇞".to_string(),
-            Key::PageDown => "⇟".to_string(),
-            Key::Home => "⇱".to_string(),
-            Key::CtrlHome => "^⇱".to_string(),
-            Key::End => "⇲".to_string(),
-            Key::CtrlEnd => "^⇲".to_string(),
-            Key::BackTab => "⇤".to_string(),
-            Key::Delete => "⌧".to_string(),
-            Key::Insert => "Ins".to_string(),
-            Key::F(num) => format!("F{num}"),
-            Key::Char('\t') => "⇥".to_string(),
-            Key::Char(ch) => format!("{ch}"),
-            Key::Alt(ch) => format!("M-{ch}"),
-            Key::Ctrl(ch) => format!("C-{ch}"),
-            Key::Null => "\\0".to_string(),
-            KEY_QUIT => "Esc".to_string(),
-            _ => "?".to_string(),
-        }
-    }
-
-    fn paragraph(entries: &[MenuEntry]) -> Paragraph<'static> {
-        let mut spans = Vec::new();
-        let mut sep = "";
-        entries.iter().for_each(|entry| {
-            spans.push(Span::raw(sep));
-            spans.push(Span::styled(
-                entry.key.to_string(),
-                Style::default().add_modifier(Modifier::REVERSED),
-            ));
-            spans.push(Span::raw(format!(" {}", entry.label)));
-            sep = "  ";
-        });
-        Paragraph::new(Line::from(spans)).alignment(Alignment::Left)
-    }
-}
-
-thread_local! {
-    static MAIN_MENU: std::cell::LazyCell<Vec<MenuEntry>> = std::cell::LazyCell::new(|| vec![
-        MenuEntry::with_key(KEY_QUIT, "Quit"),
-        MenuEntry::new(
-            format!(
-                "{}/{}",
-                MenuEntry::key_name(Key::Up),
-                MenuEntry::key_name(Key::Down)
-            ),
-            "Select",
-        ),
-        MenuEntry::new(format!("{KEY_FASTER_CHAR}/{KEY_SLOWER_CHAR}"), "Speed"),
-        MenuEntry::with_key(KEY_LIMITS, "Limits"),
-        MenuEntry::with_key(KEY_FOCUS, "Focus"),
-        MenuEntry::with_key(KEY_NEXT_FILTER, "Filter"),
-    ]);
 }
 
 /// Print on standard output as a table
@@ -506,8 +382,10 @@ pub struct TerminalDevice<'t> {
     headers_height: usize,
     /// Number of available lines to display the table
     body_height: usize,
-    /// Selected line in the table
-    selected: usize,
+    /// Bookmarks for PIDs.
+    bookmarks: Bookmarks,
+    /// Menu
+    menu: Vec<MenuEntry>,
 }
 
 impl<'t> TerminalDevice<'t> {
@@ -534,12 +412,21 @@ impl<'t> TerminalDevice<'t> {
             styles: Styles::new(theme),
             headers_height: 0,
             body_height: 0,
-            selected: 0,
+            bookmarks: Bookmarks::default(),
+            menu: menu(),
         })
     }
 
     pub fn is_available() -> bool {
         is_tty(&io::stdin())
+    }
+
+    fn keymap(&self) -> KeyMap {
+        if self.bookmarks.is_incremental_search() {
+            KeyMap::Search
+        } else {
+            KeyMap::Main
+        }
     }
 
     /// Content of the status bar
@@ -549,7 +436,7 @@ impl<'t> TerminalDevice<'t> {
         format!(
             "{time_string} -- interval:{delay} -- limit:{} -- filter:{}",
             self.display_limits.as_ref(),
-            self.filters.current()
+            self.filters.current_name()
         )
     }
 
@@ -570,7 +457,23 @@ impl<'t> TerminalDevice<'t> {
         let mut body_height = 0;
         let headers_height = self.headers_height as u16;
         let status_bar = Paragraph::new(Text::from(self.status_bar())).style(self.styles.status);
-        let menu = MAIN_MENU.with(|menu| MenuEntry::paragraph(menu));
+        let is_search = self.bookmarks.is_incremental_search();
+        let show_cursor = is_search;
+        let menu = if is_search {
+            Text::from(format!(
+                "Search: {}",
+                self.bookmarks.search_pattern().unwrap()
+            ))
+        } else {
+            menu_line(
+                &self.menu,
+                if self.bookmarks.is_search() {
+                    MenuKind::Search
+                } else {
+                    MenuKind::Main
+                },
+            )
+        };
 
         self.terminal.draw(|frame| {
             const BORDERS_SIZE: u16 = 2;
@@ -608,11 +511,15 @@ impl<'t> TerminalDevice<'t> {
                 .block(Block::default().borders(Borders::ALL))
                 .header(Row::new(headers).height(headers_height))
                 .column_spacing(column_spacing);
+
+            let cursor_pos = Position::new(menu.width() as u16, screen.height - 1);
             frame.render_widget(table, rects[0]);
-
             frame.render_widget(status_bar, rects[1]);
+            frame.render_widget(Paragraph::new(menu), rects[2]);
 
-            frame.render_widget(menu, rects[2]);
+            if show_cursor {
+                frame.set_cursor_position(cursor_pos);
+            }
             body_height = inner_area.height - headers_height;
         })?;
         self.overflow = new_overflow;
@@ -621,34 +528,13 @@ impl<'t> TerminalDevice<'t> {
         Ok(())
     }
 
-    fn action_from_event(&mut self, evt: Event) -> Action {
-        match evt {
-            Event::Key(KEY_FASTER) => Action::DivideTimeout(2),
-            Event::Key(KEY_FOCUS) => Action::Focus,
-            Event::Key(KEY_GOTO_TBL_BOTTOM) => Action::GotoTableBottom,
-            Event::Key(KEY_GOTO_TBL_LEFT) => Action::GotoTableLeft,
-            Event::Key(KEY_GOTO_TBL_RIGHT) => Action::GotoTableRight,
-            Event::Key(KEY_GOTO_TBL_TOP) => Action::GotoTableTop,
-            Event::Key(KEY_NEXT_FILTER) => Action::Filter(self.filters.next()),
-            Event::Key(KEY_SLOWER) => Action::MultiplyTimeout(2),
-            Event::Key(KEY_QUIT) | Event::Key(Key::Ctrl('c')) => Action::Quit,
-            Event::Key(Key::PageDown) => Action::ScrollDown,
-            Event::Key(Key::PageUp) => Action::ScrollUp,
-            Event::Key(Key::Down) => Action::SelectDown,
-            Event::Key(Key::Left) => Action::ScrollLeft,
-            Event::Key(Key::Right) => Action::ScrollRight,
-            Event::Key(Key::Up) => Action::SelectUp,
-            Event::Key(KEY_LIMITS) => Action::ToggleLimits,
-            _ => Action::None,
-        }
-    }
-
     /// Execute an interactive action.
-    fn react(&mut self, action: Action, timer: &mut Timer) {
+    fn react(&mut self, action: Action, timer: &mut Timer) -> io::Result<Action> {
         const MAX_TIMEOUT_SECS: u64 = 24 * 3_600; // 24 hours
         const MIN_TIMEOUT_MSECS: u128 = 1;
         match action {
-            Action::Filter(_) | Action::None | Action::Quit => {}
+            Action::None | Action::Quit => {}
+            Action::FilterNext => self.filters.advance(),
             Action::MultiplyTimeout(factor) => {
                 let delay = timer.get_delay();
                 if delay.as_secs() * (factor as u64) < MAX_TIMEOUT_SECS {
@@ -679,31 +565,51 @@ impl<'t> TerminalDevice<'t> {
                     self.table_offset.scroll_right(1);
                 }
             }
-            Action::ScrollUp => self.table_offset.scroll_up(self.vertical_scroll),
+            Action::ScrollUp => {
+                self.bookmarks.clear_search();
+                self.table_offset.scroll_up(self.vertical_scroll);
+            }
             Action::ScrollDown => {
+                self.bookmarks.clear_search();
                 if self.overflow.vertical {
                     self.table_offset.scroll_down(self.vertical_scroll);
                 }
             }
             Action::ScrollLeft => self.table_offset.scroll_left(1),
             Action::SelectUp => {
-                self.selected = self.selected.saturating_sub(1);
-                self.table_offset
-                    .recenter_vertically(self.selected, self.body_height, false);
+                self.bookmarks.clear_search();
+                void!(self.bookmarks.set_action(BookmarkAction::PreviousLine));
             }
             Action::SelectDown => {
-                self.selected += 1;
-                self.table_offset
-                    .recenter_vertically(self.selected, self.body_height, false);
+                self.bookmarks.clear_search();
+                void!(self.bookmarks.set_action(BookmarkAction::NextLine))
             }
-            Action::Focus => {
-                self.table_offset
-                    .recenter_vertically(self.selected, self.body_height, true)
-            }
+            Action::Focus => void!(self.bookmarks.set_action(BookmarkAction::Focus)),
             Action::GotoTableTop => self.table_offset.home(),
             Action::GotoTableBottom => self.table_offset.vertical_end(),
             Action::GotoTableLeft => self.table_offset.horizontal_home(),
             Action::GotoTableRight => self.table_offset.horizontal_end(),
+            Action::SearchEnter => self.bookmarks.incremental_search(),
+            Action::SearchExit => {
+                self.terminal.hide_cursor()?;
+                self.bookmarks.fixed_search()
+            }
+            Action::SearchPush(c) => self.bookmarks.edit_search(SearchEdit::Push(c)),
+            Action::SearchPop => self.bookmarks.edit_search(SearchEdit::Pop),
+            Action::SearchPrevious => {
+                void!(self.bookmarks.set_action(BookmarkAction::PreviousMatch))
+            }
+            Action::SearchNext => void!(self.bookmarks.set_action(BookmarkAction::NextMatch)),
+        }
+        Ok(action)
+    }
+
+    /// Convert the action to a possible interaction.
+    fn interaction(&self, action: Action) -> Interaction {
+        match action {
+            Action::FilterNext => Interaction::Filter(self.filters.current),
+            Action::Quit => Interaction::Quit,
+            _ => Interaction::None,
         }
     }
 
@@ -744,7 +650,7 @@ impl<'t> TerminalDevice<'t> {
     ///
     /// The first column is the name. The second is the PID. The rest are the metrics.
     fn make_metrics_row<'p>(
-        is_selected: bool,
+        name_status: PidStatus,
         hoffset: usize,
         indent: usize,
         cws: &mut [MaxLength],
@@ -753,7 +659,7 @@ impl<'t> TerminalDevice<'t> {
     ) -> Vec<Cell<'p>> {
         let column_count = cws.len();
         let mut row = Vec::with_capacity(column_count);
-        let name_style = styles.name_style(is_selected);
+        let name_style = styles.name_style(name_status);
         let name = {
             let name = ps.name();
             format!("{:>width$}", name, width = indent + name.len())
@@ -871,21 +777,27 @@ impl<'t> DisplayDevice for TerminalDevice<'t> {
         let line_count = collector.line_count();
         let ncols = self.metric_headers.len() + 2; // process name, PID, metric1, ...
         let nrows = line_count + 2; // metric title, metric subtitle, process1, ...
-        let hoffset = match self.table_offset.horizontal {
-            UnboundedSize::Value(offset) => offset,
-            UnboundedSize::Infinite => ncols - 3,
+        let selected_lineno = match self.bookmarks.execute(
+            collector.lines(),
+            self.table_offset.vertical,
+            self.body_height,
+        ) {
+            (Some(lineno), Some(voffset)) => {
+                self.table_offset.set_vertical(voffset);
+                Some(lineno)
+            }
+            (Some(lineno), None) => Some(lineno),
+            (None, Some(voffset)) => {
+                self.table_offset.set_vertical(voffset);
+                None
+            }
+            (None, None) => None,
         };
-        let voffset = match self.table_offset.vertical {
-            UnboundedSize::Value(offset) => offset,
-            UnboundedSize::Infinite => line_count.saturating_sub(self.body_height),
-        };
-        self.table_offset.set(hoffset, voffset);
+        let (hoffset, voffset) = self
+            .table_offset
+            .set_bounds(ncols - 3, line_count.saturating_sub(self.body_height));
         let nvisible_rows = nrows - voffset;
         let nvisible_cols = ncols - hoffset;
-
-        if self.selected >= line_count {
-            self.selected = line_count.saturating_sub(1);
-        }
 
         let mut cws = Vec::with_capacity(nvisible_cols); // column widths
         cws.resize(nvisible_cols, MaxLength::default());
@@ -907,11 +819,14 @@ impl<'t> DisplayDevice for TerminalDevice<'t> {
                 .lines()
                 .enumerate()
                 .skip(voffset)
-                .for_each(|(line_number, samples)| {
+                .for_each(|(lineno, samples)| {
                     pids.push(samples);
-                    let is_selected = line_number == self.selected;
+                    let is_selected = match selected_lineno {
+                        Some(selected_lineno) => selected_lineno == lineno,
+                        None => false,
+                    };
                     let row = TerminalDevice::make_metrics_row(
-                        is_selected,
+                        self.bookmarks.status(samples.pid()),
                         hoffset,
                         pids.len().saturating_sub(1),
                         &mut cws,
@@ -942,9 +857,9 @@ impl<'t> DisplayDevice for TerminalDevice<'t> {
     fn pause(&mut self, timer: &mut Timer) -> anyhow::Result<PauseStatus> {
         if let Some(timeout) = timer.remaining() {
             if let Some(evt) = self.events.receive_timeout(timeout)? {
-                let action = self.action_from_event(evt);
-                self.react(action, timer);
-                Ok(PauseStatus::Action(action))
+                let keymap = self.keymap();
+                let action = self.react(keymap.action_from_event(evt), timer)?;
+                Ok(PauseStatus::Action(self.interaction(action)))
             } else {
                 Ok(PauseStatus::TimeOut)
             }

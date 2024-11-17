@@ -29,7 +29,7 @@ pub mod format;
 pub mod parsers;
 
 pub(crate) use self::agg::{Aggregation, AggregationSet};
-pub(crate) use self::collector::{Collector, LimitKind, ProcessSamples};
+pub(crate) use self::collector::{Collector, LimitKind, ProcessIdentity, ProcessSamples};
 pub(crate) use self::forest::{process_name, Forest, Process, ProcessError, ProcessInfo};
 pub(crate) use self::managers::{
     FlatProcessManager, ForestProcessManager, ProcessFilter, ProcessManager,
