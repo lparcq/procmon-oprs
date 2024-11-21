@@ -117,7 +117,7 @@ impl DisplaySettings {
             mode: DisplayMode::Any,
             every: DEFAULT_DELAY,
             count: None,
-            format: MetricFormat::Raw,
+            format: MetricFormat::Human,
             theme: None,
         }
     }

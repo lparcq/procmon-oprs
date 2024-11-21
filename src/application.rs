@@ -62,24 +62,38 @@ pub fn list_metrics() {
     }
 }
 
+/// Guess the theme
+fn guess_theme() -> Option<BuiltinTheme> {
+    let timeout = std::time::Duration::from_millis(100);
+    termbg::theme(timeout).ok().map(|theme| match theme {
+        termbg::Theme::Dark => BuiltinTheme::Dark16,
+        termbg::Theme::Light => BuiltinTheme::Light16,
+    })
+}
+
 /// Return the best available display
-fn resolve_display_mode(mode: DisplayMode) -> Result<DisplayMode, Error> {
+fn resolve_display_mode(
+    mode: DisplayMode,
+    theme: Option<BuiltinTheme>,
+) -> Result<(DisplayMode, Option<BuiltinTheme>), Error> {
     match mode {
         DisplayMode::Any => {
             if TerminalDevice::is_available() {
-                Ok(DisplayMode::Terminal)
+                match theme.or_else(guess_theme) {
+                    Some(theme) => Ok((DisplayMode::Terminal, Some(theme))),
+                    None => Ok((DisplayMode::Text, None)),
+                }
             } else {
-                Ok(DisplayMode::Text)
+                Ok((DisplayMode::Text, None))
             }
         }
-        DisplayMode::Terminal => {
-            if TerminalDevice::is_available() {
-                Ok(DisplayMode::Terminal)
-            } else {
-                Err(Error::TerminalNotAvailable)
+        DisplayMode::Terminal => match theme.or_else(guess_theme) {
+            Some(theme) if TerminalDevice::is_available() => {
+                Ok((DisplayMode::Terminal, Some(theme)))
             }
-        }
-        _ => Ok(mode),
+            _ => Err(Error::TerminalNotAvailable),
+        },
+        _ => Ok((mode, None)),
     }
 }
 
@@ -103,7 +117,8 @@ impl<'s> Application<'s> {
         let every = Duration::from_millis((settings.display.every * 1000.0) as u64);
         let mut metrics_parser =
             MetricNamesParser::new(matches!(settings.display.format, MetricFormat::Human));
-        let display_mode = resolve_display_mode(settings.display.mode)?;
+        let (display_mode, theme) =
+            resolve_display_mode(settings.display.mode, settings.display.theme)?;
 
         Ok(Application {
             display_mode,
@@ -111,7 +126,7 @@ impl<'s> Application<'s> {
             count: settings.display.count,
             metrics: metrics_parser.parse(metric_names)?,
             export_settings: &settings.export,
-            theme: settings.display.theme,
+            theme,
         })
     }
 

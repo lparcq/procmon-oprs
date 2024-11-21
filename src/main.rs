@@ -242,8 +242,8 @@ fn start(opt: Opt) -> anyhow::Result<()> {
     // Configuration
     let dirs = cfg::Directories::new(APP_NAME)?;
     let mut settings = dirs.read_config_file(LOG_FILE_NAME)?;
-    // Override config file with command line
 
+    // Override config file with command line
     override_parameter!(settings.display.mode, opt.display);
     override_parameter!(settings.display.every, opt.every);
     override_parameter!(settings.display.format, opt.format);

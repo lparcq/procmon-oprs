@@ -149,7 +149,7 @@ impl Styles {
             },
             Some(BuiltinTheme::Dark16) => Styles {
                 even_row: default_style,
-                odd_row: Style::default().fg(Color::LightBlue),
+                odd_row: default_style,
                 increase: Style::default().fg(Color::LightMagenta),
                 decrease: Style::default().fg(Color::LightGreen),
                 unselected: bold,
@@ -160,7 +160,7 @@ impl Styles {
             },
             Some(BuiltinTheme::Light16) => Styles {
                 even_row: default_style,
-                odd_row: Style::default().bg(Color::Blue),
+                odd_row: default_style,
                 increase: Style::default().fg(Color::Red),
                 decrease: Style::default().fg(Color::Green),
                 unselected: bold,
