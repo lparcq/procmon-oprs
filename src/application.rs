@@ -62,15 +62,6 @@ pub fn list_metrics() {
     }
 }
 
-/// Guess the theme
-fn guess_theme() -> Option<BuiltinTheme> {
-    let timeout = std::time::Duration::from_millis(100);
-    termbg::theme(timeout).ok().map(|theme| match theme {
-        termbg::Theme::Dark => BuiltinTheme::Dark16,
-        termbg::Theme::Light => BuiltinTheme::Light16,
-    })
-}
-
 /// Return the best available display
 fn resolve_display_mode(
     mode: DisplayMode,
@@ -79,7 +70,7 @@ fn resolve_display_mode(
     match mode {
         DisplayMode::Any => {
             if TerminalDevice::is_available() {
-                match theme.or_else(guess_theme) {
+                match theme.or_else(BuiltinTheme::guess) {
                     Some(theme) => Ok((DisplayMode::Terminal, Some(theme))),
                     None => Ok((DisplayMode::Text, None)),
                 }
@@ -87,7 +78,7 @@ fn resolve_display_mode(
                 Ok((DisplayMode::Text, None))
             }
         }
-        DisplayMode::Terminal => match theme.or_else(guess_theme) {
+        DisplayMode::Terminal => match theme.or_else(BuiltinTheme::guess) {
             Some(theme) if TerminalDevice::is_available() => {
                 Ok((DisplayMode::Terminal, Some(theme)))
             }

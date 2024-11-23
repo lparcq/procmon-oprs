@@ -15,6 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use strum_macros::EnumString;
+use supports_color::Stream;
 
 pub use self::input::{is_tty, Event, EventChannel, Key};
 
@@ -32,4 +33,23 @@ pub enum BuiltinTheme {
     Light16,
     #[strum(serialize = "dark16")]
     Dark16,
+}
+
+impl BuiltinTheme {
+    /// Guess the theme
+    pub fn guess() -> Option<BuiltinTheme> {
+        let timeout = std::time::Duration::from_millis(100);
+        termbg::theme(timeout).ok().and_then(|theme| match theme {
+            termbg::Theme::Dark => match supports_color::on(Stream::Stdout) {
+                Some(support) if support.has_16m || support.has_256 => Some(BuiltinTheme::Dark),
+                Some(support) if support.has_basic => Some(BuiltinTheme::Dark16),
+                _ => None,
+            },
+            termbg::Theme::Light => match supports_color::on(Stream::Stdout) {
+                Some(support) if support.has_16m || support.has_256 => Some(BuiltinTheme::Light),
+                Some(support) if support.has_basic => Some(BuiltinTheme::Light16),
+                _ => None,
+            },
+        })
+    }
 }

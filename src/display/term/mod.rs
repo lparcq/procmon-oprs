@@ -127,9 +127,9 @@ impl Styles {
         match theme {
             Some(BuiltinTheme::Dark) => Styles {
                 even_row: default_style,
-                odd_row: Style::default().bg(Color::Rgb(40, 40, 40)),
-                increase: Style::default().fg(Color::Rgb(235, 45, 83)),
-                decrease: Style::default().fg(Color::Rgb(166, 255, 77)),
+                odd_row: Style::default().bg(Color::Indexed(238)),
+                increase: Style::default().fg(Color::Indexed(196)),
+                decrease: Style::default().fg(Color::Indexed(46)),
                 unselected: bold,
                 selected: Style::default().fg(Color::Black).bg(Color::LightMagenta),
                 matching: Style::default().fg(Color::LightMagenta),
@@ -138,9 +138,9 @@ impl Styles {
             },
             Some(BuiltinTheme::Light) => Styles {
                 even_row: default_style,
-                odd_row: Style::default().bg(Color::Rgb(215, 215, 215)),
-                increase: Style::default().fg(Color::Rgb(220, 20, 60)),
-                decrease: Style::default().fg(Color::Rgb(102, 204, 00)),
+                odd_row: Style::default().bg(Color::Indexed(254)),
+                increase: Style::default().fg(Color::Indexed(124)),
+                decrease: Style::default().fg(Color::Indexed(40)),
                 unselected: bold,
                 selected: Style::default().fg(Color::White).bg(Color::Magenta),
                 matching: Style::default().fg(Color::Magenta),
