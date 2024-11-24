@@ -19,7 +19,7 @@ use crate::{
     process::{Aggregation, Collector, FormattedMetric, ProcessIdentity},
 };
 
-use super::{DisplayDevice, SliceIter};
+use super::{DisplayDevice, Pane, SliceIter};
 
 const REPEAT_HEADER_EVERY: u16 = 20;
 const RESIZE_IF_COLUMNS_SHRINK: usize = 2;
@@ -307,22 +307,28 @@ impl DisplayDevice for TextDevice {
         Ok(())
     }
 
-    fn render(&mut self, collector: &Collector, targets_updated: bool) -> anyhow::Result<()> {
-        if collector.is_empty() {
-            eprintln!("no process found")
-        } else {
-            self.table.clear_titles();
-            self.table.clear_values();
-            collector.lines().for_each(|pstat| {
-                let name = format!("{} [{}]", pstat.name(), pstat.pid());
-                self.table.push_title(name);
-                pstat.samples().for_each(|sample| {
-                    sample
-                        .strings()
-                        .for_each(|value| self.table.push_value(value))
-                });
-            });
-            self.table.print(targets_updated);
+    fn render(&mut self, pane: Pane, redraw: bool) -> anyhow::Result<()> {
+        match pane {
+            Pane::Main(collector) => {
+                if collector.is_empty() {
+                    eprintln!("no process found")
+                } else {
+                    self.table.clear_titles();
+                    self.table.clear_values();
+                    collector.lines().for_each(|pstat| {
+                        let name = format!("{} [{}]", pstat.name(), pstat.pid());
+                        self.table.push_title(name);
+                        pstat.samples().for_each(|sample| {
+                            sample
+                                .strings()
+                                .for_each(|value| self.table.push_value(value))
+                        });
+                    });
+                    self.table.print(redraw);
+                }
+            }
+            Pane::Process(_) => panic!("no process pane for text device"),
+            Pane::Help => panic!("no process help for text device"),
         }
         Ok(())
     }

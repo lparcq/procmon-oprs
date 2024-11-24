@@ -29,10 +29,10 @@ pub mod format;
 pub mod parsers;
 
 pub(crate) use self::agg::{Aggregation, AggregationSet};
-pub(crate) use self::collector::{Collector, LimitKind, ProcessIdentity, ProcessSamples};
+pub(crate) use self::collector::{Collector, LimitKind, ProcessIdentity, ProcessSamples, Sample};
 pub(crate) use self::forest::{process_name, Forest, Process, ProcessError, ProcessInfo};
 pub(crate) use self::managers::{
-    FlatProcessManager, ForestProcessManager, ProcessFilter, ProcessManager,
+    FlatProcessManager, ForestProcessManager, ProcessDetails, ProcessFilter, ProcessManager,
 };
 pub(crate) use self::metrics::{FormattedMetric, MetricDataType, MetricId, MetricNamesParser};
 pub(crate) use self::stat::{Limit, LimitValue, ProcessStat, SystemConf, SystemStat};

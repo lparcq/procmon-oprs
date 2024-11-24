@@ -364,7 +364,7 @@ myself = yes
         let mut settings = Settings::new();
         assert_eq!(DisplayMode::Any, settings.display.mode);
         assert_eq!(super::DEFAULT_DELAY, settings.display.every);
-        assert_eq!(MetricFormat::Raw, settings.display.format);
+        assert_eq!(MetricFormat::Human, settings.display.format);
         assert_eq!(None, settings.display.theme);
         assert_eq!(ExportType::None, settings.export.kind);
         assert_eq!(PathBuf::from("."), settings.export.dir);

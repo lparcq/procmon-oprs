@@ -47,6 +47,7 @@ const KEY_SEARCH_PREVIOUS_CHAR: char = 'N';
 const KEY_SEARCH_PREVIOUS: Key = Key::Char(KEY_SEARCH_PREVIOUS_CHAR);
 const KEY_SEARCH_NEXT_CHAR: char = 'n';
 const KEY_SEARCH_NEXT: Key = Key::Char(KEY_SEARCH_NEXT_CHAR);
+const KEY_ENTER: Key = Key::Char('\n');
 const KEY_SLOWER: Key = Key::Char(KEY_SLOWER_CHAR);
 const KEY_SLOWER_CHAR: char = '-';
 const KEY_QUIT: Key = Key::Esc;
@@ -62,8 +63,9 @@ pub enum Action {
     GotoTableLeft,
     GotoTableRight,
     GotoTableTop,
-    HelpEnter,
-    HelpExit,
+    SwitchToHelp,
+    SwitchBack,
+    SwitchToProcess,
     MultiplyTimeout(u16),
     Quit,
     ScrollDown,
@@ -88,11 +90,13 @@ pub enum KeyMap {
     Help,
     FixedSearch,
     IncrementalSearch,
+    Details,
 }
 
 impl KeyMap {
     /// Convert an input event to an action
     pub fn action_from_event(self, evt: Event) -> Action {
+        //log::debug!("event: {evt:?}");
         if self.intersects(KeyMap::IncrementalSearch) {
             match evt {
                 Event::Key(Key::Char('\n')) => Action::SearchExit,
@@ -100,9 +104,9 @@ impl KeyMap {
                 Event::Key(Key::Backspace) => Action::SearchPop,
                 _ => Action::None,
             }
-        } else if self.intersects(KeyMap::Help) {
+        } else if self.intersects(KeyMap::Help) || self.intersects(KeyMap::Details) {
             match evt {
-                Event::Key(KEY_QUIT) => Action::HelpExit,
+                Event::Key(KEY_QUIT) => Action::SwitchBack,
                 Event::Key(Key::PageDown) => Action::ScrollDown,
                 Event::Key(Key::PageUp) => Action::ScrollUp,
                 _ => Action::None,
@@ -115,7 +119,8 @@ impl KeyMap {
                 Event::Key(KEY_GOTO_TBL_LEFT) => Action::GotoTableLeft,
                 Event::Key(KEY_GOTO_TBL_RIGHT) => Action::GotoTableRight,
                 Event::Key(KEY_GOTO_TBL_TOP) => Action::GotoTableTop,
-                Event::Key(KEY_HELP) => Action::HelpEnter,
+                Event::Key(KEY_ENTER) => Action::SwitchToProcess,
+                Event::Key(KEY_HELP) => Action::SwitchToHelp,
                 Event::Key(KEY_NEXT_FILTER) => Action::FilterNext,
                 Event::Key(KEY_SEARCH) => Action::SearchEnter,
                 Event::Key(KEY_SEARCH_PREVIOUS) if self.intersects(KeyMap::FixedSearch) => {
@@ -195,7 +200,7 @@ pub fn menu() -> Vec<MenuEntry> {
         MenuEntry::with_key(
             KEY_QUIT,
             "Quit",
-            KeyMap::Main | KeyMap::FixedSearch | KeyMap::Help,
+            KeyMap::Main | KeyMap::FixedSearch | KeyMap::Help | KeyMap::Details,
         ),
         MenuEntry::with_key(KEY_HELP, "Help", KeyMap::Main),
         MenuEntry::new(

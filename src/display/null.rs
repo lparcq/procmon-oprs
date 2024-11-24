@@ -14,9 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::process::{Collector, FormattedMetric};
+use crate::process::FormattedMetric;
 
-use super::{DisplayDevice, SliceIter};
+use super::{DisplayDevice, Pane, SliceIter};
 
 /// Null device
 pub struct NullDevice {}
@@ -36,7 +36,7 @@ impl DisplayDevice for NullDevice {
         Ok(())
     }
 
-    fn render(&mut self, _collector: &Collector, _targets_updated: bool) -> anyhow::Result<()> {
+    fn render(&mut self, _pane: Pane, _redraw: bool) -> anyhow::Result<()> {
         Ok(())
     }
 }

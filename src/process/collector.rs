@@ -17,6 +17,7 @@
 use itertools::izip;
 use libc::pid_t;
 use std::{
+    borrow::Cow,
     cmp::Ordering,
     collections::{BTreeMap, BTreeSet, VecDeque},
     slice::Iter as SliceIter,
@@ -460,7 +461,7 @@ impl<'b> Iterator for LineIter<'b> {
 /// Collect raw samples from target and returns computed values
 pub struct Collector<'a> {
     /// List of tracked metrics.
-    metrics: &'a [FormattedMetric],
+    metrics: Cow<'a, [FormattedMetric]>,
     /// Samples for each process.
     samples: BTreeMap<pid_t, ProcessSamples>,
     /// Process IDs in insertion order. The B-tree keeps the ordering in PID order.
@@ -470,7 +471,7 @@ pub struct Collector<'a> {
 }
 
 impl<'a> Collector<'a> {
-    pub fn new(metrics: &'a [FormattedMetric]) -> Collector {
+    pub fn new(metrics: Cow<'a, [FormattedMetric]>) -> Collector {
         Collector {
             metrics,
             samples: BTreeMap::new(),
@@ -503,7 +504,7 @@ impl<'a> Collector<'a> {
             Some(samples) => {
                 samples.parent_pid = parent_pid;
                 self.updater
-                    .update_computed_values(self.metrics, samples, values)
+                    .update_computed_values(&self.metrics, samples, values)
             }
             None => {
                 if self
@@ -514,7 +515,7 @@ impl<'a> Collector<'a> {
                             target_name,
                             pid,
                             parent_pid,
-                            self.metrics,
+                            &self.metrics,
                             values,
                             limits,
                         ),

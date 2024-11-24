@@ -19,13 +19,13 @@ use itertools::izip;
 use libc::pid_t;
 use ratatui::{
     backend::TermionBackend,
-    layout::{Alignment, Constraint, Direction, Layout, Position, Size},
+    layout::{Alignment, Constraint, Direction, Layout, Position, Rect, Size},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, Wrap},
-    Terminal,
+    Frame, Terminal,
 };
-use std::{cmp::Ordering, io, time::Duration};
+use std::{cmp::Ordering, fmt, io, time::Duration};
 use termion::{
     raw::{IntoRawMode, RawTerminal},
     screen::{AlternateScreen, IntoAlternateScreen},
@@ -35,13 +35,13 @@ use crate::{
     clock::Timer,
     console::{is_tty, BuiltinTheme, EventChannel},
     process::{
-        format::human_duration, Aggregation, Collector, FormattedMetric, LimitKind,
+        format::human_duration, Aggregation, Collector, FormattedMetric, LimitKind, ProcessDetails,
         ProcessIdentity, ProcessSamples,
     },
 };
 use num_traits::Zero;
 
-use super::{DisplayDevice, PauseStatus, SliceIter};
+use super::{DisplayDevice, Pane, PaneKind, PauseStatus, SliceIter};
 
 mod input;
 
@@ -93,6 +93,9 @@ By default, only userland processes are displayed. Use 'F' to change.
 pub enum Interaction {
     None,
     Filter(usize),
+    SwitchToHelp,
+    SwitchBack,
+    SelectPid(pid_t),
     Quit,
 }
 
@@ -359,6 +362,17 @@ fn menu_line(entries: &[MenuEntry], keymap: KeyMap) -> Text<'static> {
 struct MaxLength(u16);
 
 impl MaxLength {
+    fn with_lines<'a, I>(items: I) -> Self
+    where
+        I: IntoIterator<Item = &'a str>,
+    {
+        let mut ml = MaxLength(0);
+        for item in items.into_iter() {
+            ml.check(item);
+        }
+        ml
+    }
+
     /// The length:
     fn len(&self) -> u16 {
         let Self(length) = self;
@@ -379,10 +393,10 @@ impl MaxLength {
     }
 }
 
-#[derive(Debug)]
-enum Pane {
-    Tree,
-    Help,
+macro_rules! format_metric {
+    ($metrics:expr, $field:ident) => {
+        TerminalDevice::format_option($metrics.as_ref().and_then(|m| m.$field.strings().next()))
+    };
 }
 
 /// Print on standard output as a table
@@ -419,8 +433,8 @@ pub struct TerminalDevice<'t> {
     bookmarks: Bookmarks,
     /// Menu
     menu: Vec<MenuEntry>,
-    /// Pane
-    pane: Pane,
+    /// Pane kind.
+    pane_kind: PaneKind,
     /// Help height
     help_height: usize,
 }
@@ -452,7 +466,7 @@ impl<'t> TerminalDevice<'t> {
             body_height: 0,
             bookmarks: Bookmarks::default(),
             menu: menu(),
-            pane: Pane::Tree,
+            pane_kind: PaneKind::Main,
             help_height: HELP.lines().count(),
         })
     }
@@ -462,14 +476,12 @@ impl<'t> TerminalDevice<'t> {
     }
 
     fn keymap(&self) -> KeyMap {
-        if matches!(self.pane, Pane::Help) {
-            KeyMap::Help
-        } else if self.bookmarks.is_incremental_search() {
-            KeyMap::IncrementalSearch
-        } else if self.bookmarks.is_search() {
-            KeyMap::FixedSearch
-        } else {
-            KeyMap::Main
+        match self.pane_kind {
+            PaneKind::Help => KeyMap::Help,
+            PaneKind::Process => KeyMap::Details,
+            PaneKind::Main if self.bookmarks.is_incremental_search() => KeyMap::IncrementalSearch,
+            PaneKind::Main if self.bookmarks.is_search() => KeyMap::FixedSearch,
+            PaneKind::Main => KeyMap::Main,
         }
     }
 
@@ -560,7 +572,7 @@ impl<'t> TerminalDevice<'t> {
             body_height = inner_area.height - headers_height;
         })?;
         self.overflow = new_overflow;
-        self.vertical_scroll = if body_height > 2 { body_height / 2 } else { 1 } as usize;
+        self.vertical_scroll = body_height.div_ceil(2) as usize;
         self.body_height = body_height as usize;
         Ok(())
     }
@@ -570,12 +582,8 @@ impl<'t> TerminalDevice<'t> {
         const MAX_TIMEOUT_SECS: u64 = 24 * 3_600; // 24 hours
         const MIN_TIMEOUT_MSECS: u128 = 1;
         match action {
-            Action::None | Action::Quit => {}
-            Action::HelpEnter => {
-                self.pane = Pane::Help;
-                self.pane_offset = 0;
-            }
-            Action::HelpExit => self.pane = Pane::Tree,
+            Action::None | Action::Quit | Action::SwitchToHelp | Action::SwitchToProcess => {}
+            Action::SwitchBack => self.pane_offset = 0,
             Action::FilterNext => self.filters.advance(),
             Action::MultiplyTimeout(factor) => {
                 let delay = timer.get_delay();
@@ -607,23 +615,23 @@ impl<'t> TerminalDevice<'t> {
                     self.table_offset.scroll_right(1);
                 }
             }
-            Action::ScrollUp => match self.pane {
-                Pane::Tree => {
+            Action::ScrollUp => match self.pane_kind {
+                PaneKind::Main => {
                     self.bookmarks.clear_search();
                     self.table_offset.scroll_up(self.vertical_scroll);
                 }
-                Pane::Help => {
+                _ => {
                     self.pane_offset = self.pane_offset.saturating_sub(self.vertical_scroll as u16);
                 }
             },
-            Action::ScrollDown => match self.pane {
-                Pane::Tree => {
+            Action::ScrollDown => match self.pane_kind {
+                PaneKind::Main => {
                     self.bookmarks.clear_search();
                     if self.overflow.vertical {
                         self.table_offset.scroll_down(self.vertical_scroll);
                     }
                 }
-                Pane::Help => {
+                _ => {
                     self.pane_offset += self.vertical_scroll as u16;
                 }
             },
@@ -660,6 +668,12 @@ impl<'t> TerminalDevice<'t> {
     fn interaction(&self, action: Action) -> Interaction {
         match action {
             Action::FilterNext => Interaction::Filter(self.filters.current),
+            Action::SwitchToHelp => Interaction::SwitchToHelp,
+            Action::SwitchToProcess => match self.bookmarks.selected() {
+                Some(pid) => Interaction::SelectPid(*pid),
+                None => Interaction::None,
+            },
+            Action::SwitchBack => Interaction::SwitchBack,
             Action::Quit => Interaction::Quit,
             _ => Interaction::None,
         }
@@ -779,7 +793,8 @@ impl<'t> TerminalDevice<'t> {
         row
     }
 
-    fn render_tree(&mut self, collector: &Collector, _targets_updated: bool) -> anyhow::Result<()> {
+    fn render_tree(&mut self, collector: &Collector) -> anyhow::Result<()> {
+        self.pane_kind = PaneKind::Main;
         let line_count = collector.line_count();
         let ncols = self.metric_headers.len() + 2; // process name, PID, metric1, ...
         let nrows = line_count + 2; // metric title, metric subtitle, process1, ...
@@ -860,6 +875,7 @@ impl<'t> TerminalDevice<'t> {
     }
 
     fn render_help(&mut self) -> anyhow::Result<()> {
+        self.pane_kind = PaneKind::Help;
         let menu = menu_line(&self.menu, self.keymap());
         let help_height = self.help_height as u16;
         let mut pane_offset = self.pane_offset;
@@ -868,7 +884,7 @@ impl<'t> TerminalDevice<'t> {
             const BORDERS_SIZE: u16 = 2;
             const MENU_HEIGHT: u16 = 1;
             let screen = frame.area();
-            let body_height = screen.height - MENU_HEIGHT;
+            let body_height = screen.height - BORDERS_SIZE - MENU_HEIGHT;
             let rects = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(body_height), Constraint::Min(0)].as_ref())
@@ -889,8 +905,122 @@ impl<'t> TerminalDevice<'t> {
                 .scroll((pane_offset, 0));
             frame.render_widget(help, rects[0]);
             frame.render_widget(Paragraph::new(menu), rects[1]);
+            self.vertical_scroll = body_height.div_ceil(2) as usize;
         })?;
         self.pane_offset = pane_offset;
+        Ok(())
+    }
+
+    fn render_fields(
+        frame: &mut Frame<'_>,
+        area: Rect,
+        title: &str,
+        lines: &[(&'static str, String)],
+    ) {
+        let rows = lines.iter().map(|(name, value)| {
+            Row::new(vec![
+                Text::from(name.to_string()),
+                Text::from(value.to_string()).alignment(Alignment::Right),
+            ])
+        });
+        let cw1 = MaxLength::with_lines(lines.iter().map(|(name, _)| *name));
+        let constraints = [Constraint::Length(cw1.len()), Constraint::Min(0)];
+        let table = Table::new(rows, constraints).block(
+            Block::new()
+                .title(title)
+                .title_alignment(Alignment::Center)
+                .borders(Borders::ALL),
+        );
+        frame.render_widget(table, area);
+    }
+
+    fn format_option<D: fmt::Display>(option: Option<D>) -> String {
+        match option {
+            Some(value) => value.to_string(),
+            None => "<unknown>".to_string(),
+        }
+    }
+
+    fn format_result<D: fmt::Display, E>(result: Result<D, E>) -> String {
+        TerminalDevice::format_option(result.ok())
+    }
+
+    fn render_details(&mut self, details: &ProcessDetails) -> anyhow::Result<()> {
+        self.pane_kind = PaneKind::Process;
+        let menu = menu_line(&self.menu, KeyMap::Details);
+        let pane_offset = self.pane_offset;
+
+        let process = details.process();
+        let cmdline = process
+            .cmdline()
+            .map(|v| v.join(" "))
+            .unwrap_or_else(|_| String::from("<zombie>"));
+        let metrics = details.metrics();
+        let proc_info = &[
+            ("Name", format!(" {} ", details.process_name())),
+            ("PID", format!("{}", process.pid())),
+            ("Owner", TerminalDevice::format_result(process.uid())),
+            ("Threads", format_metric!(metrics, thread_count)),
+        ];
+        let file_info = &[
+            ("Descriptors", format_metric!(metrics, fd_all)),
+            ("Files", format_metric!(metrics, fd_file)),
+            ("I/O Read", format_metric!(metrics, io_read_total)),
+            ("I/O Write", format_metric!(metrics, io_write_total)),
+        ];
+        let cpu_info = &[
+            ("CPU", format_metric!(metrics, time_cpu)),
+            ("Elapsed", format_metric!(metrics, time_elapsed)),
+        ];
+        let mem_info = &[
+            ("VM", format_metric!(metrics, mem_vm)),
+            ("RSS", format_metric!(metrics, mem_rss)),
+            ("Data", format_metric!(metrics, mem_data)),
+        ];
+
+        self.terminal.draw(|frame| {
+            const BORDERS_SIZE: u16 = 2;
+            //const MENU_HEIGHT: u16 = 1;
+            let screen = frame.area();
+            let inner_width = screen.width - BORDERS_SIZE;
+            let block1_height = (cmdline.len() as u16).div_ceil(inner_width) + BORDERS_SIZE;
+            let block2_height =
+                std::cmp::max(proc_info.len(), file_info.len()) as u16 + BORDERS_SIZE;
+            let block3_height = std::cmp::max(cpu_info.len(), mem_info.len()) as u16 + BORDERS_SIZE;
+
+            let rects = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints(
+                    [
+                        Constraint::Length(block1_height),
+                        Constraint::Length(block2_height),
+                        Constraint::Length(block3_height),
+                        Constraint::Min(0),
+                    ]
+                    .as_ref(),
+                )
+                .split(screen);
+            let cmdline = Paragraph::new(cmdline)
+                .block(
+                    Block::new()
+                        .title(" Command Line ")
+                        .title_alignment(Alignment::Center)
+                        .borders(Borders::ALL),
+                )
+                .wrap(Wrap { trim: false });
+            frame.render_widget(cmdline, rects[0]);
+
+            let two_cols_constraint = &[Constraint::Percentage(50), Constraint::Percentage(50)];
+            let block2_rects = Layout::horizontal(two_cols_constraint).split(rects[1]);
+            TerminalDevice::render_fields(frame, block2_rects[0], "Process", proc_info);
+            TerminalDevice::render_fields(frame, block2_rects[1], "Files", file_info);
+            let block3_rects = Layout::horizontal(two_cols_constraint).split(rects[2]);
+            TerminalDevice::render_fields(frame, block3_rects[0], "Time", cpu_info);
+            TerminalDevice::render_fields(frame, block3_rects[1], "Memory", mem_info);
+            frame.render_widget(Paragraph::new(menu), rects[3]);
+        })?;
+        self.pane_offset = pane_offset;
+        self.vertical_scroll = 1; // scrolling by block not by line.
         Ok(())
     }
 }
@@ -940,9 +1070,11 @@ impl<'t> DisplayDevice for TerminalDevice<'t> {
         Ok(())
     }
 
-    fn render(&mut self, collector: &Collector, targets_updated: bool) -> anyhow::Result<()> {
-        match self.pane {
-            Pane::Tree => self.render_tree(collector, targets_updated),
+    /// Render the current pane.
+    fn render(&mut self, pane: Pane, _redraw: bool) -> anyhow::Result<()> {
+        match pane {
+            Pane::Main(collector) => self.render_tree(collector),
+            Pane::Process(details) => self.render_details(details),
             Pane::Help => self.render_help(),
         }
     }

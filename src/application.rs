@@ -1,4 +1,4 @@
-// Oprs -- process monitor for Linux
+// Oprs -- details monitor for Linux
 // Copyright (C) 2020-2024  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
@@ -16,6 +16,7 @@
 
 use log::info;
 use std::{
+    borrow::Cow,
     io::Write,
     time::{Duration, SystemTime},
 };
@@ -26,12 +27,14 @@ use crate::{
     clock::{DriftMonitor, Timer},
     console::BuiltinTheme,
     display::{
-        DisplayDevice, FilterLoop, Interaction, NullDevice, PauseStatus, TerminalDevice, TextDevice,
+        DisplayDevice, FilterLoop, Interaction, NullDevice, Pane, PaneKind, PauseStatus,
+        TerminalDevice, TextDevice,
     },
     export::{CsvExporter, Exporter, RrdExporter},
     process::{
         Collector, FlatProcessManager, ForestProcessManager, FormattedMetric, MetricDataType,
-        MetricId, MetricNamesParser, ProcessFilter, ProcessManager, SystemConf, TargetId,
+        MetricId, MetricNamesParser, ProcessDetails, ProcessFilter, ProcessManager, SystemConf,
+        TargetId,
     },
     sighdr::SignalHandler,
 };
@@ -88,7 +91,7 @@ fn resolve_display_mode(
     }
 }
 
-/// Application displaying the process metrics
+/// Application displaying the details metrics
 pub struct Application<'s> {
     display_mode: DisplayMode,
     every: Duration,
@@ -96,6 +99,7 @@ pub struct Application<'s> {
     metrics: Vec<FormattedMetric>,
     export_settings: &'s ExportSettings,
     theme: Option<BuiltinTheme>,
+    human: bool,
 }
 
 /// Get export type
@@ -106,8 +110,8 @@ impl<'s> Application<'s> {
         metric_names: &[&'m str],
     ) -> anyhow::Result<Application<'s>> {
         let every = Duration::from_millis((settings.display.every * 1000.0) as u64);
-        let mut metrics_parser =
-            MetricNamesParser::new(matches!(settings.display.format, MetricFormat::Human));
+        let human = matches!(settings.display.format, MetricFormat::Human);
+        let mut metrics_parser = MetricNamesParser::new(human);
         let (display_mode, theme) =
             resolve_display_mode(settings.display.mode, settings.display.theme)?;
 
@@ -118,6 +122,7 @@ impl<'s> Application<'s> {
             metrics: metrics_parser.parse(metric_names)?,
             export_settings: &settings.export,
             theme,
+            human,
         })
     }
 
@@ -140,7 +145,7 @@ impl<'s> Application<'s> {
                 DisplayMode::Terminal => {
                     let device = Box::new(TerminalDevice::new(self.every, self.theme, filters)?);
                     let mut tmgt = ForestProcessManager::new(system_conf, &self.metrics)?;
-                    self.run_loop(&mut tmgt, device, true)?;
+                    self.run_loop(&mut tmgt, device, system_conf, true)?;
                 }
                 _ => return Err(anyhow::anyhow!(Error::NoTargets)),
             }
@@ -155,7 +160,7 @@ impl<'s> Application<'s> {
                 _ => Box::new(NullDevice::new()),
             };
             let mut tmgt = FlatProcessManager::new(system_conf, &self.metrics, target_ids)?;
-            self.run_loop(&mut tmgt, device, is_interactive)?;
+            self.run_loop(&mut tmgt, device, system_conf, is_interactive)?;
         }
         Ok(())
     }
@@ -164,9 +169,12 @@ impl<'s> Application<'s> {
         &self,
         tmgt: &mut dyn ProcessManager,
         mut device: Box<dyn DisplayDevice>,
+        system_conf: &'_ SystemConf,
         is_interactive: bool,
     ) -> anyhow::Result<()> {
-        let mut collector = Collector::new(&self.metrics);
+        let mut collector = Collector::new(Cow::Borrowed(&self.metrics));
+        let mut details: Option<ProcessDetails> = None;
+        let mut pane_kind = PaneKind::Main;
 
         device.open(self.metrics.iter())?;
         let mut exporter: Option<Box<dyn Exporter>> = match self.export_settings.kind {
@@ -193,6 +201,9 @@ impl<'s> Application<'s> {
             let targets_updated = if timer.expired() {
                 let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
                 let targets_updated = tmgt.refresh(&mut collector)?;
+                if let Some(details) = &mut details {
+                    details.refresh(system_conf);
+                }
                 if let Some(ref mut exporter) = exporter {
                     exporter.export(&collector, &timestamp)?;
                 }
@@ -201,7 +212,14 @@ impl<'s> Application<'s> {
             } else {
                 false
             };
-            device.render(&collector, targets_updated)?;
+            device.render(
+                match pane_kind {
+                    PaneKind::Main => Pane::Main(&collector),
+                    PaneKind::Process => Pane::Process(details.as_ref().unwrap()),
+                    PaneKind::Help => Pane::Help,
+                },
+                targets_updated,
+            )?;
 
             if let Some(count) = self.count {
                 loop_number += 1;
@@ -214,6 +232,25 @@ impl<'s> Application<'s> {
                     match action {
                         Interaction::Quit => break,
                         Interaction::Filter(n) => tmgt.set_filter(ProcessFilter::VARIANTS[n]),
+                        Interaction::SwitchToHelp => pane_kind = PaneKind::Help,
+                        Interaction::SwitchBack => match (pane_kind, &details) {
+                            (PaneKind::Help, Some(_)) => pane_kind = PaneKind::Process,
+                            (PaneKind::Process, Some(_)) => {
+                                details = None;
+                                pane_kind = PaneKind::Main;
+                            }
+                            (_, _) => pane_kind = PaneKind::Main,
+                        },
+                        Interaction::SelectPid(pid) => {
+                            details = ProcessDetails::new(pid, self.human).ok();
+                            match details {
+                                Some(ref mut details) => {
+                                    pane_kind = PaneKind::Process;
+                                    details.refresh(system_conf);
+                                }
+                                None => log::error!("{pid}: details cannot be selected"),
+                            }
+                        }
                         Interaction::None => (),
                     }
                 }

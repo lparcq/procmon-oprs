@@ -18,7 +18,7 @@ use std::slice::Iter as SliceIter;
 
 use crate::{
     clock::Timer,
-    process::{Collector, FormattedMetric},
+    process::{Collector, FormattedMetric, ProcessDetails},
 };
 
 pub mod null;
@@ -32,6 +32,23 @@ pub enum PauseStatus {
     Action(Interaction),
 }
 
+#[derive(Debug)]
+pub enum PaneKind {
+    Main,
+    Process,
+    Help,
+}
+
+/// Pane to display.
+pub enum Pane<'a, 'p> {
+    /// The main pane to display process metrics.
+    Main(&'p Collector<'a>),
+    /// The pane to display a single process.
+    Process(&'p ProcessDetails<'a>),
+    /// The pane for help.
+    Help,
+}
+
 pub trait DisplayDevice {
     /// Initialize the device with the metrics.
     fn open(&mut self, metrics: SliceIter<FormattedMetric>) -> anyhow::Result<()>;
@@ -40,7 +57,10 @@ pub trait DisplayDevice {
     fn close(&mut self) -> anyhow::Result<()>;
 
     /// Render the metrics on the device.
-    fn render(&mut self, collector: &Collector, targets_updated: bool) -> anyhow::Result<()>;
+    ///
+    /// If `redraw` is true, it is a hint to tell to the device to redraw
+    /// entirely the output.
+    fn render(&mut self, pane: Pane, redraw: bool) -> anyhow::Result<()>;
 
     /// Pause for the given duration.
     fn pause(&mut self, _: &mut Timer) -> anyhow::Result<PauseStatus> {

@@ -78,6 +78,11 @@ pub fn process_name(process: &Process) -> String {
     })
 }
 
+/// New process.
+pub fn new_process(pid: pid_t) -> ProcessResult<Process> {
+    Process::new(pid).map_err(|_| ProcessError::UnknownProcess(pid))
+}
+
 #[derive(Debug)]
 /// Information about for an existing or past process.
 pub struct ProcessInfo {
@@ -91,7 +96,7 @@ pub struct ProcessInfo {
 }
 
 impl ProcessInfo {
-    fn new(process: Process) -> Result<Self, ProcessError> {
+    fn new(process: Process) -> ProcessResult<Self> {
         let pid = process.pid();
         let stat = process
             .stat()
@@ -794,7 +799,7 @@ mod tests {
         ) where
             I: Iterator<Item = Process>,
         {
-            let pset = BTreeSet::from_iter(selected_pids.into_iter());
+            let pset = BTreeSet::from_iter(selected_pids.iter());
             forest.refresh_from(processes, |p| pset.contains(&p.pid()));
             for (n, pid) in all_pids.iter().enumerate() {
                 let is_selected = pset.contains(pid);

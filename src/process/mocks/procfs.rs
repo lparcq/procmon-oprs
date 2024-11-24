@@ -99,6 +99,10 @@ pub(crate) mod process {
                 .ok_or_else(|| new_error("no command line"))
         }
 
+        pub(crate) fn uid(&self) -> ProcResult<u32> {
+            Ok(0)
+        }
+
         pub(crate) fn exe(&self) -> ProcResult<PathBuf> {
             self.exe
                 .as_ref()
