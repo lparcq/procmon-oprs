@@ -76,9 +76,10 @@ Movements
 Searching
 ---------
 
-Start an incremental search with '/'. Hit enter to validate the search string.
-
-Move to the next match with 'n' and the previous match with 'N'.
+- Start an incremental search with '/'.
+  . Hit enter to validate the search string.
+  . Hit Ctrl-c to cancel the search.
+- Move to the next match with 'n' and the previous match with 'N'.
 
 Miscellaneous
 -------------
@@ -659,6 +660,7 @@ impl<'t> TerminalDevice<'t> {
             Action::SearchPrevious => {
                 void!(self.bookmarks.set_action(BookmarkAction::PreviousMatch))
             }
+            Action::SearchCancel => self.bookmarks.clear_search(),
             Action::SearchNext => void!(self.bookmarks.set_action(BookmarkAction::NextMatch)),
         }
         Ok(action)
@@ -798,22 +800,13 @@ impl<'t> TerminalDevice<'t> {
         let line_count = collector.line_count();
         let ncols = self.metric_headers.len() + 2; // process name, PID, metric1, ...
         let nrows = line_count + 2; // metric title, metric subtitle, process1, ...
-        let selected_lineno = match self.bookmarks.execute(
+        if let (_, Some(voffset)) = self.bookmarks.execute(
             collector.lines(),
             self.table_offset.vertical,
             self.body_height,
         ) {
-            (Some(lineno), Some(voffset)) => {
-                self.table_offset.set_vertical(voffset);
-                Some(lineno)
-            }
-            (Some(lineno), None) => Some(lineno),
-            (None, Some(voffset)) => {
-                self.table_offset.set_vertical(voffset);
-                None
-            }
-            (None, None) => None,
-        };
+            self.table_offset.set_vertical(voffset);
+        }
         let (hoffset, voffset) = self
             .table_offset
             .set_bounds(ncols - 3, line_count.saturating_sub(self.body_height));
@@ -836,36 +829,29 @@ impl<'t> TerminalDevice<'t> {
         let display_limits = self.display_limits.clone();
         let rows = {
             let mut rows: Vec<Vec<Cell>> = Vec::with_capacity(nvisible_rows);
-            collector
-                .lines()
-                .enumerate()
-                .skip(voffset)
-                .for_each(|(lineno, samples)| {
-                    pids.push(samples);
-                    let is_selected = match selected_lineno {
-                        Some(selected_lineno) => selected_lineno == lineno,
-                        None => false,
-                    };
-                    let row = TerminalDevice::make_metrics_row(
-                        self.bookmarks.status(samples.pid()),
+            collector.lines().skip(voffset).for_each(|samples| {
+                pids.push(samples);
+                let pid_status = self.bookmarks.status(samples.pid());
+                let row = TerminalDevice::make_metrics_row(
+                    pid_status,
+                    hoffset,
+                    pids.len().saturating_sub(1), // indent
+                    &mut cws,
+                    samples,
+                    &self.styles,
+                );
+                rows.push(row);
+                if matches!(pid_status, PidStatus::Selected) && with_limits {
+                    let row = TerminalDevice::make_limits_row(
                         hoffset,
-                        pids.len().saturating_sub(1),
                         &mut cws,
                         samples,
-                        &self.styles,
+                        display_limits.clone(),
+                        &self.limit_slots,
                     );
                     rows.push(row);
-                    if is_selected && with_limits {
-                        let row = TerminalDevice::make_limits_row(
-                            hoffset,
-                            &mut cws,
-                            samples,
-                            display_limits.clone(),
-                            &self.limit_slots,
-                        );
-                        rows.push(row);
-                    }
-                });
+                }
+            });
             rows
         };
 

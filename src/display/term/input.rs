@@ -47,6 +47,7 @@ const KEY_SEARCH_PREVIOUS_CHAR: char = 'N';
 const KEY_SEARCH_PREVIOUS: Key = Key::Char(KEY_SEARCH_PREVIOUS_CHAR);
 const KEY_SEARCH_NEXT_CHAR: char = 'n';
 const KEY_SEARCH_NEXT: Key = Key::Char(KEY_SEARCH_NEXT_CHAR);
+const KEY_SEARCH_CANCEL: Key = Key::Ctrl('c');
 const KEY_ENTER: Key = Key::Char('\n');
 const KEY_SLOWER: Key = Key::Char(KEY_SLOWER_CHAR);
 const KEY_SLOWER_CHAR: char = '-';
@@ -72,12 +73,13 @@ pub enum Action {
     ScrollLeft,
     ScrollRight,
     ScrollUp,
+    SearchCancel,
     SearchEnter,
     SearchExit,
-    SearchPush(char),
+    SearchNext,
     SearchPop,
     SearchPrevious,
-    SearchNext,
+    SearchPush(char),
     SelectDown,
     SelectUp,
     ToggleLimits,
@@ -99,9 +101,10 @@ impl KeyMap {
         //log::debug!("event: {evt:?}");
         if self.intersects(KeyMap::IncrementalSearch) {
             match evt {
-                Event::Key(Key::Char('\n')) => Action::SearchExit,
+                Event::Key(KEY_ENTER) => Action::SearchExit,
                 Event::Key(Key::Char(c)) => Action::SearchPush(c),
                 Event::Key(Key::Backspace) => Action::SearchPop,
+                Event::Key(KEY_SEARCH_CANCEL) => Action::SearchCancel,
                 _ => Action::None,
             }
         } else if self.intersects(KeyMap::Help) || self.intersects(KeyMap::Details) {
@@ -184,6 +187,7 @@ impl MenuEntry {
             Key::Insert => "Ins".to_string(),
             Key::F(num) => format!("F{num}"),
             Key::Char('\t') => "⇥".to_string(),
+            Key::Char(' ') => format!("Spc"),
             Key::Char(ch) => format!("{ch}"),
             Key::Alt(ch) => format!("M-{ch}"),
             Key::Ctrl(ch) => format!("C-{ch}"),
@@ -203,15 +207,6 @@ pub fn menu() -> Vec<MenuEntry> {
             KeyMap::Main | KeyMap::FixedSearch | KeyMap::Help | KeyMap::Details,
         ),
         MenuEntry::with_key(KEY_HELP, "Help", KeyMap::Main),
-        MenuEntry::new(
-            format!(
-                "{}/{}",
-                MenuEntry::key_name(Key::Up),
-                MenuEntry::key_name(Key::Down)
-            ),
-            "Select",
-            KeyMap::Main,
-        ),
         MenuEntry::new(
             format!("{KEY_SEARCH_NEXT_CHAR}/{KEY_SEARCH_PREVIOUS_CHAR}",),
             "Next/Prev",
@@ -453,7 +448,7 @@ impl SearchBar {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum PidStatus {
     Unknown,
     Selected,
