@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020, 2021  Laurent Pelecq
+// Copyright (C) 2020-2024  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -39,17 +39,26 @@ impl BuiltinTheme {
     /// Guess the theme
     pub fn guess() -> Option<BuiltinTheme> {
         let timeout = std::time::Duration::from_millis(100);
-        termbg::theme(timeout).ok().and_then(|theme| match theme {
-            termbg::Theme::Dark => match supports_color::on(Stream::Stdout) {
-                Some(support) if support.has_16m || support.has_256 => Some(BuiltinTheme::Dark),
-                Some(support) if support.has_basic => Some(BuiltinTheme::Dark16),
+        match termbg::theme(timeout) {
+            Err(err) => {
+                log::info!("cannot guess theme: {err:?}");
+                None
+            }
+            Ok(theme) => match (theme, supports_color::on(Stream::Stdout)) {
+                (termbg::Theme::Dark, Some(support)) if support.has_16m || support.has_256 => {
+                    Some(BuiltinTheme::Dark)
+                }
+                (termbg::Theme::Light, Some(support)) if support.has_16m || support.has_256 => {
+                    Some(BuiltinTheme::Light)
+                }
+                (termbg::Theme::Dark, Some(support)) if support.has_basic => {
+                    Some(BuiltinTheme::Dark16)
+                }
+                (termbg::Theme::Light, Some(support)) if support.has_basic => {
+                    Some(BuiltinTheme::Light16)
+                }
                 _ => None,
             },
-            termbg::Theme::Light => match supports_color::on(Stream::Stdout) {
-                Some(support) if support.has_16m || support.has_256 => Some(BuiltinTheme::Light),
-                Some(support) if support.has_basic => Some(BuiltinTheme::Light16),
-                _ => None,
-            },
-        })
+        }
     }
 }

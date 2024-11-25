@@ -50,6 +50,8 @@ pub enum Error {
     TerminalNotAvailable,
 }
 
+pub type ApplicationResult<T> = Result<T, Error>;
+
 /// List available metrics
 pub fn list_metrics() {
     for metric_id in MetricId::iter() {
@@ -69,25 +71,20 @@ pub fn list_metrics() {
 fn resolve_display_mode(
     mode: DisplayMode,
     theme: Option<BuiltinTheme>,
-) -> Result<(DisplayMode, Option<BuiltinTheme>), Error> {
+) -> ApplicationResult<(DisplayMode, Option<BuiltinTheme>)> {
     match mode {
-        DisplayMode::Any => {
+        DisplayMode::None | DisplayMode::Text => Ok((mode, None)),
+        _ => {
             if TerminalDevice::is_available() {
-                match theme.or_else(BuiltinTheme::guess) {
-                    Some(theme) => Ok((DisplayMode::Terminal, Some(theme))),
-                    None => Ok((DisplayMode::Text, None)),
-                }
+                Ok((DisplayMode::Terminal, theme.or_else(BuiltinTheme::guess)))
             } else {
-                Ok((DisplayMode::Text, None))
+                match mode {
+                    DisplayMode::Terminal => Err(Error::TerminalNotAvailable),
+                    DisplayMode::Any => Ok((DisplayMode::Text, None)),
+                    _ => panic!("already handled in outter match."),
+                }
             }
         }
-        DisplayMode::Terminal => match theme.or_else(BuiltinTheme::guess) {
-            Some(theme) if TerminalDevice::is_available() => {
-                Ok((DisplayMode::Terminal, Some(theme)))
-            }
-            _ => Err(Error::TerminalNotAvailable),
-        },
-        _ => Ok((mode, None)),
     }
 }
 
