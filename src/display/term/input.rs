@@ -18,30 +18,25 @@ use bitmask_enum::bitmask;
 use getset::{Getters, Setters};
 use libc::pid_t;
 use smart_default::SmartDefault;
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt,
-    iter::IntoIterator,
-};
+use std::{collections::BTreeSet, fmt};
 
 use crate::{
     console::{Event, Key},
     process::ProcessIdentity,
 };
 
-use super::types::UnboundedSize;
+use super::types::BoundedFifo;
 
 /// Standard keys
 const KEY_FASTER: Key = Key::Char(KEY_FASTER_CHAR);
 const KEY_FASTER_CHAR: char = '+';
-const KEY_FOCUS: Key = Key::Char('f');
 const KEY_GOTO_TBL_BOTTOM: Key = Key::CtrlEnd;
 const KEY_GOTO_TBL_LEFT: Key = Key::Home;
 const KEY_GOTO_TBL_RIGHT: Key = Key::End;
 const KEY_GOTO_TBL_TOP: Key = Key::CtrlHome;
 const KEY_HELP: Key = Key::Char('?');
 const KEY_LIMITS: Key = Key::Char('l');
-const KEY_NEXT_FILTER: Key = Key::Char('F');
+const KEY_NEXT_FILTER: Key = Key::Char('f');
 const KEY_SEARCH: Key = Key::Char('/');
 const KEY_SEARCH_PREVIOUS_CHAR: char = 'N';
 const KEY_SEARCH_PREVIOUS: Key = Key::Char(KEY_SEARCH_PREVIOUS_CHAR);
@@ -59,7 +54,6 @@ pub enum Action {
     None,
     DivideTimeout(u16),
     FilterNext,
-    Focus,
     GotoTableBottom,
     GotoTableLeft,
     GotoTableRight,
@@ -69,10 +63,12 @@ pub enum Action {
     SwitchToProcess,
     MultiplyTimeout(u16),
     Quit,
-    ScrollDown,
     ScrollLeft,
+    ScrollLineDown,
+    ScrollLineUp,
+    ScrollPageDown,
+    ScrollPageUp,
     ScrollRight,
-    ScrollUp,
     SearchCancel,
     SearchEnter,
     SearchExit,
@@ -80,8 +76,6 @@ pub enum Action {
     SearchPop,
     SearchPrevious,
     SearchPush(char),
-    SelectDown,
-    SelectUp,
     ToggleLimits,
 }
 
@@ -110,14 +104,13 @@ impl KeyMap {
         } else if self.intersects(KeyMap::Help) || self.intersects(KeyMap::Details) {
             match evt {
                 Event::Key(KEY_QUIT) => Action::SwitchBack,
-                Event::Key(Key::PageDown) => Action::ScrollDown,
-                Event::Key(Key::PageUp) => Action::ScrollUp,
+                Event::Key(Key::PageDown) => Action::ScrollPageDown,
+                Event::Key(Key::PageUp) => Action::ScrollPageUp,
                 _ => Action::None,
             }
         } else {
             match evt {
                 Event::Key(KEY_FASTER) => Action::DivideTimeout(2),
-                Event::Key(KEY_FOCUS) => Action::Focus,
                 Event::Key(KEY_GOTO_TBL_BOTTOM) => Action::GotoTableBottom,
                 Event::Key(KEY_GOTO_TBL_LEFT) => Action::GotoTableLeft,
                 Event::Key(KEY_GOTO_TBL_RIGHT) => Action::GotoTableRight,
@@ -134,12 +127,12 @@ impl KeyMap {
                 }
                 Event::Key(KEY_SLOWER) => Action::MultiplyTimeout(2),
                 Event::Key(KEY_QUIT) | Event::Key(Key::Ctrl('c')) => Action::Quit,
-                Event::Key(Key::PageDown) => Action::ScrollDown,
-                Event::Key(Key::PageUp) => Action::ScrollUp,
-                Event::Key(Key::Down) => Action::SelectDown,
+                Event::Key(Key::PageDown) => Action::ScrollPageDown,
+                Event::Key(Key::PageUp) => Action::ScrollPageUp,
+                Event::Key(Key::Down) => Action::ScrollLineDown,
+                Event::Key(Key::Up) => Action::ScrollLineUp,
                 Event::Key(Key::Left) => Action::ScrollLeft,
                 Event::Key(Key::Right) => Action::ScrollRight,
-                Event::Key(Key::Up) => Action::SelectUp,
                 Event::Key(KEY_LIMITS) => Action::ToggleLimits,
                 _ => Action::None,
             }
@@ -187,7 +180,7 @@ impl MenuEntry {
             Key::Insert => "Ins".to_string(),
             Key::F(num) => format!("F{num}"),
             Key::Char('\t') => "⇥".to_string(),
-            Key::Char(' ') => format!("Spc"),
+            Key::Char(' ') => "Spc".to_string(),
             Key::Char(ch) => format!("{ch}"),
             Key::Alt(ch) => format!("M-{ch}"),
             Key::Ctrl(ch) => format!("C-{ch}"),
@@ -214,7 +207,6 @@ pub fn menu() -> Vec<MenuEntry> {
         ),
         MenuEntry::with_key(KEY_SEARCH, "Search", KeyMap::Main | KeyMap::FixedSearch),
         MenuEntry::with_key(KEY_LIMITS, "Limits", KeyMap::Main | KeyMap::FixedSearch),
-        MenuEntry::with_key(KEY_FOCUS, "Focus", KeyMap::Main | KeyMap::FixedSearch),
         MenuEntry::with_key(
             KEY_NEXT_FILTER,
             "Filter",
@@ -251,144 +243,24 @@ impl fmt::Display for SearchState {
 pub enum BookmarkAction {
     #[default]
     None,
-    /// Focus on the current selection
-    Focus,
+    /// Select first line
+    FirstLine,
+    /// Select last line
+    LastLine,
     /// Select previous line
     PreviousLine,
     /// Select next line
     NextLine,
+    /// Select previous page
+    PreviousPage,
+    /// Select next page
+    NextPage,
     /// Select previous occurrence
     PreviousMatch,
     /// Select next occurrence
     NextMatch,
     /// Current selected line if it still matched, else the next matching.
     ClosestMatch,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct LinePid {
-    lineno: usize,
-    pid: pid_t,
-}
-
-impl LinePid {
-    fn new(lineno: usize, pid: pid_t) -> Self {
-        Self { lineno, pid }
-    }
-}
-
-#[derive(Debug)]
-struct LineContext {
-    current: LinePid,
-    previous_pid: Option<pid_t>,
-    next_pid: Option<pid_t>,
-}
-
-impl LineContext {
-    fn new(lineno: usize, current: pid_t, previous_pid: Option<pid_t>) -> Self {
-        Self {
-            current: LinePid::new(lineno, current),
-            previous_pid,
-            next_pid: None,
-        }
-    }
-}
-
-/// Matches occurrences of a predicate and the previous and next occurrences of a selection.
-#[derive(Debug, Default)]
-struct LineMatcher {
-    first: Option<LineContext>,
-    occurrences: Vec<LineContext>,
-    pids: BTreeMap<pid_t, usize>,
-}
-
-impl LineMatcher {
-    /// Return the context for an optional PID.
-    fn context_map<F>(&self, pid: Option<pid_t>, func: F) -> Option<&LineContext>
-    where
-        F: Fn(usize) -> usize,
-    {
-        match pid.and_then(|pid| {
-            self.pids
-                .get(&pid)
-                .map(|n| func(*n) % self.occurrences.len())
-        }) {
-            Some(n) => self.occurrences.get(n),
-            None => self.occurrences.first().or(self.first.as_ref()),
-        }
-    }
-
-    /// Return the context for an optional PID.
-    fn context(&self, pid: Option<pid_t>) -> Option<&LineContext> {
-        self.context_map(pid, |n| n)
-    }
-
-    /// Return the context at optional pid.
-    fn current_pid(&self, pid: Option<pid_t>) -> Option<LinePid> {
-        self.context_map(pid, |n| n).map(|c| c.current)
-    }
-
-    /// Return the context after optional PID.
-    fn next_pid(&self, pid: Option<pid_t>) -> Option<LinePid> {
-        self.context_map(pid, |n| n + 1).map(|c| c.current)
-    }
-
-    /// Return the context after optional PID.
-    fn previous_pid(&self, pid: Option<pid_t>) -> Option<LinePid> {
-        let len = self.occurrences.len();
-        self.context_map(pid, |n| n + len - 1).map(|c| c.current)
-    }
-
-    /// Return the given pids only if it's an occurrence.
-    fn matching_pid(&self, pid_hint: Option<pid_t>) -> Option<pid_t> {
-        pid_hint.and_then(|pid| {
-            if self.pids.contains_key(&pid) {
-                Some(pid)
-            } else {
-                None
-            }
-        })
-    }
-
-    /// Take the first line as a match.
-    fn take_first<I, P>(&mut self, lines: I)
-    where
-        I: Iterator<Item = P>,
-        P: ProcessIdentity,
-    {
-        lines.enumerate().take(1).for_each(|(lineno, pi)| {
-            self.first = Some(LineContext::new(lineno, pi.pid(), None));
-        });
-    }
-
-    /// Find all lines that match a predicate.
-    fn find<I, F, P>(&mut self, lines: I, pred: F)
-    where
-        I: Iterator<Item = P>,
-        F: Fn(&P) -> bool,
-        P: ProcessIdentity,
-    {
-        let mut previous_pid = None;
-        let mut next_lineno = usize::MAX;
-        lines.into_iter().enumerate().for_each(|(lineno, pi)| {
-            let pid = pi.pid();
-            if self.first.is_none() {
-                self.first = Some(LineContext::new(lineno, pid, None));
-            }
-            if lineno == next_lineno {
-                if let Some(last) = self.occurrences.last_mut() {
-                    last.next_pid = Some(pid);
-                }
-            }
-            if pred(&pi) {
-                let context = LineContext::new(lineno, pid, previous_pid);
-                next_lineno = lineno + 1;
-                self.pids.insert(pid, self.occurrences.len());
-                self.occurrences.push(context);
-            }
-            previous_pid = Some(pid)
-        })
-    }
 }
 
 /// Action to edit search bar
@@ -449,21 +321,96 @@ impl SearchBar {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum PidStatus {
-    Unknown,
-    Selected,
-    Matching,
+pub struct LinePid {
+    pub lineno: usize,
+    pub pid: pid_t,
+}
+
+impl LinePid {
+    fn new(lineno: usize, pid: pid_t) -> Self {
+        Self { lineno, pid }
+    }
+
+    fn distance(a: usize, b: usize) -> usize {
+        if a < b {
+            b - a
+        } else {
+            a - b
+        }
+    }
+
+    fn pid_index_in(&self, v: &[LinePid]) -> Option<usize> {
+        v.iter().enumerate().find_map(|(index, lp)| {
+            if lp.pid == self.pid {
+                Some(index)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Return the item before this PID in the list or before this line if PID is not found.
+    fn previous_in<'a>(&self, v: &'a [LinePid]) -> Option<&'a LinePid> {
+        let len = v.len();
+        match self.pid_index_in(v) {
+            Some(index) => v.get((index + len - 1) % len),
+            None if len > 0 => v
+                .iter()
+                .rev()
+                .find(|lp| lp.lineno <= self.lineno)
+                .or(v.last()),
+            None => None,
+        }
+    }
+
+    /// Return the item after this PID in the list or after this line if PID is not found.
+    fn next_in<'a>(&self, v: &'a [LinePid]) -> Option<&'a LinePid> {
+        let len = v.len();
+        match self.pid_index_in(v) {
+            Some(index) => v.get((index + len + 1) % len),
+            None if len > 0 => v.iter().find(|lp| lp.lineno >= self.lineno).or(v.first()),
+            None => None,
+        }
+    }
+
+    /// Return the item with this PID or the closest from this line.
+    fn closest_in<'a>(&self, v: &'a [LinePid]) -> Option<&'a LinePid> {
+        v.iter().find(|lp| lp.pid == self.pid).or_else(|| {
+            let mut distance = 0;
+            let mut candidate = None;
+            for lp in v {
+                match candidate {
+                    Some(_) => {
+                        let new_distance = LinePid::distance(lp.lineno, self.lineno);
+                        if new_distance < distance {
+                            distance = new_distance;
+                            candidate = Some(lp);
+                        }
+                    }
+                    None => {
+                        distance = LinePid::distance(lp.lineno, self.lineno);
+                        candidate = Some(lp);
+                    }
+                }
+            }
+            candidate
+        })
+    }
 }
 
 /// Search bar
 #[derive(Debug, Default, Getters, Setters)]
 pub struct Bookmarks {
+    /// PID at the line under the cursor.
     #[getset(get = "pub")]
-    selected: Option<pid_t>,
-    #[getset(get = "pub")]
-    occurrences: BTreeSet<pid_t>,
+    selected: Option<LinePid>,
+    /// Optional search pattern.
     #[getset(get = "pub")]
     search: Option<SearchBar>,
+    /// PIDs marked in the selection.
+    #[getset(get = "pub")]
+    _marks: BTreeSet<pid_t>,
+    /// Action for next round.
     #[getset(get = "pub", set = "pub")]
     action: BookmarkAction,
 }
@@ -474,27 +421,21 @@ impl Bookmarks {
     /// # Arguments
     ///
     /// * `center` - The position to recenter to.
+    /// * `top` - The first visible line.
     /// * `height` - The height of the visible area.
     /// * `force` - Recenter even if the position is already visible.
-    fn recenter(center: usize, low: UnboundedSize, height: usize, force: bool) -> Option<usize> {
-        let ucenter = UnboundedSize::Value(center);
-        let high = low + UnboundedSize::Value(height);
-        if force || ucenter < low || ucenter >= high {
-            Some(center.saturating_sub(std::cmp::max(1, height / 2)))
+    fn recenter(center: usize, top: usize, height: usize, force: bool) -> usize {
+        let bottom = top + height;
+        if force || center < top || center >= bottom {
+            center.saturating_sub(std::cmp::max(1, height / 2))
         } else {
-            None
+            top
         }
     }
 
     /// Status of a PID.
-    pub fn status(&self, pid: pid_t) -> PidStatus {
-        if self.selected == Some(pid) {
-            PidStatus::Selected
-        } else if self.occurrences.contains(&pid) {
-            PidStatus::Matching
-        } else {
-            PidStatus::Unknown
-        }
+    pub fn is_selected(&self, pid: pid_t) -> bool {
+        self.selected.map(|s| s.pid == pid).unwrap_or(false)
     }
 
     /// Start an incremental search.
@@ -547,206 +488,177 @@ impl Bookmarks {
         }
     }
 
-    /// Recenter on the currently selected line or the first.
-    fn execute_focus(
+    fn select(
         &mut self,
-        matcher: LineMatcher,
-        top: UnboundedSize,
+        lineno: usize,
+        pid: pid_t,
+        top: usize,
         height: usize,
-    ) -> (Option<usize>, Option<usize>) {
-        match matcher.context(self.selected) {
-            Some(LineContext { current, .. }) => {
-                let lineno = current.lineno;
-                self.selected = Some(current.pid);
-                (Some(lineno), Bookmarks::recenter(lineno, top, height, true))
+        force: bool,
+    ) -> usize {
+        self.selected = Some(LinePid::new(lineno, pid));
+        Bookmarks::recenter(lineno, top, height, force)
+    }
+
+    fn selected_and_then<F>(&mut self, f: F) -> usize
+    where
+        F: Fn(&LinePid) -> Option<LinePid>,
+    {
+        match self.selected.as_ref().and_then(f) {
+            Some(lp) => {
+                self.selected = Some(lp);
+                lp.lineno
             }
-            None => (None, None),
+            None => 0,
         }
     }
 
-    /// Recenter on the line before the currently selected line.
-    fn execute_previous_line(
-        &mut self,
-        matcher: LineMatcher,
-        top: UnboundedSize,
+    /// Check if the action doesn't depend on the lines and return the offset in this case.
+    fn execute_without_lines(
+        &self,
+        action: BookmarkAction,
+        top: usize,
         height: usize,
-    ) -> (Option<usize>, Option<usize>) {
-        match matcher.context(self.selected) {
-            Some(LineContext {
-                current,
-                previous_pid: Some(previous_pid),
-                ..
-            }) => {
-                let lineno = current.lineno - 1;
-                let center = Bookmarks::recenter(lineno, top, height, false);
-                self.selected = Some(*previous_pid);
-                (Some(lineno), center)
+    ) -> Option<usize> {
+        if matches!((self.selected, action), (None, BookmarkAction::None)) {
+            Some(Bookmarks::recenter(0, top, height, false))
+        } else if matches!(
+            action,
+            BookmarkAction::PreviousMatch
+                | BookmarkAction::NextMatch
+                | BookmarkAction::ClosestMatch
+        ) {
+            if self.search_pattern().is_none() {
+                let lineno = self.selected.map(|lp| lp.lineno).unwrap_or(0);
+                Some(Bookmarks::recenter(lineno, top, height, false))
+            } else {
+                None
             }
-            Some(LineContext {
-                current,
-                previous_pid: None,
-                ..
-            }) => {
-                let lineno = current.lineno;
-                self.selected = Some(current.pid);
-                (Some(lineno), Bookmarks::recenter(lineno, top, height, true))
-            }
-            _ => {
-                self.selected = None;
-                (None, None)
-            }
+        } else {
+            None
         }
     }
 
-    /// Recenter on the line after the currently selected line.
-    fn execute_next_line(
-        &mut self,
-        matcher: LineMatcher,
-        top: UnboundedSize,
-        height: usize,
-    ) -> (Option<usize>, Option<usize>) {
-        match matcher.context(self.selected) {
-            Some(LineContext {
-                current,
-                previous_pid: _,
-                next_pid: Some(next_pid),
-            }) => {
-                let lineno = current.lineno + 1;
-                let center = Bookmarks::recenter(lineno, top, height, false);
-                self.selected = Some(*next_pid);
-                (Some(lineno), center)
-            }
-            Some(LineContext {
-                current,
-                previous_pid: _,
-                next_pid: None,
-            }) => {
-                let lineno = current.lineno;
-                self.selected = Some(current.pid);
-                (Some(lineno), Bookmarks::recenter(lineno, top, height, true))
-            }
-            _ => {
-                self.selected = None;
-                (None, None)
-            }
-        }
-    }
-
-    /// Recenter on the matching line before the currently selected line.
-    fn execute_previous_match(
-        &mut self,
-        matcher: LineMatcher,
-        top: UnboundedSize,
-        height: usize,
-    ) -> (Option<usize>, Option<usize>) {
-        match matcher.previous_pid(matcher.matching_pid(self.selected)) {
-            Some(LinePid { lineno, pid }) => {
-                self.selected = Some(pid);
-                (
-                    Some(lineno),
-                    Bookmarks::recenter(lineno, top, height, false),
-                )
-            }
-            None => (None, None),
-        }
-    }
-
-    /// Recenter on the matching line before the currently selected line.
-    fn execute_next_match(
-        &mut self,
-        matcher: LineMatcher,
-        top: UnboundedSize,
-        height: usize,
-    ) -> (Option<usize>, Option<usize>) {
-        match matcher.next_pid(matcher.matching_pid(self.selected)) {
-            Some(LinePid { lineno, pid }) => {
-                self.selected = Some(pid);
-                (
-                    Some(lineno),
-                    Bookmarks::recenter(lineno, top, height, false),
-                )
-            }
-            None => (None, None),
-        }
-    }
-
-    /// Recenter on the matching line before the currently selected line.
-    fn execute_closest_match(
-        &mut self,
-        matcher: LineMatcher,
-        top: UnboundedSize,
-        height: usize,
-    ) -> (Option<usize>, Option<usize>) {
-        match matcher.current_pid(matcher.matching_pid(self.selected)) {
-            Some(LinePid { lineno, pid }) => {
-                self.selected = Some(pid);
-                (
-                    Some(lineno),
-                    Bookmarks::recenter(lineno, top, height, false),
-                )
-            }
-            None => (None, None),
-        }
-    }
-
-    fn clear_occurrences(&mut self) {
-        self.occurrences.clear();
-        if let Some(selected) = self.selected {
-            self.occurrences.insert(selected);
-        }
-    }
-
-    /// Execute the action and return the selected line and the vertical offset.
+    /// Execute the action and return the vertical offset.
+    ///
+    /// * `occurrences` - The set of matching pid in case of search.
+    /// * `lines` - The lines of process identities.
+    /// * `top` - The first visible line (current vertical offset).
+    /// * `height` - The height of the visible area.
     pub fn execute<I, P>(
         &mut self,
+        occurrences: &mut BTreeSet<pid_t>,
         lines: I,
-        top: UnboundedSize,
+        top: usize,
         height: usize,
-    ) -> (Option<usize>, Option<usize>)
+    ) -> usize
     where
         I: Iterator<Item = P>,
         P: ProcessIdentity,
     {
-        let mut matcher = LineMatcher::default();
         let action = self.action;
         self.action = match self.search {
             Some(_) => BookmarkAction::ClosestMatch,
             None => BookmarkAction::None,
         };
-        match action {
-            BookmarkAction::None
-            | BookmarkAction::Focus
-            | BookmarkAction::PreviousLine
-            | BookmarkAction::NextLine => match self.selected {
-                Some(pid) => matcher.find(lines, |pi| pi.pid() == pid),
-                None => matcher.take_first(lines),
-            },
-            BookmarkAction::PreviousMatch
-            | BookmarkAction::NextMatch
-            | BookmarkAction::ClosestMatch => match self.search.as_ref().map(|s| s.pattern()) {
-                Some(ref pattern) if !pattern.is_empty() => {
-                    matcher.find(lines, |pi| pi.name().contains(pattern));
-                }
-                _ => (),
-            },
-        };
-        self.occurrences = BTreeSet::from_iter(matcher.occurrences.iter().map(|lc| lc.current.pid));
-        match action {
-            BookmarkAction::None => (None, None),
-            BookmarkAction::Focus => self.execute_focus(matcher, top, height),
-            BookmarkAction::PreviousLine => {
-                let result = self.execute_previous_line(matcher, top, height);
-                self.clear_occurrences();
-                result
-            }
-            BookmarkAction::NextLine => {
-                let result = self.execute_next_line(matcher, top, height);
-                self.clear_occurrences();
-                result
-            }
-            BookmarkAction::PreviousMatch => self.execute_previous_match(matcher, top, height),
-            BookmarkAction::NextMatch => self.execute_next_match(matcher, top, height),
-            BookmarkAction::ClosestMatch => self.execute_closest_match(matcher, top, height),
+        occurrences.clear();
+        if let Some(voffset) = self.execute_without_lines(action, top, height) {
+            return voffset;
         }
+        let page_size = match action {
+            BookmarkAction::PreviousPage | BookmarkAction::NextPage => std::cmp::max(1, height / 2),
+            _ => 1,
+        };
+        let mut pid_at_line = None;
+        let mut last_lineno = None;
+        let mut previous_pids = BoundedFifo::new(page_size);
+        let mut matches = Vec::new();
+        let pattern = self.search_pattern();
+
+        for (lineno, pi) in lines.enumerate() {
+            match self.selected {
+                Some(selected) if selected.lineno == lineno => pid_at_line = Some(pi.pid()),
+                _ => (),
+            }
+            match action {
+                BookmarkAction::None => {
+                    if pi.pid() == self.selected.expect("internal error: empty selection").pid {
+                        return Bookmarks::recenter(lineno, top, height, false);
+                    }
+                }
+                BookmarkAction::FirstLine => {
+                    return self.select(lineno, pi.pid(), top, height, true)
+                }
+                BookmarkAction::LastLine => last_lineno = Some(lineno),
+                BookmarkAction::PreviousLine | BookmarkAction::PreviousPage => {
+                    match self.selected {
+                        Some(selected) => {
+                            if pi.pid() == selected.pid {
+                                let new_lineno = match previous_pids.front() {
+                                    Some(prev_pid) => {
+                                        let new_lineno = lineno - previous_pids.len();
+                                        self.selected = Some(LinePid::new(new_lineno, *prev_pid));
+                                        new_lineno
+                                    }
+                                    None => selected.lineno,
+                                };
+                                return Bookmarks::recenter(new_lineno, top, height, page_size > 1);
+                            }
+                        }
+                        None => return self.select(lineno, pi.pid(), top, height, page_size > 1),
+                    }
+                }
+                BookmarkAction::NextLine | BookmarkAction::NextPage => {
+                    if match (self.selected.map(|s| s.pid), previous_pids.front()) {
+                        (Some(selected_pid), Some(prev_pid)) => *prev_pid == selected_pid,
+                        (None, _) => true,
+                        _ => false,
+                    } {
+                        return self.select(lineno, pi.pid(), top, height, page_size > 1);
+                    }
+                }
+                BookmarkAction::PreviousMatch
+                | BookmarkAction::NextMatch
+                | BookmarkAction::ClosestMatch => {
+                    let pattern = pattern
+                        .as_ref()
+                        .expect("internal error: pattern cannot be empty");
+                    if pi.name().contains(pattern) {
+                        matches.push(LinePid::new(lineno, pi.pid()));
+                        occurrences.insert(pi.pid());
+                    }
+                }
+            }
+            previous_pids.push(pi.pid());
+        }
+        let match_count = matches.len();
+        let lineno = match action {
+            BookmarkAction::None => top,
+            BookmarkAction::FirstLine => 0,
+            BookmarkAction::LastLine => {
+                let lineno = last_lineno.expect("internal error: last line must be set");
+                self.selected = previous_pids.back().map(|pid| LinePid::new(lineno, *pid));
+                lineno
+            }
+            BookmarkAction::PreviousLine
+            | BookmarkAction::PreviousPage
+            | BookmarkAction::NextLine
+            | BookmarkAction::NextPage => match (self.selected, pid_at_line) {
+                (Some(selected), Some(pid)) => {
+                    let lineno = selected.lineno;
+                    self.selected = Some(LinePid::new(lineno, pid));
+                    lineno
+                }
+                _ => 0,
+            },
+            BookmarkAction::PreviousMatch => {
+                self.selected_and_then(|s| s.previous_in(&matches).copied())
+            }
+            BookmarkAction::NextMatch => self.selected_and_then(|s| s.next_in(&matches).copied()),
+            BookmarkAction::ClosestMatch => {
+                self.selected_and_then(|s| s.closest_in(&matches).copied())
+            }
+        };
+        Bookmarks::recenter(lineno, top, height, match_count > 0)
     }
 }

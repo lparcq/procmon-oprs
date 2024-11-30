@@ -17,6 +17,7 @@
 use num_traits::{ConstZero, Saturating, Zero};
 use std::{
     cmp::Ordering,
+    collections::VecDeque,
     ops::{Add, Sub},
 };
 
@@ -31,6 +32,15 @@ macro_rules! void {
 pub(crate) enum Unbounded<T: Clone + Copy + Default> {
     Value(T),
     Infinite,
+}
+
+impl<T: Clone + Copy + Default> Unbounded<T> {
+    pub fn value(&self) -> Option<&T> {
+        match self {
+            Self::Value(value) => Some(value),
+            Self::Infinite => None,
+        }
+    }
 }
 
 impl<
@@ -151,16 +161,12 @@ impl UnboundedArea {
         self.horizontal = self.horizontal.add(delta);
     }
 
-    pub fn scroll_up(&mut self, delta: usize) {
+    pub fn _scroll_up(&mut self, delta: usize) {
         self.vertical = self.vertical.sub(delta);
     }
 
-    pub fn scroll_down(&mut self, delta: usize) {
+    pub fn _scroll_down(&mut self, delta: usize) {
         self.vertical = self.vertical.add(delta);
-    }
-
-    pub fn home(&mut self) {
-        *self = Self::default();
     }
 
     pub fn set_horizontal(&mut self, horizontal: usize) {
@@ -198,10 +204,6 @@ impl UnboundedArea {
     pub fn horizontal_end(&mut self) {
         self.horizontal = UnboundedSize::Infinite;
     }
-
-    pub fn vertical_end(&mut self) {
-        self.vertical = UnboundedSize::Infinite;
-    }
 }
 
 /// Boolean properties applied to a 2-dimensions area.
@@ -220,10 +222,42 @@ impl<T> Area<T> {
     }
 }
 
+/// FIFO with a bounded size.
+pub struct BoundedFifo<T>(VecDeque<T>);
+
+impl<T> BoundedFifo<T> {
+    pub fn new(capacity: usize) -> Self {
+        Self(VecDeque::with_capacity(capacity))
+    }
+
+    pub fn len(&self) -> usize {
+        let Self(v) = self;
+        v.len()
+    }
+
+    pub fn push(&mut self, item: T) {
+        let Self(v) = self;
+        if v.len() == v.capacity() {
+            let _ = v.pop_front();
+        }
+        v.push_back(item);
+    }
+
+    pub fn back(&self) -> Option<&T> {
+        let Self(v) = self;
+        v.back()
+    }
+
+    pub fn front(&self) -> Option<&T> {
+        let Self(v) = self;
+        v.front()
+    }
+}
+
 #[cfg(test)]
 mod test {
 
-    use super::UnboundedSize;
+    use super::{BoundedFifo, UnboundedSize};
 
     #[test]
     fn test_add() {
@@ -236,5 +270,19 @@ mod test {
         assert_eq!(UnboundedSize::Value(4), UnboundedSize::Value(7).sub(3));
         assert_eq!(UnboundedSize::Value(0), UnboundedSize::Value(3).sub(7));
         assert_eq!(UnboundedSize::Infinite, UnboundedSize::Infinite.sub(7));
+    }
+
+    #[test]
+    fn test_fifo() {
+        let mut v = BoundedFifo::new(2);
+        v.push(1usize);
+        assert_eq!(1, v.len());
+        assert_eq!(1, *v.front().unwrap());
+        v.push(2usize);
+        assert_eq!(2, v.len());
+        assert_eq!(1, *v.front().unwrap());
+        v.push(3usize);
+        assert_eq!(2, v.len());
+        assert_eq!(2, *v.front().unwrap());
     }
 }

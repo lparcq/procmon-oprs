@@ -25,7 +25,7 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, Wrap},
     Frame, Terminal,
 };
-use std::{cmp::Ordering, fmt, io, time::Duration};
+use std::{cmp::Ordering, collections::BTreeSet, fmt, io, time::Duration};
 use termion::{
     raw::{IntoRawMode, RawTerminal},
     screen::{AlternateScreen, IntoAlternateScreen},
@@ -48,7 +48,7 @@ mod input;
 #[macro_use]
 mod types;
 
-use input::{menu, Action, BookmarkAction, Bookmarks, KeyMap, MenuEntry, PidStatus, SearchEdit};
+use input::{menu, Action, BookmarkAction, Bookmarks, KeyMap, MenuEntry, SearchEdit};
 use types::{Area, UnboundedArea};
 
 /// Right aligned cell.
@@ -64,11 +64,10 @@ const HELP: &str = r#"Command help
 Movements
 ---------
 
-- Up and down: move the selection up and down.
-- Page up and down: scroll by pages.
+- Up and down: move the cursor up and down.
+- Page up and down: scroll the cursor by pages.
 - Control-Home: go to first line.
 - Control-End: go to last line.
-- f: Go back to the selected line.
 - Left and Right: move the columns left or right.
 - Home: go to first column.
 - End: go to last column.
@@ -86,7 +85,7 @@ Miscellaneous
 
 The soft or hard limits are displayed by hitting 'l' but only for the selected process.
 
-By default, only userland processes are displayed. Use 'F' to change.
+By default, only userland processes are displayed. Use 'f' to see kernel processes.
 "#;
 
 /// User action that has an impact on the application.
@@ -98,6 +97,14 @@ pub enum Interaction {
     SwitchBack,
     SelectPid(pid_t),
     Quit,
+}
+
+/// Status of a process.
+#[derive(Clone, Copy, Debug)]
+pub enum PidStatus {
+    Unknown,
+    Selected,
+    Matching,
 }
 
 /// Theme styles
@@ -432,6 +439,8 @@ pub struct TerminalDevice<'t> {
     body_height: usize,
     /// Bookmarks for PIDs.
     bookmarks: Bookmarks,
+    /// PID matched by a search.
+    occurrences: BTreeSet<pid_t>,
     /// Menu
     menu: Vec<MenuEntry>,
     /// Pane kind.
@@ -466,6 +475,7 @@ impl<'t> TerminalDevice<'t> {
             headers_height: 0,
             body_height: 0,
             bookmarks: Bookmarks::default(),
+            occurrences: BTreeSet::default(),
             menu: menu(),
             pane_kind: PaneKind::Main,
             help_height: HELP.lines().count(),
@@ -490,11 +500,16 @@ impl<'t> TerminalDevice<'t> {
     fn status_bar(&self) -> String {
         let time_string = format!("{}", Local::now().format("%X"));
         let delay = human_duration(self.every);
-        format!(
-            "{time_string} -- interval:{delay} -- limit:{} -- filter:{}",
-            self.display_limits.as_ref(),
-            self.filters.current_name()
-        )
+        let matches_count = self.occurrences.len();
+        if matches_count > 0 {
+            format!("{time_string} -- interval:{delay} -- matches:{matches_count}",)
+        } else {
+            format!(
+                "{time_string} -- interval:{delay} -- limit:{} -- filter:{}",
+                self.display_limits.as_ref(),
+                self.filters.current_name()
+            )
+        }
     }
 
     /// Draw the table of metrics and the menu.
@@ -611,43 +626,42 @@ impl<'t> TerminalDevice<'t> {
                     LimitKind::Hard => LimitKind::None,
                 }
             }
+            Action::ScrollLeft => self.table_offset.scroll_left(1),
             Action::ScrollRight => {
                 if self.overflow.horizontal {
                     self.table_offset.scroll_right(1);
                 }
             }
-            Action::ScrollUp => match self.pane_kind {
+            Action::ScrollPageUp => match self.pane_kind {
                 PaneKind::Main => {
                     self.bookmarks.clear_search();
-                    self.table_offset.scroll_up(self.vertical_scroll);
+                    void!(self.bookmarks.set_action(BookmarkAction::PreviousPage));
                 }
                 _ => {
                     self.pane_offset = self.pane_offset.saturating_sub(self.vertical_scroll as u16);
                 }
             },
-            Action::ScrollDown => match self.pane_kind {
+            Action::ScrollPageDown => match self.pane_kind {
                 PaneKind::Main => {
                     self.bookmarks.clear_search();
                     if self.overflow.vertical {
-                        self.table_offset.scroll_down(self.vertical_scroll);
+                        void!(self.bookmarks.set_action(BookmarkAction::NextPage))
                     }
                 }
                 _ => {
                     self.pane_offset += self.vertical_scroll as u16;
                 }
             },
-            Action::ScrollLeft => self.table_offset.scroll_left(1),
-            Action::SelectUp => {
+            Action::ScrollLineUp => {
                 self.bookmarks.clear_search();
                 void!(self.bookmarks.set_action(BookmarkAction::PreviousLine));
             }
-            Action::SelectDown => {
+            Action::ScrollLineDown => {
                 self.bookmarks.clear_search();
                 void!(self.bookmarks.set_action(BookmarkAction::NextLine))
             }
-            Action::Focus => void!(self.bookmarks.set_action(BookmarkAction::Focus)),
-            Action::GotoTableTop => self.table_offset.home(),
-            Action::GotoTableBottom => self.table_offset.vertical_end(),
+            Action::GotoTableTop => void!(self.bookmarks.set_action(BookmarkAction::FirstLine)),
+            Action::GotoTableBottom => void!(self.bookmarks.set_action(BookmarkAction::LastLine)),
             Action::GotoTableLeft => self.table_offset.horizontal_home(),
             Action::GotoTableRight => self.table_offset.horizontal_end(),
             Action::SearchEnter => self.bookmarks.incremental_search(),
@@ -672,7 +686,7 @@ impl<'t> TerminalDevice<'t> {
             Action::FilterNext => Interaction::Filter(self.filters.current),
             Action::SwitchToHelp => Interaction::SwitchToHelp,
             Action::SwitchToProcess => match self.bookmarks.selected() {
-                Some(pid) => Interaction::SelectPid(*pid),
+                Some(selected) => Interaction::SelectPid(selected.pid),
                 None => Interaction::None,
             },
             Action::SwitchBack => Interaction::SwitchBack,
@@ -800,13 +814,19 @@ impl<'t> TerminalDevice<'t> {
         let line_count = collector.line_count();
         let ncols = self.metric_headers.len() + 2; // process name, PID, metric1, ...
         let nrows = line_count + 2; // metric title, metric subtitle, process1, ...
-        if let (_, Some(voffset)) = self.bookmarks.execute(
+        let top = self
+            .table_offset
+            .vertical
+            .value()
+            .copied()
+            .unwrap_or_else(|| line_count.saturating_sub(self.body_height));
+        let voffset = self.bookmarks.execute(
+            &mut self.occurrences,
             collector.lines(),
-            self.table_offset.vertical,
+            top,
             self.body_height,
-        ) {
-            self.table_offset.set_vertical(voffset);
-        }
+        );
+        self.table_offset.set_vertical(voffset);
         let (hoffset, voffset) = self
             .table_offset
             .set_bounds(ncols - 3, line_count.saturating_sub(self.body_height));
@@ -831,7 +851,15 @@ impl<'t> TerminalDevice<'t> {
             let mut rows: Vec<Vec<Cell>> = Vec::with_capacity(nvisible_rows);
             collector.lines().skip(voffset).for_each(|samples| {
                 pids.push(samples);
-                let pid_status = self.bookmarks.status(samples.pid());
+                let pid = samples.pid();
+                let pid_status = if self.bookmarks.is_selected(pid) {
+                    PidStatus::Selected
+                } else if self.occurrences.contains(&pid) {
+                    PidStatus::Matching
+                } else {
+                    PidStatus::Unknown
+                };
+
                 let row = TerminalDevice::make_metrics_row(
                     pid_status,
                     hoffset,
