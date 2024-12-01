@@ -388,7 +388,11 @@ impl Updater {
                     let system_delta = self.get_total_time(1) - self.get_total_time(2);
                     if new_value >= old_value {
                         let delta = new_value - old_value;
-                        delta * PERCENT_FACTOR / system_delta
+                        if system_delta == 0 {
+                            0
+                        } else {
+                            delta * PERCENT_FACTOR / system_delta
+                        }
                     } else {
                         log::warn!(
                             "time value goes backward (from {} to {})",

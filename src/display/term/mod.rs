@@ -740,7 +740,7 @@ impl<'t> TerminalDevice<'t> {
     /// Convert the action to a possible interaction.
     fn interaction(&mut self, action: Action) -> Interaction {
         match action {
-            Action::ChangeScope if self.bookmarks.marks().is_empty() => {
+            Action::ChangeScope if !self.bookmarks.marks().is_empty() => {
                 let pids = self
                     .bookmarks
                     .marks()
