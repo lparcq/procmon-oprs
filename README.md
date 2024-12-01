@@ -3,7 +3,6 @@ Oprs
 
 ![Rust](https://github.com/lparcq/procmon-oprs/workflows/Rust/badge.svg)
 [![Crates.io](https://img.shields.io/crates/v/procmon-oprs.svg)](https://crates.io/crates/procmon-oprs)
-![Crates.io](https://img.shields.io/crates/l/procmon-oprs)
 ![Crates.io License](https://img.shields.io/crates/l/procmon-oprs)
 
 Oprs is a process monitor for Linux. The name is an abbreviation for Observe Process ReSources.
@@ -145,7 +144,7 @@ Example `~/.config/oprs/settings.ini`:
 License
 -------
 
-Copyright (c) 2020-2021 Laurent Pelecq
+Copyright (c) 2020-2024 Laurent Pelecq
 
 `oprs` is distributed under the terms of the GNU General Public License version 3.
 
