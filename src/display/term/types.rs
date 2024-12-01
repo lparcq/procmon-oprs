@@ -230,6 +230,11 @@ impl<T> BoundedFifo<T> {
         Self(VecDeque::with_capacity(capacity))
     }
 
+    pub fn capacity(&self) -> usize {
+        let Self(v) = self;
+        v.capacity()
+    }
+
     pub fn len(&self) -> usize {
         let Self(v) = self;
         v.len()

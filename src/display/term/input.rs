@@ -48,6 +48,15 @@ const KEY_SLOWER: Key = Key::Char(KEY_SLOWER_CHAR);
 const KEY_SLOWER_CHAR: char = '-';
 const KEY_QUIT: Key = Key::Esc;
 
+macro_rules! try_return {
+    ($option:expr) => {
+        match $option {
+            Some(value) => return value,
+            None => (),
+        }
+    };
+}
+
 /// User action
 #[derive(Clone, Copy, Debug)]
 pub enum Action {
@@ -488,6 +497,7 @@ impl Bookmarks {
         }
     }
 
+    /// Set the selection and recenter it.
     fn select(
         &mut self,
         lineno: usize,
@@ -500,6 +510,7 @@ impl Bookmarks {
         Bookmarks::recenter(lineno, top, height, force)
     }
 
+    /// Apply a function on the selection if set.
     fn selected_and_then<F>(&mut self, f: F) -> usize
     where
         F: Fn(&LinePid) -> Option<LinePid>,
@@ -510,6 +521,64 @@ impl Bookmarks {
                 lp.lineno
             }
             None => 0,
+        }
+    }
+
+    /// Select the previous PID if the current PID is the current selection.
+    ///
+    /// The offset is based on the `previous_pids` FIFO size. It's one
+    /// for previous line or the page size.
+    fn select_previous(
+        &mut self,
+        previous_pids: &BoundedFifo<pid_t>,
+        current_lineno: usize,
+        current_pid: pid_t,
+        top: usize,
+        height: usize,
+    ) -> Option<usize> {
+        let force = previous_pids.capacity() > 1; // Moving by pages.
+        match self.selected {
+            Some(selected) if current_pid == selected.pid => {
+                // If current PID is the selected PID, the front of previous
+                // PIDs is the one to select. If there is no previous PID,
+                // just stay on the selection.
+                let lineno = match previous_pids.front() {
+                    Some(prev_pid) => {
+                        let lineno = current_lineno - previous_pids.len();
+                        self.selected = Some(LinePid::new(lineno, *prev_pid));
+                        lineno
+                    }
+                    None => selected.lineno,
+                };
+                Some(Bookmarks::recenter(lineno, top, height, force))
+            }
+            Some(_) => None, // Current is not the one we are looking for.
+            None => {
+                // No selection, select this one (should be the first line).
+                Some(self.select(current_lineno, current_pid, top, height, force))
+            }
+        }
+    }
+
+    /// Select the current PID is the next after the current selection.
+    ///
+    /// The offset is based on the `previous_pids` FIFO size. It's one
+    /// for next line or the page size.
+    fn select_next(
+        &mut self,
+        previous_pids: &BoundedFifo<pid_t>,
+        current_lineno: usize,
+        current_pid: pid_t,
+        top: usize,
+        height: usize,
+    ) -> Option<usize> {
+        let force = previous_pids.len() > 1; // Moving by pages.
+        match (self.selected.map(|s| s.pid), previous_pids.front()) {
+            (Some(selected_pid), Some(prev_pid)) if *prev_pid == selected_pid => {
+                Some(self.select(current_lineno, current_pid, top, height, force))
+            }
+            (None, _) => Some(self.select(current_lineno, current_pid, top, height, force)),
+            _ => None,
         }
     }
 
@@ -591,31 +660,10 @@ impl Bookmarks {
                 }
                 BookmarkAction::LastLine => last_lineno = Some(lineno),
                 BookmarkAction::PreviousLine | BookmarkAction::PreviousPage => {
-                    match self.selected {
-                        Some(selected) => {
-                            if pi.pid() == selected.pid {
-                                let new_lineno = match previous_pids.front() {
-                                    Some(prev_pid) => {
-                                        let new_lineno = lineno - previous_pids.len();
-                                        self.selected = Some(LinePid::new(new_lineno, *prev_pid));
-                                        new_lineno
-                                    }
-                                    None => selected.lineno,
-                                };
-                                return Bookmarks::recenter(new_lineno, top, height, page_size > 1);
-                            }
-                        }
-                        None => return self.select(lineno, pi.pid(), top, height, page_size > 1),
-                    }
+                    try_return!(self.select_previous(&previous_pids, lineno, pi.pid(), top, height))
                 }
                 BookmarkAction::NextLine | BookmarkAction::NextPage => {
-                    if match (self.selected.map(|s| s.pid), previous_pids.front()) {
-                        (Some(selected_pid), Some(prev_pid)) => *prev_pid == selected_pid,
-                        (None, _) => true,
-                        _ => false,
-                    } {
-                        return self.select(lineno, pi.pid(), top, height, page_size > 1);
-                    }
+                    try_return!(self.select_next(&previous_pids, lineno, pi.pid(), top, height))
                 }
                 BookmarkAction::PreviousMatch
                 | BookmarkAction::NextMatch
