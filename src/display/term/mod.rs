@@ -58,11 +58,9 @@ macro_rules! rcell {
     };
 }
 
-const HELP: &str = r#"Command help
-============
+const HELP: &str = r#"# Command help
 
-Movements
----------
+## Movements
 
 - Up and down: move the cursor up and down.
 - Page up and down: scroll the cursor by pages.
@@ -72,8 +70,7 @@ Movements
 - Home: go to first column.
 - End: go to last column.
 
-Searching
----------
+## Searching
 
 - Start an incremental search with '/'.
   . Hit enter to validate the search string.
@@ -81,8 +78,7 @@ Searching
 - Move to the next match with 'n' and the previous match with 'N'.
 - Move the cursor to clear the search.
 
-Marking
--------
+## Marking
 
 The space bar toggles the mark on:
 1. the matched lines if there is a search,
@@ -90,8 +86,7 @@ The space bar toggles the mark on:
 
 When no search is enabled, move to the next and previous match with 'n' and 'N'.
 
-Miscellaneous
--------------
+## Miscellaneous
 
 The soft or hard limits are displayed by hitting 'l' but only for the selected process.
 
@@ -424,6 +419,30 @@ impl MaxLength {
     }
 }
 
+/// Format a text by applying header style.
+///
+/// A header of level 1 or level 2 are followed by lines starting
+/// respectively with ==== and ----.
+fn format_text<'l>(help: &'static str) -> Vec<Line<'l>> {
+    help.lines()
+        .map(|s| {
+            if s.starts_with("## ") {
+                let (_, s) = s.split_at(3);
+                Line::from(s).style(Style::default().add_modifier(Modifier::UNDERLINED))
+            } else if s.starts_with("# ") {
+                let (_, s) = s.split_at(2);
+                Line::from(s).style(
+                    Style::default()
+                        .add_modifier(Modifier::BOLD)
+                        .add_modifier(Modifier::UNDERLINED),
+                )
+            } else {
+                Line::from(s)
+            }
+        })
+        .collect()
+}
+
 macro_rules! format_metric {
     ($metrics:expr, $field:ident) => {
         TerminalDevice::format_option($metrics.as_ref().and_then(|m| m.$field.strings().next()))
@@ -468,8 +487,6 @@ pub struct TerminalDevice<'t> {
     menu: Vec<MenuEntry>,
     /// Pane kind.
     pane_kind: PaneKind,
-    /// Help height
-    help_height: usize,
 }
 
 impl<'t> TerminalDevice<'t> {
@@ -501,7 +518,6 @@ impl<'t> TerminalDevice<'t> {
             occurrences: BTreeSet::default(),
             menu: menu(),
             pane_kind: PaneKind::Main,
-            help_height: HELP.lines().count(),
         })
     }
 
@@ -926,7 +942,8 @@ impl<'t> TerminalDevice<'t> {
     fn render_help(&mut self) -> anyhow::Result<()> {
         self.pane_kind = PaneKind::Help;
         let menu = menu_line(&self.menu, self.keymap());
-        let help_height = self.help_height as u16;
+        let help = format_text(HELP);
+        let help_height = help.len() as u16;
         let mut pane_offset = self.pane_offset;
 
         self.terminal.draw(|frame| {
@@ -943,7 +960,7 @@ impl<'t> TerminalDevice<'t> {
             if pane_offset > max_pane_offset {
                 pane_offset = max_pane_offset;
             }
-            let help = Paragraph::new(HELP)
+            let help = Paragraph::new(Text::from(help))
                 .block(
                     Block::new()
                         .title(" Oprs ")
