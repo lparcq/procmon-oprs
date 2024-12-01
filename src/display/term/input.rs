@@ -36,17 +36,20 @@ const KEY_GOTO_TBL_RIGHT: Key = Key::End;
 const KEY_GOTO_TBL_TOP: Key = Key::CtrlHome;
 const KEY_HELP: Key = Key::Char('?');
 const KEY_LIMITS: Key = Key::Char('l');
+const KEY_MARK_TOGGLE: Key = Key::Char(' ');
+const KEY_MARK_CLEAR: Key = Key::Ctrl('c');
 const KEY_NEXT_FILTER: Key = Key::Char('f');
 const KEY_SEARCH: Key = Key::Char('/');
-const KEY_SEARCH_PREVIOUS_CHAR: char = 'N';
-const KEY_SEARCH_PREVIOUS: Key = Key::Char(KEY_SEARCH_PREVIOUS_CHAR);
-const KEY_SEARCH_NEXT_CHAR: char = 'n';
-const KEY_SEARCH_NEXT: Key = Key::Char(KEY_SEARCH_NEXT_CHAR);
+const KEY_SELECT_PREVIOUS_CHAR: char = 'N';
+const KEY_SELECT_PREVIOUS: Key = Key::Char(KEY_SELECT_PREVIOUS_CHAR);
+const KEY_SELECT_NEXT_CHAR: char = 'n';
+const KEY_SELECT_NEXT: Key = Key::Char(KEY_SELECT_NEXT_CHAR);
 const KEY_SEARCH_CANCEL: Key = Key::Ctrl('c');
 const KEY_ENTER: Key = Key::Char('\n');
 const KEY_SLOWER: Key = Key::Char(KEY_SLOWER_CHAR);
 const KEY_SLOWER_CHAR: char = '-';
-const KEY_QUIT: Key = Key::Esc;
+const KEY_ESCAPE: Key = Key::Esc;
+const KEY_QUIT: Key = Key::Char('q');
 
 macro_rules! try_return {
     ($option:expr) => {
@@ -70,6 +73,8 @@ pub enum Action {
     SwitchToHelp,
     SwitchBack,
     SwitchToProcess,
+    ClearMarks,
+    ToggleMarks,
     MultiplyTimeout(u16),
     Quit,
     ScrollLeft,
@@ -81,9 +86,9 @@ pub enum Action {
     SearchCancel,
     SearchEnter,
     SearchExit,
-    SearchNext,
     SearchPop,
-    SearchPrevious,
+    SelectNext,
+    SelectPrevious,
     SearchPush(char),
     ToggleLimits,
 }
@@ -112,12 +117,14 @@ impl KeyMap {
             }
         } else if self.intersects(KeyMap::Help) || self.intersects(KeyMap::Details) {
             match evt {
-                Event::Key(KEY_QUIT) => Action::SwitchBack,
+                Event::Key(KEY_QUIT) | Event::Key(KEY_ESCAPE) => Action::SwitchBack,
                 Event::Key(Key::PageDown) => Action::ScrollPageDown,
                 Event::Key(Key::PageUp) => Action::ScrollPageUp,
                 _ => Action::None,
             }
         } else {
+            let can_move_selection =
+                self.intersects(KeyMap::Main) || self.intersects(KeyMap::FixedSearch);
             match evt {
                 Event::Key(KEY_FASTER) => Action::DivideTimeout(2),
                 Event::Key(KEY_GOTO_TBL_BOTTOM) => Action::GotoTableBottom,
@@ -126,16 +133,14 @@ impl KeyMap {
                 Event::Key(KEY_GOTO_TBL_TOP) => Action::GotoTableTop,
                 Event::Key(KEY_ENTER) => Action::SwitchToProcess,
                 Event::Key(KEY_HELP) => Action::SwitchToHelp,
+                Event::Key(KEY_MARK_CLEAR) => Action::ClearMarks,
+                Event::Key(KEY_MARK_TOGGLE) => Action::ToggleMarks,
                 Event::Key(KEY_NEXT_FILTER) => Action::FilterNext,
                 Event::Key(KEY_SEARCH) => Action::SearchEnter,
-                Event::Key(KEY_SEARCH_PREVIOUS) if self.intersects(KeyMap::FixedSearch) => {
-                    Action::SearchPrevious
-                }
-                Event::Key(KEY_SEARCH_NEXT) if self.intersects(KeyMap::FixedSearch) => {
-                    Action::SearchNext
-                }
+                Event::Key(KEY_SELECT_PREVIOUS) if can_move_selection => Action::SelectPrevious,
+                Event::Key(KEY_SELECT_NEXT) if can_move_selection => Action::SelectNext,
                 Event::Key(KEY_SLOWER) => Action::MultiplyTimeout(2),
-                Event::Key(KEY_QUIT) | Event::Key(Key::Ctrl('c')) => Action::Quit,
+                Event::Key(KEY_QUIT) | Event::Key(KEY_ESCAPE) => Action::Quit,
                 Event::Key(Key::PageDown) => Action::ScrollPageDown,
                 Event::Key(Key::PageUp) => Action::ScrollPageUp,
                 Event::Key(Key::Down) => Action::ScrollLineDown,
@@ -194,7 +199,6 @@ impl MenuEntry {
             Key::Alt(ch) => format!("M-{ch}"),
             Key::Ctrl(ch) => format!("C-{ch}"),
             Key::Null => "\\0".to_string(),
-            KEY_QUIT => "Esc".to_string(),
             _ => "?".to_string(),
         }
     }
@@ -210,9 +214,9 @@ pub fn menu() -> Vec<MenuEntry> {
         ),
         MenuEntry::with_key(KEY_HELP, "Help", KeyMap::Main),
         MenuEntry::new(
-            format!("{KEY_SEARCH_NEXT_CHAR}/{KEY_SEARCH_PREVIOUS_CHAR}",),
+            format!("{KEY_SELECT_NEXT_CHAR}/{KEY_SELECT_PREVIOUS_CHAR}",),
             "Next/Prev",
-            KeyMap::FixedSearch,
+            KeyMap::Main | KeyMap::FixedSearch,
         ),
         MenuEntry::with_key(KEY_SEARCH, "Search", KeyMap::Main | KeyMap::FixedSearch),
         MenuEntry::with_key(KEY_LIMITS, "Limits", KeyMap::Main | KeyMap::FixedSearch),
@@ -264,12 +268,14 @@ pub enum BookmarkAction {
     PreviousPage,
     /// Select next page
     NextPage,
-    /// Select previous occurrence
-    PreviousMatch,
-    /// Select next occurrence
-    NextMatch,
+    /// Select previous search occurrence or mark.
+    Previous,
+    /// Select next search occurrence or mark.
+    Next,
     /// Current selected line if it still matched, else the next matching.
     ClosestMatch,
+    /// Invert the marks of the matched lines or the current selection.
+    ToggleMarks,
 }
 
 /// Action to edit search bar
@@ -418,7 +424,7 @@ pub struct Bookmarks {
     search: Option<SearchBar>,
     /// PIDs marked in the selection.
     #[getset(get = "pub")]
-    _marks: BTreeSet<pid_t>,
+    marks: BTreeSet<pid_t>,
     /// Action for next round.
     #[getset(get = "pub", set = "pub")]
     action: BookmarkAction,
@@ -442,9 +448,24 @@ impl Bookmarks {
         }
     }
 
-    /// Status of a PID.
+    /// Check if PID is selected.
     pub fn is_selected(&self, pid: pid_t) -> bool {
         self.selected.map(|s| s.pid == pid).unwrap_or(false)
+    }
+
+    /// Check if PID is marked.
+    pub fn is_marked(&self, pid: pid_t) -> bool {
+        self.marks.contains(&pid)
+    }
+
+    /// Number of marks
+    pub fn marks_count(&self) -> usize {
+        self.marks.len()
+    }
+
+    /// Clear marks
+    pub fn clear_marks(&mut self) {
+        self.marks.clear();
     }
 
     /// Start an incremental search.
@@ -582,6 +603,13 @@ impl Bookmarks {
         }
     }
 
+    /// Toggle the mark for the given PID.
+    fn toggle_mark(&mut self, pid: pid_t) {
+        if !self.marks.remove(&pid) {
+            self.marks.insert(pid);
+        }
+    }
+
     /// Check if the action doesn't depend on the lines and return the offset in this case.
     fn execute_without_lines(
         &self,
@@ -593,11 +621,9 @@ impl Bookmarks {
             Some(Bookmarks::recenter(0, top, height, false))
         } else if matches!(
             action,
-            BookmarkAction::PreviousMatch
-                | BookmarkAction::NextMatch
-                | BookmarkAction::ClosestMatch
+            BookmarkAction::Previous | BookmarkAction::Next | BookmarkAction::ClosestMatch
         ) {
-            if self.search_pattern().is_none() {
+            if self.search_pattern().is_none() && self.marks.is_empty() {
                 let lineno = self.selected.map(|lp| lp.lineno).unwrap_or(0);
                 Some(Bookmarks::recenter(lineno, top, height, false))
             } else {
@@ -642,44 +668,52 @@ impl Bookmarks {
         let mut last_lineno = None;
         let mut previous_pids = BoundedFifo::new(page_size);
         let mut matches = Vec::new();
+        let mut marks = Vec::new();
         let pattern = self.search_pattern();
 
         for (lineno, pi) in lines.enumerate() {
+            let pid = pi.pid();
+            if self.marks.contains(&pid) {
+                marks.push(LinePid::new(lineno, pid));
+            }
             match self.selected {
-                Some(selected) if selected.lineno == lineno => pid_at_line = Some(pi.pid()),
+                Some(selected) if selected.lineno == lineno => pid_at_line = Some(pid),
                 _ => (),
             }
             match action {
                 BookmarkAction::None => {
-                    if pi.pid() == self.selected.expect("internal error: empty selection").pid {
+                    if pid == self.selected.expect("internal error: empty selection").pid {
                         return Bookmarks::recenter(lineno, top, height, false);
                     }
                 }
-                BookmarkAction::FirstLine => {
-                    return self.select(lineno, pi.pid(), top, height, true)
-                }
+                BookmarkAction::FirstLine => return self.select(lineno, pid, top, height, true),
                 BookmarkAction::LastLine => last_lineno = Some(lineno),
                 BookmarkAction::PreviousLine | BookmarkAction::PreviousPage => {
-                    try_return!(self.select_previous(&previous_pids, lineno, pi.pid(), top, height))
+                    try_return!(self.select_previous(&previous_pids, lineno, pid, top, height))
                 }
                 BookmarkAction::NextLine | BookmarkAction::NextPage => {
-                    try_return!(self.select_next(&previous_pids, lineno, pi.pid(), top, height))
+                    try_return!(self.select_next(&previous_pids, lineno, pid, top, height))
                 }
-                BookmarkAction::PreviousMatch
-                | BookmarkAction::NextMatch
-                | BookmarkAction::ClosestMatch => {
-                    let pattern = pattern
-                        .as_ref()
-                        .expect("internal error: pattern cannot be empty");
-                    if pi.name().contains(pattern) {
-                        matches.push(LinePid::new(lineno, pi.pid()));
-                        occurrences.insert(pi.pid());
+                BookmarkAction::Previous
+                | BookmarkAction::Next
+                | BookmarkAction::ClosestMatch
+                | BookmarkAction::ToggleMarks => {
+                    if let Some(pattern) = pattern.as_ref() {
+                        if pi.name().contains(pattern) {
+                            matches.push(LinePid::new(lineno, pid));
+                            occurrences.insert(pid);
+                        }
                     }
                 }
             }
-            previous_pids.push(pi.pid());
+            previous_pids.push(pid);
         }
+        self.marks = BTreeSet::from_iter(marks.iter().map(|lp| lp.pid)); // Keep only marks on existing PIDs.
         let match_count = matches.len();
+        let ring = match pattern {
+            Some(_) => &matches,
+            None => &marks,
+        };
         let lineno = match action {
             BookmarkAction::None => top,
             BookmarkAction::FirstLine => 0,
@@ -699,12 +733,22 @@ impl Bookmarks {
                 }
                 _ => 0,
             },
-            BookmarkAction::PreviousMatch => {
-                self.selected_and_then(|s| s.previous_in(&matches).copied())
-            }
-            BookmarkAction::NextMatch => self.selected_and_then(|s| s.next_in(&matches).copied()),
+            BookmarkAction::Previous => self.selected_and_then(|s| s.previous_in(ring).copied()),
+            BookmarkAction::Next => self.selected_and_then(|s| s.next_in(ring).copied()),
             BookmarkAction::ClosestMatch => {
                 self.selected_and_then(|s| s.closest_in(&matches).copied())
+            }
+            BookmarkAction::ToggleMarks => {
+                if occurrences.is_empty() {
+                    if let Some(selected) = self.selected {
+                        self.toggle_mark(selected.pid);
+                    }
+                } else {
+                    occurrences.iter().for_each(|pid| self.toggle_mark(*pid));
+                    self.clear_search();
+                    occurrences.clear();
+                }
+                self.selected.map(|s| s.lineno).unwrap_or(0)
             }
         };
         Bookmarks::recenter(lineno, top, height, match_count > 0)

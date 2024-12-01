@@ -77,8 +77,18 @@ Searching
 
 - Start an incremental search with '/'.
   . Hit enter to validate the search string.
-  . Hit Ctrl-c to cancel the search.
+  . Hit Ctrl-c to clear the search.
 - Move to the next match with 'n' and the previous match with 'N'.
+- Move the cursor to clear the search.
+
+Marking
+-------
+
+The space bar toggles the mark on:
+1. the matched lines if there is a search,
+2. on the line under the cursor otherwise.
+
+When no search is enabled, move to the next and previous match with 'n' and 'N'.
 
 Miscellaneous
 -------------
@@ -102,8 +112,13 @@ pub enum Interaction {
 /// Status of a process.
 #[derive(Clone, Copy, Debug)]
 pub enum PidStatus {
+    /// No specific status.
     Unknown,
+    /// Under the cursor.
     Selected,
+    /// Bookmarked.
+    Marked,
+    /// Search match.
     Matching,
 }
 
@@ -121,6 +136,8 @@ struct Styles {
     unselected: Style,
     /// Selected line
     selected: Style,
+    /// Bookmarked line.
+    marked: Style,
     /// Matching line
     matching: Style,
     /// Status line
@@ -143,6 +160,7 @@ impl Styles {
                 decrease: Style::default().fg(Color::Indexed(46)),
                 unselected: bold,
                 selected: Style::default().fg(Color::Black).bg(Color::LightMagenta),
+                marked: Style::default().fg(Color::LightCyan),
                 matching: Style::default().fg(Color::LightMagenta),
                 status: white_on_blue,
                 column_spacing: 2,
@@ -154,6 +172,7 @@ impl Styles {
                 decrease: Style::default().fg(Color::Indexed(40)),
                 unselected: bold,
                 selected: Style::default().fg(Color::White).bg(Color::Magenta),
+                marked: Style::default().fg(Color::Cyan),
                 matching: Style::default().fg(Color::Magenta),
                 status: white_on_blue,
                 column_spacing: 2,
@@ -165,6 +184,7 @@ impl Styles {
                 decrease: Style::default().fg(Color::LightGreen),
                 unselected: bold,
                 selected: Style::default().fg(Color::Black).bg(Color::LightMagenta),
+                marked: Style::default().fg(Color::LightCyan),
                 matching: Style::default().fg(Color::LightMagenta),
                 status: white_on_blue,
                 column_spacing: 2,
@@ -176,6 +196,7 @@ impl Styles {
                 decrease: Style::default().fg(Color::Green),
                 unselected: bold,
                 selected: Style::default().fg(Color::White).bg(Color::Magenta),
+                marked: Style::default().fg(Color::Cyan),
                 matching: Style::default().fg(Color::Magenta),
                 status: white_on_blue,
                 column_spacing: 2,
@@ -187,6 +208,7 @@ impl Styles {
                 decrease: bold,
                 unselected: bold,
                 selected: bold_reversed,
+                marked: bold.add_modifier(Modifier::UNDERLINED),
                 matching: Style::default().add_modifier(Modifier::UNDERLINED),
                 status: bold_reversed,
                 column_spacing: 2,
@@ -198,6 +220,7 @@ impl Styles {
         match status {
             PidStatus::Unknown => self.unselected,
             PidStatus::Selected => self.selected,
+            PidStatus::Marked => self.marked,
             PidStatus::Matching => self.matching,
         }
     }
@@ -501,8 +524,11 @@ impl<'t> TerminalDevice<'t> {
         let time_string = format!("{}", Local::now().format("%X"));
         let delay = human_duration(self.every);
         let matches_count = self.occurrences.len();
+        let marks_count = self.bookmarks.marks_count();
         if matches_count > 0 {
             format!("{time_string} -- interval:{delay} -- matches:{matches_count}",)
+        } else if marks_count > 0 {
+            format!("{time_string} -- interval:{delay} -- marks:{marks_count}",)
         } else {
             format!(
                 "{time_string} -- interval:{delay} -- limit:{} -- filter:{}",
@@ -671,11 +697,13 @@ impl<'t> TerminalDevice<'t> {
             }
             Action::SearchPush(c) => self.bookmarks.edit_search(SearchEdit::Push(c)),
             Action::SearchPop => self.bookmarks.edit_search(SearchEdit::Pop),
-            Action::SearchPrevious => {
-                void!(self.bookmarks.set_action(BookmarkAction::PreviousMatch))
-            }
             Action::SearchCancel => self.bookmarks.clear_search(),
-            Action::SearchNext => void!(self.bookmarks.set_action(BookmarkAction::NextMatch)),
+            Action::SelectPrevious => {
+                void!(self.bookmarks.set_action(BookmarkAction::Previous))
+            }
+            Action::SelectNext => void!(self.bookmarks.set_action(BookmarkAction::Next)),
+            Action::ClearMarks => self.bookmarks.clear_marks(),
+            Action::ToggleMarks => void!(self.bookmarks.set_action(BookmarkAction::ToggleMarks)),
         }
         Ok(action)
     }
@@ -809,6 +837,19 @@ impl<'t> TerminalDevice<'t> {
         row
     }
 
+    /// Status of a process.
+    fn pid_status(&self, pid: pid_t) -> PidStatus {
+        if self.bookmarks.is_selected(pid) {
+            PidStatus::Selected
+        } else if self.occurrences.contains(&pid) {
+            PidStatus::Matching
+        } else if self.bookmarks.is_marked(pid) {
+            PidStatus::Marked
+        } else {
+            PidStatus::Unknown
+        }
+    }
+
     fn render_tree(&mut self, collector: &Collector) -> anyhow::Result<()> {
         self.pane_kind = PaneKind::Main;
         let line_count = collector.line_count();
@@ -852,13 +893,7 @@ impl<'t> TerminalDevice<'t> {
             collector.lines().skip(voffset).for_each(|samples| {
                 pids.push(samples);
                 let pid = samples.pid();
-                let pid_status = if self.bookmarks.is_selected(pid) {
-                    PidStatus::Selected
-                } else if self.occurrences.contains(&pid) {
-                    PidStatus::Matching
-                } else {
-                    PidStatus::Unknown
-                };
+                let pid_status = self.pid_status(pid);
 
                 let row = TerminalDevice::make_metrics_row(
                     pid_status,
