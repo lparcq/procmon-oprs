@@ -86,6 +86,13 @@ The space bar toggles the mark on:
 
 When no search is enabled, move to the next and previous match with 'n' and 'N'.
 
+## Scope
+
+The list of processes can be narrowed by marking them and hitting 's'. The processes
+are displayed as a flat list.
+
+Hitting 's' again reverts to the tree mode.
+
 ## Miscellaneous
 
 The soft or hard limits are displayed by hitting 'l' but only for the selected process.
@@ -94,13 +101,15 @@ By default, only userland processes are displayed. Use 'f' to see kernel process
 "#;
 
 /// User action that has an impact on the application.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum Interaction {
     None,
     Filter(usize),
     SwitchToHelp,
     SwitchBack,
     SelectPid(pid_t),
+    Narrow(Vec<pid_t>),
+    Wide,
     Quit,
 }
 
@@ -540,7 +549,7 @@ impl<'t> TerminalDevice<'t> {
         let time_string = format!("{}", Local::now().format("%X"));
         let delay = human_duration(self.every);
         let matches_count = self.occurrences.len();
-        let marks_count = self.bookmarks.marks_count();
+        let marks_count = self.bookmarks.marks().len();
         if matches_count > 0 {
             format!("{time_string} -- interval:{delay} -- matches:{matches_count}",)
         } else if marks_count > 0 {
@@ -640,7 +649,11 @@ impl<'t> TerminalDevice<'t> {
         const MAX_TIMEOUT_SECS: u64 = 24 * 3_600; // 24 hours
         const MIN_TIMEOUT_MSECS: u128 = 1;
         match action {
-            Action::None | Action::Quit | Action::SwitchToHelp | Action::SwitchToProcess => {}
+            Action::None
+            | Action::Quit
+            | Action::SwitchToHelp
+            | Action::SwitchToProcess
+            | Action::ChangeScope => (),
             Action::SwitchBack => self.pane_offset = 0,
             Action::FilterNext => self.filters.advance(),
             Action::MultiplyTimeout(factor) => {
@@ -725,8 +738,19 @@ impl<'t> TerminalDevice<'t> {
     }
 
     /// Convert the action to a possible interaction.
-    fn interaction(&self, action: Action) -> Interaction {
+    fn interaction(&mut self, action: Action) -> Interaction {
         match action {
+            Action::ChangeScope if self.bookmarks.marks().is_empty() => {
+                let pids = self
+                    .bookmarks
+                    .marks()
+                    .iter()
+                    .copied()
+                    .collect::<Vec<pid_t>>();
+                self.bookmarks.clear_marks();
+                Interaction::Narrow(pids)
+            }
+            Action::ChangeScope => Interaction::Wide,
             Action::FilterNext => Interaction::Filter(self.filters.current),
             Action::SwitchToHelp => Interaction::SwitchToHelp,
             Action::SwitchToProcess => match self.bookmarks.selected() {
@@ -866,17 +890,26 @@ impl<'t> TerminalDevice<'t> {
         }
     }
 
-    fn render_tree(&mut self, collector: &Collector) -> anyhow::Result<()> {
-        self.pane_kind = PaneKind::Main;
-        let line_count = collector.line_count();
-        let ncols = self.metric_headers.len() + 2; // process name, PID, metric1, ...
-        let nrows = line_count + 2; // metric title, metric subtitle, process1, ...
+    fn top(&self, line_count: usize) -> usize {
         let top = self
             .table_offset
             .vertical
             .value()
             .copied()
-            .unwrap_or_else(|| line_count.saturating_sub(self.body_height));
+            .unwrap_or(line_count);
+        if top >= line_count {
+            line_count.saturating_sub(self.body_height)
+        } else {
+            top
+        }
+    }
+
+    fn render_tree(&mut self, collector: &Collector) -> anyhow::Result<()> {
+        self.pane_kind = PaneKind::Main;
+        let line_count = collector.line_count();
+        let ncols = self.metric_headers.len() + 2; // process name, PID, metric1, ...
+        let nrows = line_count + 2; // metric title, metric subtitle, process1, ...
+        let top = self.top(line_count);
         let voffset = self.bookmarks.execute(
             &mut self.occurrences,
             collector.lines(),
@@ -950,7 +983,7 @@ impl<'t> TerminalDevice<'t> {
             const BORDERS_SIZE: u16 = 2;
             const MENU_HEIGHT: u16 = 1;
             let screen = frame.area();
-            let body_height = screen.height - BORDERS_SIZE - MENU_HEIGHT;
+            let body_height = screen.height - MENU_HEIGHT;
             let rects = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(body_height), Constraint::Min(0)].as_ref())
@@ -971,7 +1004,7 @@ impl<'t> TerminalDevice<'t> {
                 .scroll((pane_offset, 0));
             frame.render_widget(help, rects[0]);
             frame.render_widget(Paragraph::new(menu), rects[1]);
-            self.vertical_scroll = body_height.div_ceil(2) as usize;
+            self.vertical_scroll = inner_height.div_ceil(2) as usize;
         })?;
         self.pane_offset = pane_offset;
         Ok(())

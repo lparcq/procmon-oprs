@@ -39,6 +39,7 @@ const KEY_LIMITS: Key = Key::Char('l');
 const KEY_MARK_TOGGLE: Key = Key::Char(' ');
 const KEY_MARK_CLEAR: Key = Key::Ctrl('c');
 const KEY_NEXT_FILTER: Key = Key::Char('f');
+const KEY_SCOPE: Key = Key::Char('s');
 const KEY_SEARCH: Key = Key::Char('/');
 const KEY_SELECT_PREVIOUS_CHAR: char = 'N';
 const KEY_SELECT_PREVIOUS: Key = Key::Char(KEY_SELECT_PREVIOUS_CHAR);
@@ -61,9 +62,10 @@ macro_rules! try_return {
 }
 
 /// User action
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum Action {
     None,
+    ChangeScope,
     DivideTimeout(u16),
     FilterNext,
     GotoTableBottom,
@@ -136,6 +138,7 @@ impl KeyMap {
                 Event::Key(KEY_MARK_CLEAR) => Action::ClearMarks,
                 Event::Key(KEY_MARK_TOGGLE) => Action::ToggleMarks,
                 Event::Key(KEY_NEXT_FILTER) => Action::FilterNext,
+                Event::Key(KEY_SCOPE) => Action::ChangeScope,
                 Event::Key(KEY_SEARCH) => Action::SearchEnter,
                 Event::Key(KEY_SELECT_PREVIOUS) if can_move_selection => Action::SelectPrevious,
                 Event::Key(KEY_SELECT_NEXT) if can_move_selection => Action::SelectNext,
@@ -456,11 +459,6 @@ impl Bookmarks {
     /// Check if PID is marked.
     pub fn is_marked(&self, pid: pid_t) -> bool {
         self.marks.contains(&pid)
-    }
-
-    /// Number of marks
-    pub fn marks_count(&self) -> usize {
-        self.marks.len()
     }
 
     /// Clear marks

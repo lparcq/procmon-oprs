@@ -137,39 +137,39 @@ impl<'s> Application<'s> {
             FilterLoop::new(&filters, current_filter)
         };
 
-        if target_ids.is_empty() {
-            match self.display_mode {
-                DisplayMode::Terminal => {
-                    let device = Box::new(TerminalDevice::new(self.every, self.theme, filters)?);
-                    let mut tmgt = ForestProcessManager::new(system_conf, &self.metrics)?;
-                    self.run_loop(&mut tmgt, device, system_conf, true)?;
-                }
-                _ => return Err(anyhow::anyhow!(Error::NoTargets)),
+        let mut is_interactive = false;
+        let device: Box<dyn DisplayDevice> = match self.display_mode {
+            DisplayMode::Terminal => {
+                is_interactive = true;
+                Box::new(TerminalDevice::new(self.every, self.theme, filters)?)
             }
+            DisplayMode::Text => Box::new(TextDevice::new()),
+            _ => Box::new(NullDevice::new()),
+        };
+        if target_ids.is_empty() && !is_interactive {
+            Err(anyhow::anyhow!(Error::NoTargets))
         } else {
-            let mut is_interactive = false;
-            let device: Box<dyn DisplayDevice> = match self.display_mode {
-                DisplayMode::Terminal => {
-                    is_interactive = true;
-                    Box::new(TerminalDevice::new(self.every, self.theme, filters)?)
-                }
-                DisplayMode::Text => Box::new(TextDevice::new()),
-                _ => Box::new(NullDevice::new()),
-            };
-            let mut tmgt = FlatProcessManager::new(system_conf, &self.metrics, target_ids)?;
-            self.run_loop(&mut tmgt, device, system_conf, is_interactive)?;
+            self.run_loop(device, system_conf, target_ids, is_interactive)
         }
-        Ok(())
     }
 
     fn run_loop(
         &self,
-        tmgt: &mut dyn ProcessManager,
         mut device: Box<dyn DisplayDevice>,
         system_conf: &'_ SystemConf,
+        target_ids: &[TargetId],
         is_interactive: bool,
     ) -> anyhow::Result<()> {
         let mut collector = Collector::new(Cow::Borrowed(&self.metrics));
+        let mut tmgt: Box<dyn ProcessManager> = if target_ids.is_empty() {
+            Box::new(ForestProcessManager::new(system_conf, &self.metrics)?)
+        } else {
+            Box::new(FlatProcessManager::new(
+                system_conf,
+                &self.metrics,
+                target_ids,
+            )?)
+        };
         let mut details: Option<ProcessDetails> = None;
         let mut pane_kind = PaneKind::Main;
 
@@ -247,6 +247,20 @@ impl<'s> Application<'s> {
                                 }
                                 None => log::error!("{pid}: details cannot be selected"),
                             }
+                        }
+                        Interaction::Narrow(pids) => {
+                            log::debug!("switch to flat mode with {} PIDs", pids.len());
+                            tmgt = Box::new(FlatProcessManager::with_pids(
+                                system_conf,
+                                &self.metrics,
+                                &pids,
+                            ));
+                            tmgt.refresh(&mut collector)?;
+                        }
+                        Interaction::Wide => {
+                            log::debug!("switch to explorer mode");
+                            tmgt = Box::new(ForestProcessManager::new(system_conf, &self.metrics)?);
+                            tmgt.refresh(&mut collector)?;
                         }
                         Interaction::None => (),
                     }

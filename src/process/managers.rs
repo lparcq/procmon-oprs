@@ -133,6 +133,22 @@ impl<'s> FlatProcessManager<'s> {
         targets.initialize(metrics.len());
         Ok(Self { targets })
     }
+
+    /// Create a process manager only from PIDS. Discard PIDS that are not valid.
+    pub fn with_pids(
+        system_conf: &'s SystemConf,
+        metrics: &[FormattedMetric],
+        pids: &[pid_t],
+    ) -> Self {
+        let mut targets = TargetContainer::new(system_conf, true);
+        pids.iter().for_each(|pid| {
+            if let Err(err) = targets.push_by_pid(&TargetId::Pid(*pid)) {
+                log::warn!("{pid}: {err}");
+            }
+        });
+        targets.initialize(metrics.len());
+        Self { targets }
+    }
 }
 
 impl<'s> ProcessManager for FlatProcessManager<'s> {

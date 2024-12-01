@@ -213,6 +213,23 @@ impl<'a> TargetContainer<'a> {
         collector.finish();
     }
 
+    /// Push a target by PID.
+    ///
+    /// Panic if the target is not a PID or a PID file.
+    pub fn push_by_pid(&mut self, target_id: &TargetId) -> TargetResult<()> {
+        let target = match target_id {
+            TargetId::Pid(pid) => Target::new(
+                Process::new(*pid).map_err(|_| TargetError::InvalidProcessId(*pid))?,
+                self.system_conf,
+            ),
+            TargetId::PidFile(pid_file) => Target::with_pid_file(pid_file, self.system_conf)?,
+            _ => panic!("already matched"),
+        };
+        self.targets.push(target);
+        Ok(())
+    }
+
+    /// Push a target.
     pub fn push(&mut self, target_id: &TargetId, forest: &ProcessForest) -> TargetResult<()> {
         match target_id {
             TargetId::System => {
@@ -231,19 +248,7 @@ impl<'a> TargetContainer<'a> {
                     }
                 });
             }
-            _ => {
-                let target = match target_id {
-                    TargetId::Pid(pid) => Target::new(
-                        Process::new(*pid).map_err(|_| TargetError::InvalidProcessId(*pid))?,
-                        self.system_conf,
-                    ),
-                    TargetId::PidFile(pid_file) => {
-                        Target::with_pid_file(pid_file, self.system_conf)?
-                    }
-                    _ => panic!("already matched"),
-                };
-                self.targets.push(target);
-            }
+            _ => self.push_by_pid(target_id)?,
         };
         Ok(())
     }
