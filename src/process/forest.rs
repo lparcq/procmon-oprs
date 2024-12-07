@@ -86,12 +86,19 @@ pub fn new_process(pid: pid_t) -> ProcessResult<Process> {
 #[derive(Debug)]
 /// Information about for an existing or past process.
 pub struct ProcessInfo {
+    /// Process identifier.
     pid: pid_t,
+    /// Parent process identifier.
     parent_pid: pid_t,
+    /// Process creation time.
     start_time: u64,
+    /// Process name.
     name: String,
+    /// Process instance.
     process: Process,
+    /// Whether the process is a kernel task or a userland process.
     is_kernel: bool,
+    /// Process exists but is hidden.
     hidden: bool,
 }
 
