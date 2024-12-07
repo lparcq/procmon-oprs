@@ -167,10 +167,10 @@ mod tests {
     #[test]
     fn test_size() {
         assert_eq!("512", super::size(512));
-        assert_eq!("1.0 K", super::size(1_000));
-        assert_eq!("1.0 M", super::size(1_000_000));
-        assert_eq!("1.0 G", super::size(1_000_000_000));
-        assert_eq!("1.0 T", super::size(1_000_000_000_000));
+        assert_eq!("1.00 K", super::size(1_000));
+        assert_eq!("1.00 M", super::size(1_000_000));
+        assert_eq!("1.00 G", super::size(1_000_000_000));
+        assert_eq!("1.00 T", super::size(1_000_000_000_000));
     }
 
     #[test]
@@ -191,15 +191,15 @@ mod tests {
             super::human_milliseconds(59 * minutes_millis + 59 * seconds_millis)
         );
         assert_eq!(
-            "3h 5m 10s",
+            "3h 05m 10s",
             super::human_milliseconds((((3 * 60) + 5) * 60 + 10) * 1000)
         );
         assert_eq!(
-            "3h 5m 10s",
+            "3h 05m 10s",
             super::human_milliseconds(3 * hour_millis + 5 * minutes_millis + 10 * seconds_millis)
         );
         assert_eq!(
-            "26h 5m",
+            "26h 05m",
             super::human_milliseconds(26 * hour_millis + 5 * minutes_millis + 10 * seconds_millis)
         );
     }

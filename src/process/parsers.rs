@@ -201,7 +201,7 @@ mod tests {
         assert!(!aggs.has(Aggregation::Min));
         assert!(!aggs.has(Aggregation::Ratio));
         let fmt = fmt.unwrap();
-        assert_eq!("1.0 K", fmt(1000));
+        assert_eq!("1.00 K", fmt(1000));
     }
 
     #[test]
@@ -224,7 +224,7 @@ mod tests {
         assert!(!aggs.has(Aggregation::Max));
         assert!(!aggs.has(Aggregation::Ratio));
         let fmt = fmt.unwrap();
-        assert_eq!("1.0 Ki", fmt(1000));
+        assert_eq!("0.98 Ki", fmt(1000)); // 1000 divided by 1024
     }
 
     #[test]
