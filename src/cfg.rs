@@ -236,7 +236,7 @@ macro_rules! from_param {
     };
 }
 
-impl<'a> IniHandler for ConfigHandler<'a> {
+impl IniHandler for ConfigHandler<'_> {
     type Error = ConfigError;
 
     fn section(&mut self, name: &str) -> Result<(), Self::Error> {

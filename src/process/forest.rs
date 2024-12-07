@@ -162,7 +162,7 @@ pub struct RootIter<'a, 'b> {
     inner: std::collections::btree_set::Iter<'b, NodeId>,
 }
 
-impl<'a, 'b> Iterator for RootIter<'a, 'b> {
+impl<'a> Iterator for RootIter<'a, '_> {
     type Item = &'a ProcessInfo;
     fn next(&mut self) -> Option<Self::Item> {
         self.inner
@@ -177,7 +177,7 @@ pub struct Descendants<'a, 'b> {
     inner: indextree::Descendants<'b, ProcessInfo>,
 }
 
-impl<'a, 'b> Iterator for Descendants<'a, 'b> {
+impl<'a> Iterator for Descendants<'a, '_> {
     type Item = &'a ProcessInfo;
     fn next(&mut self) -> Option<Self::Item> {
         self.inner

@@ -69,5 +69,5 @@ pub trait DisplayDevice {
 }
 
 pub use null::NullDevice;
-pub use term::{FilterLoop, Interaction, TerminalDevice};
+pub use term::{Interaction, TerminalDevice};
 pub use text::TextDevice;

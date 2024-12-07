@@ -17,7 +17,7 @@
 use getset::Getters;
 use libc::pid_t;
 use std::borrow::Cow;
-use strum_macros::{IntoStaticStr, VariantArray};
+use strum_macros::Display as StrumDisplay;
 
 use super::{
     forest::{new_process, process_name, Process, ProcessResult},
@@ -26,10 +26,18 @@ use super::{
 };
 
 /// High-level filter on processes
-#[derive(Clone, Copy, Debug, IntoStaticStr, VariantArray)]
+#[derive(Clone, Copy, Debug, StrumDisplay)]
 pub enum ProcessFilter {
-    All,
+    #[strum(serialize = "none")]
+    None,
+    #[strum(serialize = "user")]
     UserLand,
+}
+
+impl Default for ProcessFilter {
+    fn default() -> Self {
+        Self::UserLand
+    }
 }
 
 /// Specific metrics.
@@ -56,7 +64,7 @@ pub struct ProcessDetails<'a> {
     collector: Collector<'a>,
 }
 
-impl<'a> ProcessDetails<'a> {
+impl ProcessDetails<'_> {
     pub fn new(pid: pid_t, human: bool) -> ProcessResult<Self> {
         let metric_names = vec![
             "time:cpu-raw+ratio",
@@ -151,7 +159,7 @@ impl<'s> FlatProcessManager<'s> {
     }
 }
 
-impl<'s> ProcessManager for FlatProcessManager<'s> {
+impl ProcessManager for FlatProcessManager<'_> {
     fn refresh(&mut self, collector: &mut Collector) -> ProcessResult<bool> {
         let targets_updated = self.targets.refresh();
         self.targets.collect(collector);
@@ -176,11 +184,11 @@ impl<'s> ForestProcessManager<'s> {
             system_conf,
             system_limits: vec![None; metrics.len()],
             forest: Forest::new(),
-            filter: ProcessFilter::UserLand,
+            filter: ProcessFilter::default(),
         })
     }
 
-    fn filter_all(_pi: &ProcessInfo) -> bool {
+    fn no_filter(_pi: &ProcessInfo) -> bool {
         true
     }
 
@@ -189,7 +197,7 @@ impl<'s> ForestProcessManager<'s> {
     }
 }
 
-impl<'s> ProcessManager for ForestProcessManager<'s> {
+impl ProcessManager for ForestProcessManager<'_> {
     fn set_filter(&mut self, filter: ProcessFilter) {
         self.filter = filter;
     }
@@ -213,7 +221,7 @@ impl<'s> ProcessManager for ForestProcessManager<'s> {
             &self.system_limits,
         );
         let changed = self.forest.refresh_if(match self.filter {
-            ProcessFilter::All => ForestProcessManager::filter_all,
+            ProcessFilter::None => ForestProcessManager::no_filter,
             ProcessFilter::UserLand => ForestProcessManager::filter_user_land,
         })?;
         for root_pid in self.forest.root_pids() {

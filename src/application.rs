@@ -20,21 +20,20 @@ use std::{
     io::Write,
     time::{Duration, SystemTime},
 };
-use strum::{EnumMessage, IntoEnumIterator, VariantArray};
+use strum::{EnumMessage, IntoEnumIterator};
 
 use crate::{
     cfg::{DisplayMode, ExportSettings, ExportType, MetricFormat, Settings},
     clock::{DriftMonitor, Timer},
     console::BuiltinTheme,
     display::{
-        DisplayDevice, FilterLoop, Interaction, NullDevice, Pane, PaneKind, PauseStatus,
-        TerminalDevice, TextDevice,
+        DisplayDevice, Interaction, NullDevice, Pane, PaneKind, PauseStatus, TerminalDevice,
+        TextDevice,
     },
     export::{CsvExporter, Exporter, RrdExporter},
     process::{
         Collector, FlatProcessManager, ForestProcessManager, FormattedMetric, MetricDataType,
-        MetricId, MetricNamesParser, ProcessDetails, ProcessFilter, ProcessManager, SystemConf,
-        TargetId,
+        MetricId, MetricNamesParser, ProcessDetails, ProcessManager, SystemConf, TargetId,
     },
     sighdr::SignalHandler,
 };
@@ -99,8 +98,6 @@ pub struct Application<'s> {
     human: bool,
 }
 
-/// Get export type
-
 impl<'s> Application<'s> {
     pub fn new<'m>(
         settings: &'s Settings,
@@ -125,23 +122,11 @@ impl<'s> Application<'s> {
 
     pub fn run(&self, target_ids: &[TargetId], system_conf: &'_ SystemConf) -> anyhow::Result<()> {
         info!("starting");
-        let filters = {
-            let filters = ProcessFilter::VARIANTS
-                .iter()
-                .map(|v| v.into())
-                .collect::<Vec<&'static str>>();
-            let current_filter = ProcessFilter::VARIANTS
-                .iter()
-                .position(|f| matches!(f, ProcessFilter::UserLand))
-                .unwrap_or(0);
-            FilterLoop::new(&filters, current_filter)
-        };
-
         let mut is_interactive = false;
         let device: Box<dyn DisplayDevice> = match self.display_mode {
             DisplayMode::Terminal => {
                 is_interactive = true;
-                Box::new(TerminalDevice::new(self.every, self.theme, filters)?)
+                Box::new(TerminalDevice::new(self.every, self.theme)?)
             }
             DisplayMode::Text => Box::new(TextDevice::new()),
             _ => Box::new(NullDevice::new()),
@@ -228,7 +213,7 @@ impl<'s> Application<'s> {
                 if let PauseStatus::Action(action) = device.pause(&mut timer)? {
                     match action {
                         Interaction::Quit => break,
-                        Interaction::Filter(n) => tmgt.set_filter(ProcessFilter::VARIANTS[n]),
+                        Interaction::Filter(filter) => tmgt.set_filter(filter),
                         Interaction::SwitchToHelp => pane_kind = PaneKind::Help,
                         Interaction::SwitchBack => match (pane_kind, &details) {
                             (PaneKind::Help, Some(_)) => pane_kind = PaneKind::Process,

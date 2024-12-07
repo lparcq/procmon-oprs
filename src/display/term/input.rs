@@ -14,11 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use bitmask_enum::bitmask;
 use getset::{Getters, Setters};
 use libc::pid_t;
 use smart_default::SmartDefault;
 use std::{collections::BTreeSet, fmt};
+use strum::Display as StrumDisplay;
 
 use crate::{
     console::{Event, Key},
@@ -28,8 +28,10 @@ use crate::{
 use super::types::BoundedFifo;
 
 /// Standard keys
-const KEY_FASTER: Key = Key::Char(KEY_FASTER_CHAR);
 const KEY_FASTER_CHAR: char = '+';
+const KEY_FASTER: Key = Key::Char(KEY_FASTER_CHAR);
+const KEY_FILTER_NONE: Key = Key::Char('n');
+const KEY_FILTER_USER: Key = Key::Char('u');
 const KEY_GOTO_TBL_BOTTOM: Key = Key::CtrlEnd;
 const KEY_GOTO_TBL_LEFT: Key = Key::Home;
 const KEY_GOTO_TBL_RIGHT: Key = Key::End;
@@ -38,7 +40,7 @@ const KEY_HELP: Key = Key::Char('?');
 const KEY_LIMITS: Key = Key::Char('l');
 const KEY_MARK_TOGGLE: Key = Key::Char(' ');
 const KEY_MARK_CLEAR: Key = Key::Ctrl('c');
-const KEY_NEXT_FILTER: Key = Key::Char('f');
+const KEY_FILTERS: Key = Key::Char('f');
 const KEY_SCOPE: Key = Key::Char('s');
 const KEY_SEARCH: Key = Key::Char('/');
 const KEY_SELECT_PREVIOUS_CHAR: char = 'N';
@@ -47,8 +49,8 @@ const KEY_SELECT_NEXT_CHAR: char = 'n';
 const KEY_SELECT_NEXT: Key = Key::Char(KEY_SELECT_NEXT_CHAR);
 const KEY_SEARCH_CANCEL: Key = Key::Ctrl('c');
 const KEY_ENTER: Key = Key::Char('\n');
-const KEY_SLOWER: Key = Key::Char(KEY_SLOWER_CHAR);
 const KEY_SLOWER_CHAR: char = '-';
+const KEY_SLOWER: Key = Key::Char(KEY_SLOWER_CHAR);
 const KEY_ESCAPE: Key = Key::Esc;
 const KEY_QUIT: Key = Key::Char('q');
 
@@ -67,7 +69,9 @@ pub enum Action {
     None,
     ChangeScope,
     DivideTimeout(u16),
-    FilterNext,
+    Filters,
+    FilterNone,
+    FilterUser,
     GotoTableBottom,
     GotoTableLeft,
     GotoTableRight,
@@ -96,12 +100,19 @@ pub enum Action {
 }
 
 /// Keymap
-#[bitmask(u8)]
+#[derive(Clone, Copy, Debug, StrumDisplay, PartialEq)]
 pub enum KeyMap {
+    #[strum(serialize = "main")]
     Main,
+    #[strum(serialize = "help")]
     Help,
+    #[strum(serialize = "filters")]
+    Filters,
+    #[strum(serialize = "fixed search")]
     FixedSearch,
+    #[strum(serialize = "incremental search")]
     IncrementalSearch,
+    #[strum(serialize = "main")]
     Details,
 }
 
@@ -109,25 +120,27 @@ impl KeyMap {
     /// Convert an input event to an action
     pub fn action_from_event(self, evt: Event) -> Action {
         //log::debug!("event: {evt:?}");
-        if self.intersects(KeyMap::IncrementalSearch) {
-            match evt {
+        match self {
+            KeyMap::IncrementalSearch => match evt {
                 Event::Key(KEY_ENTER) => Action::SearchExit,
                 Event::Key(Key::Char(c)) => Action::SearchPush(c),
                 Event::Key(Key::Backspace) => Action::SearchPop,
                 Event::Key(KEY_SEARCH_CANCEL) => Action::SearchCancel,
                 _ => Action::None,
-            }
-        } else if self.intersects(KeyMap::Help) || self.intersects(KeyMap::Details) {
-            match evt {
+            },
+
+            KeyMap::Help | KeyMap::Details => match evt {
                 Event::Key(KEY_QUIT) | Event::Key(KEY_ESCAPE) => Action::SwitchBack,
                 Event::Key(Key::PageDown) => Action::ScrollPageDown,
                 Event::Key(Key::PageUp) => Action::ScrollPageUp,
                 _ => Action::None,
-            }
-        } else {
-            let can_move_selection =
-                self.intersects(KeyMap::Main) || self.intersects(KeyMap::FixedSearch);
-            match evt {
+            },
+            KeyMap::Filters => match evt {
+                Event::Key(KEY_FILTER_NONE) => Action::FilterNone,
+                Event::Key(KEY_FILTER_USER) => Action::FilterUser,
+                _ => Action::None,
+            },
+            KeyMap::Main | KeyMap::FixedSearch => match evt {
                 Event::Key(KEY_FASTER) => Action::DivideTimeout(2),
                 Event::Key(KEY_GOTO_TBL_BOTTOM) => Action::GotoTableBottom,
                 Event::Key(KEY_GOTO_TBL_LEFT) => Action::GotoTableLeft,
@@ -137,11 +150,11 @@ impl KeyMap {
                 Event::Key(KEY_HELP) => Action::SwitchToHelp,
                 Event::Key(KEY_MARK_CLEAR) => Action::ClearMarks,
                 Event::Key(KEY_MARK_TOGGLE) => Action::ToggleMarks,
-                Event::Key(KEY_NEXT_FILTER) => Action::FilterNext,
+                Event::Key(KEY_FILTERS) => Action::Filters,
                 Event::Key(KEY_SCOPE) => Action::ChangeScope,
                 Event::Key(KEY_SEARCH) => Action::SearchEnter,
-                Event::Key(KEY_SELECT_PREVIOUS) if can_move_selection => Action::SelectPrevious,
-                Event::Key(KEY_SELECT_NEXT) if can_move_selection => Action::SelectNext,
+                Event::Key(KEY_SELECT_PREVIOUS) => Action::SelectPrevious,
+                Event::Key(KEY_SELECT_NEXT) => Action::SelectNext,
                 Event::Key(KEY_SLOWER) => Action::MultiplyTimeout(2),
                 Event::Key(KEY_QUIT) | Event::Key(KEY_ESCAPE) => Action::Quit,
                 Event::Key(Key::PageDown) => Action::ScrollPageDown,
@@ -152,7 +165,23 @@ impl KeyMap {
                 Event::Key(Key::Right) => Action::ScrollRight,
                 Event::Key(KEY_LIMITS) => Action::ToggleLimits,
                 _ => Action::None,
-            }
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum KeyMapSet {
+    In(KeyMap),
+    NotIn(KeyMap),
+}
+
+impl KeyMapSet {
+    pub fn contains(&self, keymap: KeyMap) -> bool {
+        match self {
+            Self::In(valid) if keymap == *valid => true,
+            Self::NotIn(invalid) if keymap != *invalid => true,
+            _ => false,
         }
     }
 }
@@ -163,16 +192,21 @@ pub struct MenuEntry {
     key: String,
     #[getset(get = "pub")]
     label: &'static str,
-    pub keymap: KeyMap,
+    #[getset(get = "pub")]
+    keymaps: KeyMapSet,
 }
 
 impl MenuEntry {
-    pub fn new(key: String, label: &'static str, keymap: KeyMap) -> Self {
-        Self { key, label, keymap }
+    pub fn new(key: String, label: &'static str, keymaps: KeyMapSet) -> Self {
+        Self {
+            key,
+            label,
+            keymaps,
+        }
     }
 
-    pub fn with_key(key: Key, label: &'static str, keymap: KeyMap) -> Self {
-        Self::new(MenuEntry::key_name(key), label, keymap)
+    pub fn with_key(key: Key, label: &'static str, keymaps: KeyMapSet) -> Self {
+        Self::new(MenuEntry::key_name(key), label, keymaps)
     }
 
     pub fn key(&self) -> &str {
@@ -210,29 +244,23 @@ impl MenuEntry {
 /// Return the menu
 pub fn menu() -> Vec<MenuEntry> {
     vec![
-        MenuEntry::with_key(
-            KEY_QUIT,
-            "Quit",
-            KeyMap::Main | KeyMap::FixedSearch | KeyMap::Help | KeyMap::Details,
-        ),
-        MenuEntry::with_key(KEY_HELP, "Help", KeyMap::Main),
+        MenuEntry::with_key(KEY_QUIT, "Quit", KeyMapSet::NotIn(KeyMap::Filters)),
+        MenuEntry::with_key(KEY_HELP, "Help", KeyMapSet::In(KeyMap::Main)),
         MenuEntry::new(
             format!("{KEY_SELECT_NEXT_CHAR}/{KEY_SELECT_PREVIOUS_CHAR}",),
             "Next/Prev",
-            KeyMap::Main | KeyMap::FixedSearch,
+            KeyMapSet::In(KeyMap::Main),
         ),
-        MenuEntry::with_key(KEY_SEARCH, "Search", KeyMap::Main | KeyMap::FixedSearch),
-        MenuEntry::with_key(KEY_LIMITS, "Limits", KeyMap::Main | KeyMap::FixedSearch),
-        MenuEntry::with_key(
-            KEY_NEXT_FILTER,
-            "Filter",
-            KeyMap::Main | KeyMap::FixedSearch,
-        ),
+        MenuEntry::with_key(KEY_SEARCH, "Search", KeyMapSet::In(KeyMap::Main)),
+        MenuEntry::with_key(KEY_LIMITS, "Limits", KeyMapSet::In(KeyMap::Main)),
+        MenuEntry::with_key(KEY_FILTERS, "Filters", KeyMapSet::In(KeyMap::Main)),
         MenuEntry::new(
             format!("{KEY_FASTER_CHAR}/{KEY_SLOWER_CHAR}"),
             "Speed",
-            KeyMap::Main | KeyMap::FixedSearch,
+            KeyMapSet::In(KeyMap::Main),
         ),
+        MenuEntry::with_key(KEY_FILTER_NONE, "None", KeyMapSet::In(KeyMap::Filters)),
+        MenuEntry::with_key(KEY_FILTER_USER, "User", KeyMapSet::In(KeyMap::Filters)),
     ]
 }
 
@@ -674,14 +702,24 @@ impl Bookmarks {
             if self.marks.contains(&pid) {
                 marks.push(LinePid::new(lineno, pid));
             }
-            match self.selected {
-                Some(selected) if selected.lineno == lineno => pid_at_line = Some(pid),
-                _ => (),
+            if let Some(ref mut selected) = self.selected {
+                if selected.pid == pid {
+                    selected.lineno = lineno;
+                }
+                if selected.lineno == lineno {
+                    pid_at_line = Some(pid);
+                }
             }
             match action {
                 BookmarkAction::None => {
-                    if pid == self.selected.expect("internal error: empty selection").pid {
-                        return Bookmarks::recenter(lineno, top, height, false);
+                    match self.selected {
+                        Some(ref mut selected) if pid == selected.pid => {
+                            selected.lineno = lineno;
+                            return Bookmarks::recenter(lineno, top, height, false);
+                        }
+                        Some(_) => (),
+                        // Should have been matched in execute_without_lines.
+                        None => panic!("internal error: empty selection"),
                     }
                 }
                 BookmarkAction::FirstLine => return self.select(lineno, pid, top, height, true),
@@ -706,13 +744,14 @@ impl Bookmarks {
             }
             previous_pids.push(pid);
         }
+
         self.marks = BTreeSet::from_iter(marks.iter().map(|lp| lp.pid)); // Keep only marks on existing PIDs.
         let match_count = matches.len();
         let ring = match pattern {
             Some(_) => &matches,
             None => &marks,
         };
-        let lineno = match action {
+        let new_top = match action {
             BookmarkAction::None => top,
             BookmarkAction::FirstLine => 0,
             BookmarkAction::LastLine => {
@@ -729,7 +768,10 @@ impl Bookmarks {
                     self.selected = Some(LinePid::new(lineno, pid));
                     lineno
                 }
-                _ => 0,
+                _ => {
+                    self.selected = None;
+                    0
+                }
             },
             BookmarkAction::Previous => self.selected_and_then(|s| s.previous_in(ring).copied()),
             BookmarkAction::Next => self.selected_and_then(|s| s.next_in(ring).copied()),
@@ -749,6 +791,6 @@ impl Bookmarks {
                 self.selected.map(|s| s.lineno).unwrap_or(0)
             }
         };
-        Bookmarks::recenter(lineno, top, height, match_count > 0)
+        Bookmarks::recenter(new_top, top, height, match_count > 0)
     }
 }

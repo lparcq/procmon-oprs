@@ -36,7 +36,7 @@ use crate::{
     console::{is_tty, BuiltinTheme, EventChannel},
     process::{
         format::human_duration, Aggregation, Collector, FormattedMetric, LimitKind, ProcessDetails,
-        ProcessIdentity, ProcessSamples,
+        ProcessFilter, ProcessIdentity, ProcessSamples,
     },
 };
 use num_traits::Zero;
@@ -106,7 +106,7 @@ By default, only userland processes are displayed. Use 'f' to see kernel process
 #[derive(Clone, Debug)]
 pub enum Interaction {
     None,
-    Filter(usize),
+    Filter(ProcessFilter),
     SwitchToHelp,
     SwitchBack,
     SelectPid(pid_t),
@@ -268,34 +268,6 @@ impl PidStack {
     }
 }
 
-/// A list of filters with a current value.
-pub struct FilterLoop {
-    /// Filter names
-    names: Vec<&'static str>,
-    /// Current filter
-    current: usize,
-}
-
-impl FilterLoop {
-    pub fn new(names: &[&'static str], current: usize) -> Self {
-        Self {
-            names: names.to_vec(),
-            current,
-        }
-    }
-
-    fn current_name(&self) -> &'static str {
-        self.names[self.current]
-    }
-
-    fn advance(&mut self) {
-        self.current += 1;
-        if self.current >= self.names.len() {
-            self.current = 0;
-        }
-    }
-}
-
 /// Navigation arrows dependending on table overflows
 ///
 /// # Arguments
@@ -376,12 +348,13 @@ fn width_constraints(
     (total_width, constraints, hoverflow)
 }
 
+/// Return the menu line for the keymap
 fn menu_line(entries: &[MenuEntry], keymap: KeyMap) -> Text<'static> {
     let mut spans = Vec::new();
     let mut sep = "";
     entries
         .iter()
-        .filter(|e| e.keymap.intersects(keymap))
+        .filter(|e| e.keymaps().contains(keymap))
         .for_each(|entry| {
             spans.push(Span::raw(sep));
             spans.push(Span::styled(
@@ -464,8 +437,6 @@ macro_rules! format_metric {
 pub struct TerminalDevice<'t> {
     /// Interval to update the screen
     every: Duration,
-    /// Filters
-    filters: FilterLoop,
     /// Channel for input events
     events: EventChannel,
     /// Terminal
@@ -494,25 +465,24 @@ pub struct TerminalDevice<'t> {
     bookmarks: Bookmarks,
     /// PID matched by a search.
     occurrences: BTreeSet<pid_t>,
+    /// Filter
+    filter: ProcessFilter,
     /// Menu
     menu: Vec<MenuEntry>,
     /// Pane kind.
     pane_kind: PaneKind,
+    /// Key map
+    keymap: KeyMap,
 }
 
-impl<'t> TerminalDevice<'t> {
-    pub fn new(
-        every: Duration,
-        theme: Option<BuiltinTheme>,
-        filters: FilterLoop,
-    ) -> anyhow::Result<Self> {
+impl TerminalDevice<'_> {
+    pub fn new(every: Duration, theme: Option<BuiltinTheme>) -> anyhow::Result<Self> {
         let screen = io::stdout().into_raw_mode()?.into_alternate_screen()?;
         let backend = TermionBackend::new(Box::new(screen));
         let terminal = Terminal::new(backend)?;
 
         Ok(TerminalDevice {
             every,
-            filters,
             events: EventChannel::new(),
             terminal,
             table_offset: Default::default(),
@@ -527,8 +497,10 @@ impl<'t> TerminalDevice<'t> {
             body_height: 0,
             bookmarks: Bookmarks::default(),
             occurrences: BTreeSet::default(),
+            filter: ProcessFilter::default(),
             menu: menu(),
             pane_kind: PaneKind::Main,
+            keymap: KeyMap::Main,
         })
     }
 
@@ -536,13 +508,11 @@ impl<'t> TerminalDevice<'t> {
         is_tty(&io::stdin())
     }
 
-    fn keymap(&self) -> KeyMap {
-        match self.pane_kind {
-            PaneKind::Help => KeyMap::Help,
-            PaneKind::Process => KeyMap::Details,
-            PaneKind::Main if self.bookmarks.is_incremental_search() => KeyMap::IncrementalSearch,
-            PaneKind::Main if self.bookmarks.is_search() => KeyMap::FixedSearch,
-            PaneKind::Main => KeyMap::Main,
+    /// Set the keymap
+    fn set_keymap(&mut self, keymap: KeyMap) {
+        if self.keymap != keymap {
+            log::debug!("keymap: {keymap:?}");
+            self.keymap = keymap;
         }
     }
 
@@ -560,7 +530,7 @@ impl<'t> TerminalDevice<'t> {
             format!(
                 "{time_string} -- interval:{delay} -- limit:{} -- filter:{}",
                 self.display_limits.as_ref(),
-                self.filters.current_name()
+                self.filter
             )
         }
     }
@@ -590,7 +560,7 @@ impl<'t> TerminalDevice<'t> {
                 self.bookmarks.search_pattern().unwrap()
             ))
         } else {
-            menu_line(&self.menu, self.keymap())
+            self.menu_line()
         };
 
         self.terminal.draw(|frame| {
@@ -657,7 +627,15 @@ impl<'t> TerminalDevice<'t> {
             | Action::SwitchToProcess
             | Action::ChangeScope => (),
             Action::SwitchBack => self.pane_offset = 0,
-            Action::FilterNext => self.filters.advance(),
+            Action::Filters => self.set_keymap(KeyMap::Filters),
+            Action::FilterNone => {
+                self.filter = ProcessFilter::None;
+                self.set_keymap(KeyMap::Main);
+            }
+            Action::FilterUser => {
+                self.filter = ProcessFilter::UserLand;
+                self.set_keymap(KeyMap::Main);
+            }
             Action::MultiplyTimeout(factor) => {
                 let delay = timer.get_delay();
                 if delay.as_secs() * (factor as u64) < MAX_TIMEOUT_SECS {
@@ -753,7 +731,7 @@ impl<'t> TerminalDevice<'t> {
                 Interaction::Narrow(pids)
             }
             Action::ChangeScope => Interaction::Wide,
-            Action::FilterNext => Interaction::Filter(self.filters.current),
+            Action::FilterNone | Action::FilterUser => Interaction::Filter(self.filter),
             Action::SwitchToHelp => Interaction::SwitchToHelp,
             Action::SwitchToProcess => match self.bookmarks.selected() {
                 Some(selected) => Interaction::SelectPid(selected.pid),
@@ -906,6 +884,10 @@ impl<'t> TerminalDevice<'t> {
         }
     }
 
+    fn menu_line(&self) -> Text<'static> {
+        menu_line(&self.menu, self.keymap)
+    }
+
     fn render_tree(&mut self, collector: &Collector) -> anyhow::Result<()> {
         self.pane_kind = PaneKind::Main;
         let line_count = collector.line_count();
@@ -918,10 +900,12 @@ impl<'t> TerminalDevice<'t> {
             top,
             self.body_height,
         );
+        log::debug!("top: {top} -- lines: {line_count} -- rows: {nrows} -- voffset: {voffset}");
         self.table_offset.set_vertical(voffset);
         let (hoffset, voffset) = self
             .table_offset
             .set_bounds(ncols - 3, line_count.saturating_sub(self.body_height));
+        log::debug!("rows: {nrows} -- voffset: {voffset}");
         let nvisible_rows = nrows - voffset;
         let nvisible_cols = ncols - hoffset;
 
@@ -976,7 +960,7 @@ impl<'t> TerminalDevice<'t> {
 
     fn render_help(&mut self) -> anyhow::Result<()> {
         self.pane_kind = PaneKind::Help;
-        let menu = menu_line(&self.menu, self.keymap());
+        let menu = self.menu_line();
         let help = format_text(HELP);
         let help_height = help.len() as u16;
         let mut pane_offset = self.pane_offset;
@@ -1048,7 +1032,7 @@ impl<'t> TerminalDevice<'t> {
 
     fn render_details(&mut self, details: &ProcessDetails) -> anyhow::Result<()> {
         self.pane_kind = PaneKind::Process;
-        let menu = menu_line(&self.menu, KeyMap::Details);
+        let menu = self.menu_line();
         let pane_offset = self.pane_offset;
 
         let process = details.process();
@@ -1126,7 +1110,7 @@ impl<'t> TerminalDevice<'t> {
     }
 }
 
-impl<'t> DisplayDevice for TerminalDevice<'t> {
+impl DisplayDevice for TerminalDevice<'_> {
     fn open(&mut self, metrics: SliceIter<FormattedMetric>) -> anyhow::Result<()> {
         let mut last_id = None;
 
@@ -1174,9 +1158,32 @@ impl<'t> DisplayDevice for TerminalDevice<'t> {
     /// Render the current pane.
     fn render(&mut self, pane: Pane, _redraw: bool) -> anyhow::Result<()> {
         match pane {
-            Pane::Main(collector) => self.render_tree(collector),
-            Pane::Process(details) => self.render_details(details),
-            Pane::Help => self.render_help(),
+            Pane::Main(collector) => {
+                if !matches!(
+                    self.keymap,
+                    KeyMap::Main
+                        | KeyMap::Filters
+                        | KeyMap::IncrementalSearch
+                        | KeyMap::FixedSearch
+                ) {
+                    self.set_keymap(if self.bookmarks.is_incremental_search() {
+                        KeyMap::IncrementalSearch
+                    } else if self.bookmarks.is_search() {
+                        KeyMap::FixedSearch
+                    } else {
+                        KeyMap::Main
+                    });
+                }
+                self.render_tree(collector)
+            }
+            Pane::Process(details) => {
+                self.set_keymap(KeyMap::Details);
+                self.render_details(details)
+            }
+            Pane::Help => {
+                self.set_keymap(KeyMap::Help);
+                self.render_help()
+            }
         }
     }
 
@@ -1184,8 +1191,7 @@ impl<'t> DisplayDevice for TerminalDevice<'t> {
     fn pause(&mut self, timer: &mut Timer) -> anyhow::Result<PauseStatus> {
         if let Some(timeout) = timer.remaining() {
             if let Some(evt) = self.events.receive_timeout(timeout)? {
-                let keymap = self.keymap();
-                let action = self.react(keymap.action_from_event(evt), timer)?;
+                let action = self.react(self.keymap.action_from_event(evt), timer)?;
                 Ok(PauseStatus::Action(self.interaction(action)))
             } else {
                 Ok(PauseStatus::TimeOut)

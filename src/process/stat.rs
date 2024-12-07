@@ -42,14 +42,7 @@ pub type StatResult<T> = Result<T, StatError>;
 /// Since the boot time is in seconds since the Epoch, no need to be more precise than the second.
 fn elapsed_seconds_since(start_time: u64) -> u64 {
     match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
-        Ok(duration) => {
-            let now = duration.as_secs();
-            if now >= start_time {
-                now - start_time
-            } else {
-                0
-            }
-        }
+        Ok(duration) => duration.as_secs().saturating_sub(start_time),
         Err(_) => 0,
     }
 }
