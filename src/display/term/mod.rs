@@ -86,6 +86,8 @@ The space bar toggles the mark on:
 
 When no search is enabled, move to the next and previous match with 'n' and 'N'.
 
+Hit Ctrl-c to clear the marks.
+
 ## Scope
 
 The list of processes can be narrowed by marking them and hitting 's'. The processes

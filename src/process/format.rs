@@ -36,27 +36,27 @@ pub fn identity(value: u64) -> String {
 
 /// Value in Kibi
 pub fn kibi(value: u64) -> String {
-    format!("{:.1} Ki", (value as f64) / KIBI)
+    format!("{:.2} Ki", (value as f64) / KIBI)
 }
 
 /// Value in Mebi
 pub fn mebi(value: u64) -> String {
-    format!("{:.1} Mi", (value as f64) / MEBI)
+    format!("{:.2} Mi", (value as f64) / MEBI)
 }
 
 /// Value in Gibi
 pub fn gibi(value: u64) -> String {
-    format!("{:.1} Gi", (value as f64) / GIBI)
+    format!("{:.2} Gi", (value as f64) / GIBI)
 }
 
 /// Value in Tebi
 pub fn tebi(value: u64) -> String {
-    format!("{:.1} Ti", (value as f64) / TEBI)
+    format!("{:.2} Ti", (value as f64) / TEBI)
 }
 
 /// Float value in Kilo
 fn kilo_f(value: f64) -> String {
-    format!("{:.1} K", value / KILO_F)
+    format!("{:.2} K", value / KILO_F)
 }
 
 /// Value in Kilo
@@ -66,7 +66,7 @@ pub fn kilo(value: u64) -> String {
 
 /// Float value in Mega
 pub fn mega_f(value: f64) -> String {
-    format!("{:.1} M", value / MEGA_F)
+    format!("{:.2} M", value / MEGA_F)
 }
 
 /// Value in Mega
@@ -76,7 +76,7 @@ pub fn mega(value: u64) -> String {
 
 /// Float value in Giga
 pub fn giga_f(value: f64) -> String {
-    format!("{:.1} G", value / GIGA_F)
+    format!("{:.2} G", value / GIGA_F)
 }
 
 /// Value in Giga
@@ -86,7 +86,7 @@ pub fn giga(value: u64) -> String {
 
 /// Float value in Tera
 pub fn tera_f(value: f64) -> String {
-    format!("{:.1} T", value / TERA_F)
+    format!("{:.2} T", value / TERA_F)
 }
 
 /// Value in Tera
@@ -141,9 +141,9 @@ pub fn human_milliseconds(millis: u64) -> String {
                 let hours = minutes / 60;
                 let remaining_minutes = minutes - hours * 60;
                 if hours < 24 {
-                    format!("{hours}h {remaining_minutes}m {remaining_seconds}s")
+                    format!("{hours}h {remaining_minutes:0>2}m {remaining_seconds:0>2}s")
                 } else {
-                    format!("{hours}h {remaining_minutes}m")
+                    format!("{hours}h {remaining_minutes:0>2}m")
                 }
             }
         }

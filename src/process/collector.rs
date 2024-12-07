@@ -475,7 +475,7 @@ pub struct Collector<'a> {
 }
 
 impl<'a> Collector<'a> {
-    pub fn new(metrics: Cow<'a, [FormattedMetric]>) -> Collector {
+    pub fn new(metrics: Cow<'a, [FormattedMetric]>) -> Self {
         Collector {
             metrics,
             samples: BTreeMap::new(),
