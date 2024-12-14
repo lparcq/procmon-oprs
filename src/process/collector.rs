@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use getset::{CopyGetters, Getters};
 use itertools::izip;
 use libc::pid_t;
 use std::{
@@ -81,6 +82,7 @@ impl FormattedLimit {
 /// Strings are the formatted values. If the samples don't contain the raw value
 /// (i.e. Aggregation::None is not selected), the first element in _values_ is the
 /// raw value that doesn't have a counterpart in _strings_.
+#[derive(Debug)]
 pub struct Sample {
     values: Vec<u64>,
     strings: Vec<String>,
@@ -212,10 +214,14 @@ pub trait ProcessIdentity {
 }
 
 /// A list of computed samples for a process
+#[derive(Debug, Getters, CopyGetters)]
 pub struct ProcessSamples {
     name: String,
     pid: pid_t,
+    #[getset(get_copy = "pub")]
     parent_pid: Option<pid_t>,
+    #[getset(get_copy = "pub")]
+    state: char,
     samples: Vec<Sample>,
 }
 
@@ -224,18 +230,16 @@ impl ProcessSamples {
         name: &str,
         pid: pid_t,
         parent_pid: Option<pid_t>,
+        state: char,
         samples: Vec<Sample>,
     ) -> ProcessSamples {
         ProcessSamples {
             name: name.to_string(),
             pid,
             parent_pid,
+            state,
             samples,
         }
-    }
-
-    pub fn parent_pid(&self) -> Option<pid_t> {
-        self.parent_pid
     }
 
     pub fn samples(&self) -> SliceIter<Sample> {
@@ -291,6 +295,7 @@ impl From<&[Vec<&str>]> for ProcessSamples {
         ProcessSamples {
             name: String::new(),
             pid: 0,
+            state: ' ',
             parent_pid: None,
             samples: samples.iter().map(|s| Sample::from(s.as_slice())).collect(),
         }
@@ -333,12 +338,14 @@ impl Updater {
     fn new_computed_values(
         &mut self,
         target_name: &str,
-        pid: pid_t,
-        parent_pid: Option<pid_t>,
+        pinfo: Option<&ProcessInfo>,
         metrics: &[FormattedMetric],
         values: &[u64],
         limits: &[Option<Limit>],
     ) -> ProcessSamples {
+        let pid = pinfo.map(|pi| pi.pid()).unwrap_or(0);
+        let parent_pid = pinfo.map(|pi| pi.parent_pid());
+        let state = pinfo.map(|pi| pi.state()).unwrap_or(' ');
         let samples = metrics
             .iter()
             .zip(values.iter().zip(limits.iter()))
@@ -362,7 +369,7 @@ impl Updater {
         if pid == 0 {
             self.push_samples(&samples); // new system values
         }
-        ProcessSamples::new(target_name, pid, parent_pid, samples)
+        ProcessSamples::new(target_name, pid, parent_pid, state, samples)
     }
 
     /// Historical metrics for the system
@@ -499,15 +506,18 @@ impl<'a> Collector<'a> {
     pub fn record(
         &mut self,
         target_name: &str,
-        pid: pid_t,
-        parent_pid: Option<pid_t>,
+        pinfo: Option<&ProcessInfo>,
         values: &[u64],
         limits: &[Option<Limit>],
     ) {
+        let pid = pinfo.map(|pi| pi.pid()).unwrap_or(0);
+        let parent_pid = pinfo.map(|pi| pi.parent_pid());
+
         self.pids.push(pid);
         match self.samples.get_mut(&pid) {
             Some(samples) => {
                 samples.parent_pid = parent_pid;
+                samples.state = pinfo.map(|pi| pi.state()).unwrap_or(' ');
                 self.updater
                     .update_computed_values(&self.metrics, samples, values)
             }
@@ -518,8 +528,7 @@ impl<'a> Collector<'a> {
                         pid,
                         self.updater.new_computed_values(
                             target_name,
-                            pid,
-                            parent_pid,
+                            pinfo,
                             &self.metrics,
                             values,
                             limits,
@@ -537,13 +546,7 @@ impl<'a> Collector<'a> {
     pub fn collect(&mut self, target_name: &str, pinfo: &ProcessInfo, sysconf: &SystemConf) {
         let values = pinfo.extract_metrics(self.metrics(), sysconf);
         let limits = pinfo.extract_limits(self.metrics(), sysconf);
-        self.record(
-            target_name,
-            pinfo.pid(),
-            Some(pinfo.parent_pid()),
-            &values,
-            &limits,
-        );
+        self.record(target_name, Some(pinfo), &values, &limits);
     }
 
     /// Called when there is no more targets

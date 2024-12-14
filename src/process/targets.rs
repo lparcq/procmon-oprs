@@ -199,7 +199,6 @@ impl<'a> TargetContainer<'a> {
             collector.collect_system(&mut system);
             collector.record(
                 "system",
-                0,
                 None,
                 &system.extract_metrics(collector.metrics()),
                 limits,

@@ -754,12 +754,18 @@ impl TerminalDevice<'_> {
         let column_count = cws.len();
         let mut row = Vec::with_capacity(column_count);
         row.push(Cell::from(""));
+
         const PID_TITLE: &str = "PID";
         row.push(Cell::from(
             Text::from(PID_TITLE).alignment(Alignment::Center),
         ));
         let mut col_index = 1;
         cws[col_index].check(PID_TITLE);
+        col_index += 1;
+
+        const STATE_TITLE: &str = "S";
+        row.push(Cell::from(Text::from(STATE_TITLE)));
+        cws[col_index].check(STATE_TITLE);
         col_index += 1;
 
         metric_headers
@@ -802,6 +808,8 @@ impl TerminalDevice<'_> {
         cws[col_index].check(&pid);
         col_index += 1;
         row.push(rcell!(pid));
+        col_index += 1;
+        row.push(rcell!(ps.state().to_string()));
         ps.samples()
             .flat_map(|sample| izip!(sample.strings(), sample.trends()))
             .skip(hoffset)
@@ -891,7 +899,7 @@ impl TerminalDevice<'_> {
     fn render_tree(&mut self, collector: &Collector) -> anyhow::Result<()> {
         self.pane_kind = PaneKind::Main;
         let line_count = collector.line_count();
-        let ncols = self.metric_headers.len() + 2; // process name, PID, metric1, ...
+        let ncols = self.metric_headers.len() + 3; // process name, PID, state, metric1, ...
         let nrows = line_count + 2; // metric title, metric subtitle, process1, ...
         let top = self.top(line_count);
         let voffset = self.bookmarks.execute(

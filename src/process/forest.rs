@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use getset::{CopyGetters, Getters};
 use indextree::{Arena, NodeId};
 use libc::pid_t;
 use std::{
@@ -73,24 +74,35 @@ fn new_stat(process: &Process) -> ProcessResult<process::Stat> {
         .map_err(|_| ProcessError::UnknownProcess(process.pid()))
 }
 
-#[derive(Debug)]
+#[derive(Debug, Getters, CopyGetters)]
 /// Information about for an existing or past process.
 pub struct ProcessInfo {
     /// Process identifier.
+    #[getset(get_copy = "pub")]
     pid: pid_t,
     /// Parent process identifier.
+    #[getset(get_copy = "pub")]
     parent_pid: pid_t,
     /// Process creation time.
     start_time: u64,
+    /// Process state
+    #[getset(get_copy = "pub")]
+    state: char,
     /// Process name.
     name: String,
     /// Process instance.
+    #[getset(get = "pub")]
     process: Process,
     /// Process statistics.
     stats: RefCell<ProcessStat>,
-    /// Whether the process is a kernel task or a userland process.
+    /// Whether this is a kernel process.
+    ///
+    /// Assuming that processes without command line and exe is a kernel process.
+    /// On Linux, kernel processes are children of process 2.
+    #[getset(get_copy = "pub")]
     is_kernel: bool,
     /// Process exists but is hidden.
+    #[getset(get_copy = "pub")]
     hidden: bool,
 }
 
@@ -100,6 +112,7 @@ impl ProcessInfo {
         let stat = new_stat(&process)?;
         let parent_pid = stat.ppid;
         let start_time = stat.starttime;
+        let state = stat.state;
         let exe_name = exe_name(&process);
         let is_kernel = exe_name.is_none();
         let name = exe_name.unwrap_or_else(|| format!("({})", stat.comm));
@@ -108,6 +121,7 @@ impl ProcessInfo {
             pid,
             parent_pid,
             start_time,
+            state,
             name,
             process,
             stats,
@@ -119,14 +133,6 @@ impl ProcessInfo {
     pub fn with_pid(pid: pid_t) -> ProcessResult<Self> {
         let process = Process::new(pid).map_err(|_| ProcessError::UnknownProcess(pid))?;
         Self::new(process)
-    }
-
-    pub fn pid(&self) -> pid_t {
-        self.pid
-    }
-
-    pub fn parent_pid(&self) -> pid_t {
-        self.parent_pid
     }
 
     pub fn name(&self) -> &str {
@@ -142,22 +148,6 @@ impl ProcessInfo {
             .cmdline()
             .map(|v| v.join(" "))
             .unwrap_or_else(|_| String::from("<zombie>"))
-    }
-
-    pub fn process(&self) -> &Process {
-        &self.process
-    }
-
-    /// Whether this is a kernel process.
-    ///
-    /// Assuming that processes without command line and exe is a kernel process.
-    /// On Linux, kernel processes are children of process 2.
-    pub fn is_kernel(&self) -> bool {
-        self.is_kernel
-    }
-
-    pub fn hidden(&self) -> bool {
-        self.hidden
     }
 
     pub fn hide(&mut self) {

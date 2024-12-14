@@ -209,7 +209,6 @@ impl ProcessManager for ForestProcessManager<'_> {
         collector.collect_system(&mut system);
         collector.record(
             &system_info,
-            0,
             None,
             &system.extract_metrics(collector.metrics()),
             &self.system_limits,
