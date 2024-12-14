@@ -29,7 +29,7 @@ pub(crate) mod process {
     #[derive(Debug, Clone)]
     pub(crate) struct Process {
         pid: pid_t,
-        parent_pid: pid_t,
+        parent_pid: Rc<RefCell<pid_t>>,
         exe: Option<String>,
         start_time: u64,
         ttl: Option<Rc<RefCell<u16>>>,
@@ -39,7 +39,7 @@ pub(crate) mod process {
         pub(crate) fn new(pid: pid_t) -> ProcResult<Self> {
             Ok(Self {
                 pid,
-                parent_pid: 0,
+                parent_pid: Rc::new(RefCell::new(0)),
                 exe: None,
                 start_time: 0,
                 ttl: None,
@@ -55,25 +55,35 @@ pub(crate) mod process {
         ) -> Self {
             Self {
                 pid,
-                parent_pid,
+                parent_pid: Rc::new(RefCell::new(parent_pid)),
                 exe: Some(exe.to_string()),
                 start_time,
                 ttl: ttl.map(RefCell::new).map(Rc::new),
             }
         }
 
-        pub(crate) fn is_alive(&self) -> bool {
+        pub(crate) fn reparent(&mut self, parent_pid: pid_t) {
+            *self.parent_pid.borrow_mut() = parent_pid;
+        }
+
+        fn check_if_alive(&self) -> bool {
             match self.ttl {
                 Some(ref ttl) => {
                     let mut ttl = ttl.borrow_mut();
-                    match ttl.checked_sub(1) {
-                        Some(value) => {
+                    ttl.checked_sub(1)
+                        .map(|value| {
                             *ttl = value;
-                            value > 0
-                        }
-                        None => false,
-                    }
+                            true
+                        })
+                        .unwrap_or(false)
                 }
+                None => self.exe.is_some(),
+            }
+        }
+
+        pub(crate) fn is_alive(&self) -> bool {
+            match self.ttl {
+                Some(ref ttl) => *ttl.borrow() > 0,
                 None => self.exe.is_some(),
             }
         }
@@ -131,25 +141,29 @@ pub(crate) mod process {
         }
 
         pub(crate) fn stat(&self) -> ProcResult<Stat> {
-            let mut st: Stat = procfs::FromRead::from_read(io::Cursor::new(format!(
-                "{} ({}) S {} {}",
-                self.pid,
-                self.exe()?
-                    .file_name()
-                    .expect("Process::stat: exe has no file name")
-                    .to_str()
-                    .expect("Process::stat: unprintable file name"),
-                self.parent_pid,
-                (0..50)
-                    .map(|i| i.to_string())
-                    .collect::<Vec<String>>()
-                    .join(" "),
-                //self.start_time
-            )))
-            .expect("Process::stat: cannot decode fake stat");
-            st.starttime = self.start_time;
+            if self.check_if_alive() {
+                let mut st: Stat = procfs::FromRead::from_read(io::Cursor::new(format!(
+                    "{} ({}) S {} {}",
+                    self.pid,
+                    self.exe()?
+                        .file_name()
+                        .expect("Process::stat: exe has no file name")
+                        .to_str()
+                        .expect("Process::stat: unprintable file name"),
+                    self.parent_pid.borrow(),
+                    (0..50)
+                        .map(|i| i.to_string())
+                        .collect::<Vec<String>>()
+                        .join(" "),
+                    //self.start_time
+                )))
+                .expect("Process::stat: cannot decode fake stat");
+                st.starttime = self.start_time;
 
-            Ok(st)
+                Ok(st)
+            } else {
+                Err(new_error("Process died"))
+            }
         }
 
         pub(crate) fn statm(&self) -> ProcResult<StatM> {
@@ -170,25 +184,12 @@ pub(crate) mod process {
     pub(crate) fn all_processes() -> ProcResult<ProcessIter> {
         Err(new_error("all_processes not implemented"))
     }
-
-    /// Return the same process with a different parent.
-    pub(crate) fn reparent_process(proc: &Process, parent_pid: pid_t) -> Process {
-        Process {
-            pid: proc.pid,
-            parent_pid,
-            exe: proc.exe.clone(),
-            start_time: proc.start_time,
-            ttl: proc.ttl.as_ref().map(Rc::clone),
-        }
-    }
 }
 
 use libc::pid_t;
 use std::{sync::LazyLock, time::Instant};
 
 use process::Process;
-
-pub(crate) use process::reparent_process;
 
 static ORIGIN: LazyLock<Instant> = LazyLock::new(Instant::now);
 

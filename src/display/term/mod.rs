@@ -263,7 +263,7 @@ impl PidStack {
                 }
                 stack.push(samples.pid());
             }
-            None => stack.clear(),
+            None => stack.clear(), // Cannot happened. Only the system has no parent.
         }
     }
 }
@@ -1026,25 +1026,18 @@ impl TerminalDevice<'_> {
         }
     }
 
-    fn format_result<D: fmt::Display, E>(result: Result<D, E>) -> String {
-        TerminalDevice::format_option(result.ok())
-    }
-
     fn render_details(&mut self, details: &ProcessDetails) -> anyhow::Result<()> {
         self.pane_kind = PaneKind::Process;
         let menu = self.menu_line();
         let pane_offset = self.pane_offset;
 
-        let process = details.process();
-        let cmdline = process
-            .cmdline()
-            .map(|v| v.join(" "))
-            .unwrap_or_else(|_| String::from("<zombie>"));
+        let pinfo = details.process();
+        let cmdline = pinfo.cmdline();
         let metrics = details.metrics();
         let proc_info = &[
-            ("Name", format!(" {} ", details.process_name())),
-            ("PID", format!("{}", process.pid())),
-            ("Owner", TerminalDevice::format_result(process.uid())),
+            ("Name", format!(" {} ", details.name())),
+            ("PID", format!("{}", pinfo.pid())),
+            ("Owner", TerminalDevice::format_option(pinfo.uid())),
             ("Threads", format_metric!(metrics, thread_count)),
         ];
         let file_info = &[

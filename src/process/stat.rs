@@ -16,8 +16,7 @@
 
 // Extract metrics from procfs interface.
 
-use libc::pid_t;
-use std::{collections::HashMap, slice::Iter, time::SystemTime};
+use std::{collections::HashMap, fmt, slice::Iter, time::SystemTime};
 
 use procfs::{
     process::{FDTarget, Io, MMapPath, Stat, StatM},
@@ -26,9 +25,7 @@ use procfs::{
 
 pub use procfs::process::{Limit, LimitValue};
 
-use super::Process;
-
-use super::{FormattedMetric, MetricId};
+use super::{FormattedMetric, MetricId, Process};
 
 #[derive(thiserror::Error, Debug)]
 pub enum StatError {
@@ -97,15 +94,15 @@ impl SystemConf {
 
 /// System info
 pub struct SystemStat<'a> {
-    system_conf: &'a SystemConf,
+    sysconf: &'a SystemConf,
     cputime: Option<CpuTime>,
     meminfo: Option<Meminfo>,
 }
 
 impl<'a> SystemStat<'a> {
-    pub fn new(system_conf: &'a SystemConf) -> SystemStat<'a> {
+    pub fn new(sysconf: &'a SystemConf) -> SystemStat<'a> {
         SystemStat {
-            system_conf,
+            sysconf,
             cputime: None,
             meminfo: None,
         }
@@ -151,7 +148,7 @@ impl<'a> SystemStat<'a> {
     }
 
     pub fn total_time(&mut self) -> u64 {
-        self.system_conf
+        self.sysconf
             .ticks_to_millis(self.with_cputime(|ct| ct.idle) + self.non_idle_ticks())
     }
 
@@ -162,14 +159,14 @@ impl<'a> SystemStat<'a> {
                     .with_meminfo(|mi| mi.mem_total - mi.mem_free + mi.swap_total - mi.swap_free),
                 MetricId::MemRss => self.with_meminfo(|mi| mi.mem_total - mi.mem_free),
                 MetricId::TimeElapsed => {
-                    elapsed_seconds_since(self.system_conf.boot_time_seconds) * 1000
+                    elapsed_seconds_since(self.sysconf.boot_time_seconds) * 1000
                 }
-                MetricId::TimeCpu => self.system_conf.ticks_to_millis(self.non_idle_ticks()),
+                MetricId::TimeCpu => self.sysconf.ticks_to_millis(self.non_idle_ticks()),
                 MetricId::TimeSystem => self
-                    .system_conf
+                    .sysconf
                     .ticks_to_millis(self.with_cputime(|ct| ct.system)),
                 MetricId::TimeUser => self
-                    .system_conf
+                    .sysconf
                     .ticks_to_millis(self.with_cputime(|ct| ct.user)),
                 _ => 0,
             })
@@ -334,10 +331,8 @@ impl MapsStats {
 /// Elapsed time is returned as a number of ticks since boot time. And boot time is given
 /// as a number of seconds since the Epoch. Elapsed time is returned as milliseconds also
 /// even if it's only precise in seconds.
-pub struct ProcessStat<'a, 'b> {
-    process: &'a Process,
-    parent_pid: Option<pid_t>,
-    system_conf: &'b SystemConf,
+#[derive(Default)]
+pub struct ProcessStat {
     fd_stats: Option<FdStats>,
     maps_stats: Option<MapsStats>,
     io: Option<Io>,
@@ -345,130 +340,117 @@ pub struct ProcessStat<'a, 'b> {
     statm: Option<StatM>,
 }
 
-impl<'a, 'b> ProcessStat<'a, 'b> {
-    pub fn new(process: &'a Process, system_conf: &'b SystemConf) -> ProcessStat<'a, 'b> {
+impl ProcessStat {
+    pub fn with_stat(stat: Stat) -> Self {
         ProcessStat {
-            process,
-            parent_pid: None,
-            system_conf,
             fd_stats: None,
             io: None,
             maps_stats: None,
-            stat: None,
+            stat: Some(stat),
             statm: None,
         }
     }
 
-    pub fn with_parent_pid(
-        process: &'a Process,
-        parent_pid: pid_t,
-        system_conf: &'b SystemConf,
-    ) -> ProcessStat<'a, 'b> {
-        let mut pstat = ProcessStat::new(process, system_conf);
-        pstat.parent_pid = Some(parent_pid);
-        pstat
+    fn on_optional_stat<F, T>(&mut self, process: &Process, func: F) -> Option<T>
+    where
+        F: Fn(&Stat) -> T,
+    {
+        if self.stat.is_none() {
+            self.stat = process.stat().ok();
+        }
+        self.stat.as_ref().map(func)
     }
 
-    pub fn pid(&self) -> pid_t {
-        self.process.pid()
-    }
-
-    pub fn parent_pid(&self) -> Option<pid_t> {
-        self.parent_pid
-            .or_else(|| self.stat.as_ref().map(|stat| stat.ppid))
-    }
-
-    fn with_fd_stats<F>(&mut self, func: F) -> u64
+    fn on_fd_stats<F>(&mut self, process: &Process, func: F) -> u64
     where
         F: Fn(&FdStats) -> u64,
     {
         if self.fd_stats.is_none() {
-            self.fd_stats = FdStats::new(self.process).ok();
+            self.fd_stats = FdStats::new(process).ok();
         }
         self.fd_stats.as_ref().map_or(0, func)
     }
 
-    fn with_io<F>(&mut self, func: F) -> u64
+    fn on_io<F>(&mut self, process: &Process, func: F) -> u64
     where
         F: Fn(&Io) -> u64,
     {
         if self.io.is_none() {
-            self.io = self.process.io().ok();
+            self.io = process.io().ok();
         }
         self.io.as_ref().map_or(0, func)
     }
 
-    fn with_maps_stats<F>(&mut self, func: F) -> u64
+    fn on_maps_stats<F>(&mut self, process: &Process, func: F) -> u64
     where
         F: Fn(&MapsStats) -> u64,
     {
         if self.maps_stats.is_none() {
-            self.maps_stats = MapsStats::new(self.process).ok();
+            self.maps_stats = MapsStats::new(process).ok();
         }
         self.maps_stats.as_ref().map_or(0, func)
     }
 
-    fn with_stat<F>(&mut self, func: F) -> u64
+    fn on_stat<F>(&mut self, process: &Process, func: F) -> u64
     where
         F: Fn(&Stat) -> u64,
     {
-        if self.stat.is_none() {
-            self.stat = self.process.stat().ok();
-        }
-        self.stat.as_ref().map_or(0, func)
+        self.on_optional_stat(process, func).unwrap_or(0)
     }
 
-    fn with_system_stat<F>(&mut self, func: F) -> u64
+    fn on_system_stat<F>(&mut self, process: &Process, sysconf: &SystemConf, func: F) -> u64
     where
         F: Fn(&Stat, &SystemConf) -> u64,
     {
         if self.stat.is_none() {
-            self.stat = self.process.stat().ok();
+            self.stat = process.stat().ok();
         }
-        self.stat
-            .as_ref()
-            .map_or(0, |stat| func(stat, self.system_conf))
+        self.stat.as_ref().map_or(0, |stat| func(stat, sysconf))
     }
 
-    fn with_system_statm<F>(&mut self, func: F) -> u64
+    fn on_system_statm<F>(&mut self, process: &Process, sysconf: &SystemConf, func: F) -> u64
     where
         F: Fn(&StatM, &SystemConf) -> u64,
     {
         if self.statm.is_none() {
-            self.statm = self.process.statm().ok();
+            self.statm = process.statm().ok();
         }
-        self.statm
-            .as_ref()
-            .map_or(0, |statm| func(statm, self.system_conf))
+        self.statm.as_ref().map_or(0, |statm| func(statm, sysconf))
     }
 
     /// Elapsed seconds of the process
-    fn elapsed_seconds(stat: &Stat, system_conf: &SystemConf) -> u64 {
-        let process_start =
-            system_conf.boot_time_seconds + stat.starttime / system_conf.ticks_per_second;
+    fn elapsed_seconds(stat: &Stat, sysconf: &SystemConf) -> u64 {
+        let process_start = sysconf.boot_time_seconds + stat.starttime / sysconf.ticks_per_second;
         elapsed_seconds_since(process_start)
     }
 
-    pub fn extract_metrics(&mut self, metrics: Iter<FormattedMetric>) -> Vec<u64> {
+    pub fn extract_metrics(
+        &mut self,
+        metrics: Iter<FormattedMetric>,
+        process: &Process,
+        sysconf: &SystemConf,
+    ) -> Vec<u64> {
         metrics
             .map(|metric| match metric.id {
-                MetricId::FaultMinor => self.with_stat(|stat| stat.minflt),
-                MetricId::FaultMajor => self.with_stat(|stat| stat.majflt),
-                MetricId::FdAll => self.with_fd_stats(|stat| stat.total as u64),
-                MetricId::FdHigh => self.with_fd_stats(|stat| stat.highest as u64),
+                MetricId::FaultMinor => self.on_stat(process, |stat| stat.minflt),
+                MetricId::FaultMajor => self.on_stat(process, |stat| stat.majflt),
+                MetricId::FdAll => self.on_fd_stats(process, |stat| stat.total as u64),
+                MetricId::FdHigh => self.on_fd_stats(process, |stat| stat.highest as u64),
                 MetricId::FdAnon
                 | MetricId::FdFile
                 | MetricId::FdMemFile
                 | MetricId::FdNet
                 | MetricId::FdOther
                 | MetricId::FdPipe
-                | MetricId::FdSocket => self.with_fd_stats(|stat| stat.kinds[&metric.id] as u64),
-                MetricId::IoReadCall => self.with_io(|io| io.rchar),
-                MetricId::IoReadTotal => self.with_io(|io| io.syscr),
-                MetricId::IoReadStorage => self.with_io(|io| io.read_bytes),
-                MetricId::IoWriteCall => self.with_io(|io| io.wchar),
-                MetricId::IoWriteTotal => self.with_io(|io| io.syscw),
-                MetricId::IoWriteStorage => self.with_io(|io| io.write_bytes),
+                | MetricId::FdSocket => {
+                    self.on_fd_stats(process, |stat| stat.kinds[&metric.id] as u64)
+                }
+                MetricId::IoReadCall => self.on_io(process, |io| io.rchar),
+                MetricId::IoReadTotal => self.on_io(process, |io| io.syscr),
+                MetricId::IoReadStorage => self.on_io(process, |io| io.read_bytes),
+                MetricId::IoWriteCall => self.on_io(process, |io| io.wchar),
+                MetricId::IoWriteTotal => self.on_io(process, |io| io.syscw),
+                MetricId::IoWriteStorage => self.on_io(process, |io| io.write_bytes),
                 MetricId::MapAnonCount
                 | MetricId::MapHeapCount
                 | MetricId::MapFileCount
@@ -479,7 +461,7 @@ impl<'a, 'b> ProcessStat<'a, 'b> {
                 | MetricId::MapVsyscallCount
                 | MetricId::MapVvarCount
                 | MetricId::MapOtherCount => {
-                    self.with_maps_stats(|stat| stat.counts[&metric.id] as u64)
+                    self.on_maps_stats(process, |stat| stat.counts[&metric.id] as u64)
                 }
                 MetricId::MapAnonSize
                 | MetricId::MapHeapSize
@@ -490,35 +472,50 @@ impl<'a, 'b> ProcessStat<'a, 'b> {
                 | MetricId::MapVsysSize
                 | MetricId::MapVsyscallSize
                 | MetricId::MapVvarSize
-                | MetricId::MapOtherSize => self.with_maps_stats(|stat| stat.sizes[&metric.id]),
-                MetricId::MemVm => self.with_stat(|stat| stat.vsize),
-                MetricId::MemRss => self.with_system_stat(|stat, sc| stat.rss * sc.page_size),
-                MetricId::MemText => self.with_system_statm(|statm, sc| statm.text * sc.page_size),
-                MetricId::MemData => self.with_system_statm(|statm, sc| statm.data * sc.page_size),
-                MetricId::TimeElapsed => self.with_system_stat(ProcessStat::elapsed_seconds) * 1000,
-                MetricId::TimeCpu => self
-                    .system_conf
-                    .ticks_to_millis(self.with_stat(|stat| stat.stime + stat.utime)),
-                MetricId::TimeSystem => self
-                    .system_conf
-                    .ticks_to_millis(self.with_stat(|stat| stat.stime)),
-                MetricId::TimeUser => self
-                    .system_conf
-                    .ticks_to_millis(self.with_stat(|stat| stat.utime)),
-                MetricId::ThreadCount => self.with_stat(|stat| stat.num_threads as u64),
+                | MetricId::MapOtherSize => {
+                    self.on_maps_stats(process, |stat| stat.sizes[&metric.id])
+                }
+                MetricId::MemVm => self.on_stat(process, |stat| stat.vsize),
+                MetricId::MemRss => {
+                    self.on_system_stat(process, sysconf, |stat, sc| stat.rss * sc.page_size)
+                }
+                MetricId::MemText => {
+                    self.on_system_statm(process, sysconf, |statm, sc| statm.text * sc.page_size)
+                }
+                MetricId::MemData => {
+                    self.on_system_statm(process, sysconf, |statm, sc| statm.data * sc.page_size)
+                }
+                MetricId::TimeElapsed => {
+                    self.on_system_stat(process, sysconf, ProcessStat::elapsed_seconds) * 1000
+                }
+                MetricId::TimeCpu => {
+                    sysconf.ticks_to_millis(self.on_stat(process, |stat| stat.stime + stat.utime))
+                }
+                MetricId::TimeSystem => {
+                    sysconf.ticks_to_millis(self.on_stat(process, |stat| stat.stime))
+                }
+                MetricId::TimeUser => {
+                    sysconf.ticks_to_millis(self.on_stat(process, |stat| stat.utime))
+                }
+                MetricId::ThreadCount => self.on_stat(process, |stat| stat.num_threads as u64),
             })
             .collect()
     }
 
-    pub fn extract_limits(&mut self, metrics: Iter<FormattedMetric>) -> Vec<Option<Limit>> {
-        match self.process.limits() {
+    pub fn extract_limits(
+        &mut self,
+        metrics: Iter<FormattedMetric>,
+        process: &Process,
+        sysconf: &SystemConf,
+    ) -> Vec<Option<Limit>> {
+        match process.limits() {
             Ok(limits) => metrics
                 .map(|metric| match metric.id {
                     MetricId::FdAll => Some(limits.max_open_files),
                     //MetricId::MemData => {} // max_data_size
                     MetricId::MapStackSize => Some(limits.max_stack_size),
                     MetricId::MemRss => Some(map_limit(limits.max_resident_set, |value| {
-                        value * self.system_conf.page_size
+                        value * sysconf.page_size
                     })),
                     MetricId::MemVm => Some(limits.max_address_space),
                     MetricId::ThreadCount => Some(limits.max_processes),
@@ -533,5 +530,26 @@ impl<'a, 'b> ProcessStat<'a, 'b> {
                 .collect(),
             Err(_) => vec![None; metrics.len()],
         }
+    }
+}
+
+macro_rules! anonymous_option {
+    ($opt:expr) => {
+        match $opt {
+            Some(_) => &"Some(_)",
+            None => &"None",
+        }
+    };
+}
+
+impl fmt::Debug for ProcessStat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        f.debug_struct("ProcessStat")
+            .field("fd_stats", anonymous_option!(self.fd_stats))
+            .field("maps_stats", anonymous_option!(self.maps_stats))
+            .field("io", anonymous_option!(self.io))
+            .field("stat", anonymous_option!(self.stat))
+            .field("statm", anonymous_option!(self.statm))
+            .finish()
     }
 }

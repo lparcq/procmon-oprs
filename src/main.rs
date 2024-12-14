@@ -318,8 +318,8 @@ fn start(opt: Opt) -> anyhow::Result<()> {
             log::debug!("{bcktrc}");
         }
     }));
-    let system_conf = process::SystemConf::new()?;
-    if let Err(err) = app.run(&target_ids, &system_conf) {
+    let sysconf = process::SystemConf::new()?;
+    if let Err(err) = app.run(&target_ids, &sysconf) {
         log::error!("{}", err);
         if settings.logging.file.is_some() {
             eprintln!("{err}");

@@ -20,9 +20,9 @@ use std::borrow::Cow;
 use strum_macros::Display as StrumDisplay;
 
 use super::{
-    forest::{new_process, process_name, Process, ProcessResult},
-    format, Aggregation, Collector, Forest, FormattedMetric, Limit, MetricNamesParser, ProcessInfo,
-    ProcessStat, Sample, SystemConf, SystemStat, TargetContainer, TargetError, TargetId,
+    forest::ProcessResult, format, Aggregation, Collector, Forest, FormattedMetric, Limit,
+    MetricNamesParser, ProcessInfo, Sample, SystemConf, SystemStat, TargetContainer, TargetError,
+    TargetId,
 };
 
 /// High-level filter on processes
@@ -58,9 +58,9 @@ pub struct ProcessMetrics<'b> {
 #[derive(Getters)]
 pub struct ProcessDetails<'a> {
     #[getset(get = "pub")]
-    process: Process,
+    name: String,
     #[getset(get = "pub")]
-    process_name: String,
+    process: ProcessInfo,
     collector: Collector<'a>,
 }
 
@@ -80,19 +80,20 @@ impl ProcessDetails<'_> {
         ];
         let mut parser = MetricNamesParser::new(human);
         let metrics = parser.parse(&metric_names).unwrap();
-        let process = new_process(pid)?;
-        let process_name = process_name(&process);
+        let process = ProcessInfo::with_pid(pid)?;
+        let name = process.name().to_string();
         let collector = Collector::new(Cow::Owned(metrics));
         Ok(Self {
+            name,
             process,
-            process_name,
             collector,
         })
     }
 
-    pub fn refresh(&mut self, system_conf: &SystemConf) {
-        let proc_stat = ProcessStat::new(&self.process, system_conf);
-        self.collector.collect(&self.process_name, proc_stat);
+    pub fn refresh(&mut self, sysconf: &SystemConf) -> ProcessResult<()> {
+        self.process.refresh()?;
+        self.collector.collect(&self.name, &self.process, sysconf);
+        Ok(())
     }
 
     pub fn metrics(&self) -> Option<ProcessMetrics> {
@@ -128,7 +129,7 @@ pub struct FlatProcessManager<'s> {
 
 impl<'s> FlatProcessManager<'s> {
     pub fn new(
-        system_conf: &'s SystemConf,
+        sysconf: &'s SystemConf,
         metrics: &[FormattedMetric],
         target_ids: &[TargetId],
     ) -> Result<Self, TargetError> {
@@ -136,19 +137,15 @@ impl<'s> FlatProcessManager<'s> {
             .iter()
             .any(|metric| metric.aggregations.has(Aggregation::Ratio));
 
-        let mut targets = TargetContainer::new(system_conf, with_system);
+        let mut targets = TargetContainer::new(sysconf, with_system);
         targets.push_all(target_ids)?;
         targets.initialize(metrics.len());
         Ok(Self { targets })
     }
 
     /// Create a process manager only from PIDS. Discard PIDS that are not valid.
-    pub fn with_pids(
-        system_conf: &'s SystemConf,
-        metrics: &[FormattedMetric],
-        pids: &[pid_t],
-    ) -> Self {
-        let mut targets = TargetContainer::new(system_conf, true);
+    pub fn with_pids(sysconf: &'s SystemConf, metrics: &[FormattedMetric], pids: &[pid_t]) -> Self {
+        let mut targets = TargetContainer::new(sysconf, true);
         pids.iter().for_each(|pid| {
             if let Err(err) = targets.push_by_pid(&TargetId::Pid(*pid)) {
                 log::warn!("{pid}: {err}");
@@ -169,19 +166,16 @@ impl ProcessManager for FlatProcessManager<'_> {
 
 /// A Process explorer that interactively displays the process tree.
 pub struct ForestProcessManager<'s> {
-    system_conf: &'s SystemConf,
+    sysconf: &'s SystemConf,
     system_limits: Vec<Option<Limit>>,
     forest: Forest,
     filter: ProcessFilter,
 }
 
 impl<'s> ForestProcessManager<'s> {
-    pub fn new(
-        system_conf: &'s SystemConf,
-        metrics: &[FormattedMetric],
-    ) -> Result<Self, TargetError> {
+    pub fn new(sysconf: &'s SystemConf, metrics: &[FormattedMetric]) -> Result<Self, TargetError> {
         Ok(Self {
-            system_conf,
+            sysconf,
             system_limits: vec![None; metrics.len()],
             forest: Forest::new(),
             filter: ProcessFilter::default(),
@@ -203,7 +197,7 @@ impl ProcessManager for ForestProcessManager<'_> {
     }
 
     fn refresh(&mut self, collector: &mut Collector) -> ProcessResult<bool> {
-        let mut system = SystemStat::new(self.system_conf);
+        let mut system = SystemStat::new(self.sysconf);
         let system_info = format!(
             "[{} cores -- {}]",
             SystemStat::num_cores().unwrap_or(0),
@@ -228,14 +222,7 @@ impl ProcessManager for ForestProcessManager<'_> {
             self.forest
                 .descendants(root_pid)?
                 .filter(|pinfo| !pinfo.hidden())
-                .for_each(|pinfo| {
-                    let proc_stat = ProcessStat::with_parent_pid(
-                        pinfo.process(),
-                        pinfo.parent_pid(),
-                        self.system_conf,
-                    );
-                    collector.collect(pinfo.name(), proc_stat);
-                });
+                .for_each(|pinfo| collector.collect(pinfo.name(), pinfo, self.sysconf));
         }
         Ok(changed)
     }

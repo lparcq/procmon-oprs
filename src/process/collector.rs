@@ -25,7 +25,8 @@ use std::{
 use strum::{AsRefStr, IntoEnumIterator};
 
 use super::{
-    format, Aggregation, FormattedMetric, Limit, LimitValue, MetricId, ProcessStat, SystemStat,
+    format, Aggregation, FormattedMetric, Limit, LimitValue, MetricId, ProcessInfo, SystemConf,
+    SystemStat,
 };
 
 /// Tell if it makes sense to track metric changes
@@ -533,13 +534,13 @@ impl<'a> Collector<'a> {
     }
 
     /// Collect metrics
-    pub fn collect(&mut self, target_name: &str, mut proc_stat: ProcessStat) {
-        let values = proc_stat.extract_metrics(self.metrics());
-        let limits = proc_stat.extract_limits(self.metrics());
+    pub fn collect(&mut self, target_name: &str, pinfo: &ProcessInfo, sysconf: &SystemConf) {
+        let values = pinfo.extract_metrics(self.metrics(), sysconf);
+        let limits = pinfo.extract_limits(self.metrics(), sysconf);
         self.record(
             target_name,
-            proc_stat.pid(),
-            proc_stat.parent_pid(),
+            pinfo.pid(),
+            Some(pinfo.parent_pid()),
             &values,
             &limits,
         );

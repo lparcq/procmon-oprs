@@ -28,8 +28,7 @@ use std::fs;
 use super::mocks::fs;
 
 use super::{
-    process_name, Collector, Forest as ProcessForest, Limit, Process, ProcessError, ProcessStat,
-    SystemConf, SystemStat,
+    Collector, Forest as ProcessForest, Limit, ProcessError, ProcessInfo, SystemConf, SystemStat,
 };
 
 #[derive(thiserror::Error, Debug)]
@@ -90,23 +89,23 @@ fn read_pid_file(pid_file: &Path) -> TargetResult<pid_t> {
 /// Once the process is gone, the target returns no metrics.
 struct Target<'a> {
     name: String,
-    process: Option<Process>,
+    pinfo: Option<ProcessInfo>,
     pid_file: Option<PathBuf>,
-    system_conf: &'a SystemConf,
+    sysconf: &'a SystemConf,
 }
 
 impl<'a> Target<'a> {
-    fn new(process: Process, system_conf: &'a SystemConf) -> Self {
-        let name = process_name(&process);
-        Self {
-            name,
-            process: Some(process),
+    fn new(pid: pid_t, sysconf: &'a SystemConf) -> TargetResult<Self> {
+        let pinfo = ProcessInfo::with_pid(pid).map_err(|_| TargetError::InvalidProcessId(pid))?;
+        Ok(Self {
+            name: pinfo.name().to_string(),
+            pinfo: Some(pinfo),
             pid_file: None,
-            system_conf,
-        }
+            sysconf,
+        })
     }
 
-    fn with_pid_file<P>(pid_file: P, system_conf: &'a SystemConf) -> TargetResult<Self>
+    fn with_pid_file<P>(pid_file: P, sysconf: &'a SystemConf) -> TargetResult<Self>
     where
         P: AsRef<Path>,
     {
@@ -114,26 +113,28 @@ impl<'a> Target<'a> {
         Ok(Self {
             name: basename(pid_file, true)
                 .ok_or_else(|| TargetError::InvalidPath(pid_file.to_path_buf()))?,
-            process: None,
+            pinfo: None,
             pid_file: Some(pid_file.to_path_buf()),
-            system_conf,
+            sysconf,
         })
     }
 
     fn is_alive(&self) -> bool {
-        self.process
+        self.pinfo
             .as_ref()
-            .map(|proc| proc.is_alive())
+            .map(|pinfo| pinfo.process().is_alive())
             .unwrap_or(false)
     }
 
-    fn set_process(&mut self, process: Process) {
-        self.process = Some(process);
+    fn set_process(&mut self, pid: pid_t) -> TargetResult<()> {
+        let pinfo = ProcessInfo::with_pid(pid).map_err(|_| TargetError::InvalidProcessId(pid))?;
+        self.pinfo = Some(pinfo);
+        Ok(())
     }
 
     fn clear_process(&mut self) -> bool {
-        let changed = self.process.is_some();
-        self.process = None;
+        let changed = self.pinfo.is_some();
+        self.pinfo = None;
         changed
     }
 
@@ -142,9 +143,8 @@ impl<'a> Target<'a> {
     }
 
     fn collect(&self, collector: &mut Collector) {
-        if let Some(ref process) = self.process {
-            let proc_stat = ProcessStat::new(process, self.system_conf);
-            collector.collect(&self.name, proc_stat);
+        if let Some(pinfo) = &self.pinfo {
+            collector.collect(&self.name, pinfo, self.sysconf);
         }
     }
 }
@@ -152,16 +152,16 @@ impl<'a> Target<'a> {
 /// Target container
 pub struct TargetContainer<'a> {
     targets: Vec<Target<'a>>,
-    system_conf: &'a SystemConf,
+    sysconf: &'a SystemConf,
     system_limits: Option<Vec<Option<Limit>>>,
     with_system: bool,
 }
 
 impl<'a> TargetContainer<'a> {
-    pub fn new(system_conf: &'a SystemConf, with_system: bool) -> TargetContainer<'a> {
+    pub fn new(sysconf: &'a SystemConf, with_system: bool) -> TargetContainer<'a> {
         TargetContainer {
             targets: Vec::new(),
-            system_conf,
+            sysconf,
             system_limits: None,
             with_system,
         }
@@ -175,13 +175,11 @@ impl<'a> TargetContainer<'a> {
             }
             if let Some(pid_file) = target.pid_file() {
                 match read_pid_file(pid_file) {
-                    Ok(pid) => {
-                        if let Ok(process) = Process::new(pid) {
-                            target.set_process(process);
-                            changed = true;
-                        }
-                    }
-                    Err(err) => error!("{:?}", err),
+                    Ok(pid) => match target.set_process(pid) {
+                        Ok(()) => changed = true,
+                        Err(err) => error!("{pid}: {err:?}"),
+                    },
+                    Err(err) => error!("{err:?}"),
                 }
             }
         });
@@ -197,7 +195,7 @@ impl<'a> TargetContainer<'a> {
     pub fn collect(&self, collector: &mut Collector) {
         collector.rewind();
         if let Some(ref limits) = self.system_limits {
-            let mut system = SystemStat::new(self.system_conf);
+            let mut system = SystemStat::new(self.sysconf);
             collector.collect_system(&mut system);
             collector.record(
                 "system",
@@ -218,11 +216,8 @@ impl<'a> TargetContainer<'a> {
     /// Panic if the target is not a PID or a PID file.
     pub fn push_by_pid(&mut self, target_id: &TargetId) -> TargetResult<()> {
         let target = match target_id {
-            TargetId::Pid(pid) => Target::new(
-                Process::new(*pid).map_err(|_| TargetError::InvalidProcessId(*pid))?,
-                self.system_conf,
-            ),
-            TargetId::PidFile(pid_file) => Target::with_pid_file(pid_file, self.system_conf)?,
+            TargetId::Pid(pid) => Target::new(*pid, self.sysconf)?,
+            TargetId::PidFile(pid_file) => Target::with_pid_file(pid_file, self.sysconf)?,
             _ => panic!("already matched"),
         };
         self.targets.push(target);
@@ -240,8 +235,9 @@ impl<'a> TargetContainer<'a> {
                     if let Ok(descendants) = forest.descendants(p.pid()) {
                         descendants.for_each(|p| {
                             if name == p.name() {
-                                if let Ok(process) = Process::new(p.pid()) {
-                                    self.targets.push(Target::new(process, self.system_conf));
+                                match Target::new(p.pid(), self.sysconf) {
+                                    Ok(target) => self.targets.push(target),
+                                    Err(err) => error!("{name}: {err}"),
                                 }
                             }
                         })

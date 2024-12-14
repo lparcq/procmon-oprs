@@ -120,7 +120,7 @@ impl<'s> Application<'s> {
         })
     }
 
-    pub fn run(&self, target_ids: &[TargetId], system_conf: &'_ SystemConf) -> anyhow::Result<()> {
+    pub fn run(&self, target_ids: &[TargetId], sysconf: &'_ SystemConf) -> anyhow::Result<()> {
         info!("starting");
         let mut is_interactive = false;
         let device: Box<dyn DisplayDevice> = match self.display_mode {
@@ -134,26 +134,22 @@ impl<'s> Application<'s> {
         if target_ids.is_empty() && !is_interactive {
             Err(anyhow::anyhow!(Error::NoTargets))
         } else {
-            self.run_loop(device, system_conf, target_ids, is_interactive)
+            self.run_loop(device, sysconf, target_ids, is_interactive)
         }
     }
 
     fn run_loop(
         &self,
         mut device: Box<dyn DisplayDevice>,
-        system_conf: &'_ SystemConf,
+        sysconf: &'_ SystemConf,
         target_ids: &[TargetId],
         is_interactive: bool,
     ) -> anyhow::Result<()> {
         let mut collector = Collector::new(Cow::Borrowed(&self.metrics));
         let mut tmgt: Box<dyn ProcessManager> = if target_ids.is_empty() {
-            Box::new(ForestProcessManager::new(system_conf, &self.metrics)?)
+            Box::new(ForestProcessManager::new(sysconf, &self.metrics)?)
         } else {
-            Box::new(FlatProcessManager::new(
-                system_conf,
-                &self.metrics,
-                target_ids,
-            )?)
+            Box::new(FlatProcessManager::new(sysconf, &self.metrics, target_ids)?)
         };
         let mut details: Option<ProcessDetails> = None;
         let mut pane_kind = PaneKind::Main;
@@ -183,8 +179,12 @@ impl<'s> Application<'s> {
             let targets_updated = if timer.expired() {
                 let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
                 let targets_updated = tmgt.refresh(&mut collector)?;
-                if let Some(details) = &mut details {
-                    details.refresh(system_conf);
+                if match &mut details {
+                    Some(details) => details.refresh(sysconf).is_err(),
+                    None => false,
+                } {
+                    details = None;
+                    pane_kind = PaneKind::Main;
                 }
                 if let Some(ref mut exporter) = exporter {
                     exporter.export(&collector, &timestamp)?;
@@ -224,19 +224,24 @@ impl<'s> Application<'s> {
                             (_, _) => pane_kind = PaneKind::Main,
                         },
                         Interaction::SelectPid(pid) => {
-                            details = ProcessDetails::new(pid, self.human).ok();
-                            match details {
-                                Some(ref mut details) => {
-                                    pane_kind = PaneKind::Process;
-                                    details.refresh(system_conf);
+                            details = match ProcessDetails::new(pid, self.human) {
+                                Ok(mut details) => match details.refresh(sysconf) {
+                                    Ok(()) => {
+                                        pane_kind = PaneKind::Process;
+                                        Some(details)
+                                    }
+                                    Err(_) => None,
+                                },
+                                Err(_) => {
+                                    log::error!("{pid}: details cannot be selected");
+                                    None
                                 }
-                                None => log::error!("{pid}: details cannot be selected"),
                             }
                         }
                         Interaction::Narrow(pids) => {
                             log::debug!("switch to flat mode with {} PIDs", pids.len());
                             tmgt = Box::new(FlatProcessManager::with_pids(
-                                system_conf,
+                                sysconf,
                                 &self.metrics,
                                 &pids,
                             ));
@@ -244,7 +249,7 @@ impl<'s> Application<'s> {
                         }
                         Interaction::Wide => {
                             log::debug!("switch to explorer mode");
-                            tmgt = Box::new(ForestProcessManager::new(system_conf, &self.metrics)?);
+                            tmgt = Box::new(ForestProcessManager::new(sysconf, &self.metrics)?);
                             tmgt.refresh(&mut collector)?;
                         }
                         Interaction::None => (),
