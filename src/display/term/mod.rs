@@ -511,7 +511,6 @@ impl TerminalDevice<'_> {
     /// Set the keymap
     fn set_keymap(&mut self, keymap: KeyMap) {
         if self.keymap != keymap {
-            log::debug!("keymap: {keymap:?}");
             self.keymap = keymap;
         }
     }
@@ -636,6 +635,10 @@ impl TerminalDevice<'_> {
                 self.filter = ProcessFilter::UserLand;
                 self.set_keymap(KeyMap::Main);
             }
+            Action::FilterActive => {
+                self.filter = ProcessFilter::Active;
+                self.set_keymap(KeyMap::Main);
+            }
             Action::MultiplyTimeout(factor) => {
                 let delay = timer.get_delay();
                 if delay.as_secs() * (factor as u64) < MAX_TIMEOUT_SECS {
@@ -731,7 +734,9 @@ impl TerminalDevice<'_> {
                 Interaction::Narrow(pids)
             }
             Action::ChangeScope => Interaction::Wide,
-            Action::FilterNone | Action::FilterUser => Interaction::Filter(self.filter),
+            Action::FilterNone | Action::FilterUser | Action::FilterActive => {
+                Interaction::Filter(self.filter)
+            }
             Action::SwitchToHelp => Interaction::SwitchToHelp,
             Action::SwitchToProcess => match self.bookmarks.selected() {
                 Some(selected) => Interaction::SelectPid(selected.pid),
@@ -908,12 +913,10 @@ impl TerminalDevice<'_> {
             top,
             self.body_height,
         );
-        log::debug!("top: {top} -- lines: {line_count} -- rows: {nrows} -- voffset: {voffset}");
         self.table_offset.set_vertical(voffset);
         let (hoffset, voffset) = self
             .table_offset
             .set_bounds(ncols - 3, line_count.saturating_sub(self.body_height));
-        log::debug!("rows: {nrows} -- voffset: {voffset}");
         let nvisible_rows = nrows - voffset;
         let nvisible_cols = ncols - hoffset;
 

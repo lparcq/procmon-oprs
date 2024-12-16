@@ -213,7 +213,10 @@ impl<'s> Application<'s> {
                 if let PauseStatus::Action(action) = device.pause(&mut timer)? {
                     match action {
                         Interaction::Quit => break,
-                        Interaction::Filter(filter) => tmgt.set_filter(filter),
+                        Interaction::Filter(filter) => {
+                            tmgt.set_filter(filter);
+                            tmgt.refresh(&mut collector)?;
+                        }
                         Interaction::SwitchToHelp => pane_kind = PaneKind::Help,
                         Interaction::SwitchBack => match (pane_kind, &details) {
                             (PaneKind::Help, Some(_)) => pane_kind = PaneKind::Process,

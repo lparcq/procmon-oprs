@@ -74,6 +74,26 @@ fn new_stat(process: &Process) -> ProcessResult<process::Stat> {
         .map_err(|_| ProcessError::UnknownProcess(process.pid()))
 }
 
+/// Record CPU activity.
+#[derive(Debug, Default)]
+struct CpuActivity {
+    cpu_time: u64,
+    idleness: u16,
+}
+
+impl CpuActivity {
+    /// Return 1 if no CPU has been used or 0
+    fn update(&mut self, stat: &process::Stat) {
+        let cpu_time = stat.utime.saturating_add(stat.stime);
+        if cpu_time > self.cpu_time {
+            self.cpu_time = cpu_time;
+            self.idleness = 0;
+        } else {
+            self.idleness = self.idleness.saturating_add(1);
+        }
+    }
+}
+
 #[derive(Debug, Getters, CopyGetters)]
 /// Information about for an existing or past process.
 pub struct ProcessInfo {
@@ -104,6 +124,8 @@ pub struct ProcessInfo {
     /// Process exists but is hidden.
     #[getset(get_copy = "pub")]
     hidden: bool,
+    /// Activity of the process.
+    activity: RefCell<CpuActivity>,
 }
 
 impl ProcessInfo {
@@ -116,6 +138,8 @@ impl ProcessInfo {
         let exe_name = exe_name(&process);
         let is_kernel = exe_name.is_none();
         let name = exe_name.unwrap_or_else(|| format!("({})", stat.comm));
+        let mut activity = CpuActivity::default();
+        activity.update(&stat);
         let stats = RefCell::new(ProcessStat::with_stat(stat));
         Ok(Self {
             pid,
@@ -127,6 +151,7 @@ impl ProcessInfo {
             stats,
             is_kernel,
             hidden: true,
+            activity: RefCell::new(activity),
         })
     }
 
@@ -158,6 +183,10 @@ impl ProcessInfo {
         self.hidden = false;
     }
 
+    pub fn idleness(&self) -> u16 {
+        self.activity.borrow().idleness
+    }
+
     pub fn refresh(&mut self) -> ProcessResult<()> {
         let stat = new_stat(&self.process)?;
         if stat.starttime != self.start_time {
@@ -165,6 +194,7 @@ impl ProcessInfo {
             Err(ProcessError::UnknownProcess(self.pid))
         } else {
             self.parent_pid = stat.ppid;
+            self.activity.borrow_mut().update(&stat);
             self.stats = RefCell::new(ProcessStat::with_stat(stat));
             Ok(())
         }
@@ -218,6 +248,21 @@ impl<'a> Iterator for Descendants<'a, '_> {
         self.inner
             .next()
             .map(|node_id| self.forest.get_known_info(node_id))
+    }
+}
+
+/// Trait to implement filters.
+pub trait ProcessClassifier {
+    fn accept(&self, pi: &ProcessInfo) -> bool;
+}
+
+/// Classifier that accepts all processes.
+#[derive(Debug, Default)]
+struct AcceptAllProcesses(());
+
+impl ProcessClassifier for AcceptAllProcesses {
+    fn accept(&self, _pi: &ProcessInfo) -> bool {
+        true
     }
 }
 
@@ -497,10 +542,10 @@ impl Forest {
     }
 
     /// Refreshes the forest and return if it has changed.
-    pub fn refresh_from<I, P>(&mut self, processes: I, predicate: P) -> bool
+    pub fn refresh_from<I, C>(&mut self, processes: I, classifier: &C) -> bool
     where
         I: Iterator<Item = Process>,
-        P: Fn(&ProcessInfo) -> bool,
+        C: ProcessClassifier,
     {
         log::debug!("refresh");
         self.refresh_existing_processes();
@@ -513,7 +558,7 @@ impl Forest {
                         // Existing process
                         Some(node) => {
                             let info = node.get_mut();
-                            let shown = predicate(info);
+                            let shown = classifier.accept(info);
                             if shown {
                                 info.show();
                             }
@@ -532,7 +577,7 @@ impl Forest {
                     // New process
                     match ProcessInfo::new(process) {
                         Ok(mut info) => {
-                            if predicate(&info) {
+                            if classifier.accept(&info) {
                                 info.show();
                             }
                             if let Some(info) = self.add_useful_node(&mut state, info) {
@@ -549,21 +594,21 @@ impl Forest {
     }
 
     /// Refresh the forest with all the visible processes in the system if they match the predicate.
-    pub fn refresh_if<P>(&mut self, predicate: P) -> Result<bool, ProcessError>
+    pub fn refresh_if<C>(&mut self, classifier: &C) -> Result<bool, ProcessError>
     where
-        P: Fn(&ProcessInfo) -> bool,
+        C: ProcessClassifier,
     {
         Ok(self.refresh_from(
             all_processes()
                 .map_err(|_| ProcessError::CannotAccessProcesses)?
                 .filter_map(ProcResult::ok),
-            predicate,
+            classifier,
         ))
     }
 
     /// Refresh the forest with all the visible processes in the system.
     pub fn refresh(&mut self) -> Result<bool, ProcessError> {
-        self.refresh_if(|_| true)
+        self.refresh_if(&AcceptAllProcesses::default())
     }
 }
 
@@ -576,7 +621,10 @@ mod tests {
         iter::IntoIterator,
     };
 
-    use super::{pid_t, procfs::ProcessBuilder, Forest, Process, ProcessInfo};
+    use super::{
+        pid_t, procfs::ProcessBuilder, AcceptAllProcesses, Forest, Process, ProcessClassifier,
+        ProcessInfo,
+    };
 
     fn sorted<T, I>(input: I) -> Vec<T>
     where
@@ -591,6 +639,31 @@ mod tests {
     fn shuffle(mut processes: Vec<Process>) -> Vec<Process> {
         processes.shuffle(&mut rand::thread_rng());
         processes
+    }
+
+    /// Accept a specific processes.
+    #[derive(Debug)]
+    struct AcceptProcesses(BTreeSet<pid_t>);
+
+    impl AcceptProcesses {
+        fn with_pids(pids: &[pid_t]) -> Self {
+            AcceptProcesses(BTreeSet::from_iter(pids.iter().copied()))
+        }
+
+        fn with_pid(pid: pid_t) -> Self {
+            AcceptProcesses::with_pids(&[pid])
+        }
+
+        fn contains(&self, pid: pid_t) -> bool {
+            let Self(pids) = self;
+            pids.contains(&pid)
+        }
+    }
+
+    impl ProcessClassifier for AcceptProcesses {
+        fn accept(&self, pi: &ProcessInfo) -> bool {
+            self.contains(pi.pid)
+        }
     }
 
     #[derive(Debug, Default)]
@@ -710,7 +783,7 @@ mod tests {
     fn test_empty() {
         let mut forest = Forest::new();
         let mut empty: Vec<Process> = Vec::new();
-        forest.refresh_from(empty.drain(..), |info| info.pid() == 1);
+        forest.refresh_from(empty.drain(..), &AcceptProcesses::with_pid(1));
     }
 
     #[test]
@@ -721,7 +794,7 @@ mod tests {
         let mut forest = Forest::new();
         let mut processes = vec![factory.builder().name(NAME).build()];
         let first_pid = factory.last_pid();
-        forest.refresh_from(processes.drain(..), |info| info.pid() == first_pid);
+        forest.refresh_from(processes.drain(..), &AcceptProcesses::with_pid(first_pid));
         let pinfo = forest.get_process(first_pid).unwrap();
         assert_eq!(first_pid, pinfo.pid());
         assert_eq!(first_pid, pinfo.process().pid());
@@ -737,12 +810,56 @@ mod tests {
         let mut forest = Forest::new();
         let processes = vec![factory.builder().name(NAME).ttl(TTL).build()];
         let first_pid = factory.last_pid();
+        let any_proc = AcceptAllProcesses::default();
         for _ in 0..TTL {
-            forest.refresh_from(processes.clone().drain(..), |_| true);
+            forest.refresh_from(processes.clone().drain(..), &any_proc);
             assert!(forest.get_process(first_pid).is_some());
         }
-        forest.refresh_from(processes.clone().drain(..), |_| true);
+        forest.refresh_from(processes.clone().drain(..), &any_proc);
         assert!(forest.get_process(first_pid).is_none());
+    }
+
+    #[test]
+    /// Test idleness.
+    ///
+    /// The idleness increases when the CPU time is null. It drops to zero otherwise.
+    fn test_idleness() {
+        const NAME: &str = "test";
+        let mut factory = ProcessFactory::default();
+
+        // Create an idle process.
+        let proc1 = factory.builder().name(NAME).build();
+        let pinfo1 = ProcessInfo::new(proc1).unwrap();
+        assert!(pinfo1.idleness() > 0);
+
+        // Create a process with user time.
+        let proc2 = factory.builder().name(NAME).cpu_time(1234, 0).build();
+        let pinfo2 = ProcessInfo::new(proc2).unwrap();
+        assert_eq!(0, pinfo2.idleness());
+
+        // Create a process with system time.
+        let proc3 = factory.builder().name(NAME).cpu_time(0, 1234).build();
+        let pinfo3 = ProcessInfo::new(proc3).unwrap();
+        assert_eq!(0, pinfo3.idleness());
+
+        // One process in the forest.
+        let any_proc = AcceptAllProcesses::default();
+        let mut forest = Forest::new();
+        let proc = factory.builder().name(NAME).build();
+        let pid = proc.pid();
+        let processes = vec![proc.clone()];
+        forest.refresh_from(processes.clone().drain(..), &any_proc);
+        assert_eq!(1, forest.get_process(pid).unwrap().idleness());
+
+        forest.refresh_from(processes.clone().drain(..), &any_proc);
+        assert_eq!(2, forest.get_process(pid).unwrap().idleness());
+
+        proc.schedule(1234, 0);
+        forest.refresh_from(processes.clone().drain(..), &any_proc);
+        assert_eq!(0, forest.get_process(pid).unwrap().idleness());
+
+        forest.refresh_from(processes.clone().drain(..), &any_proc);
+        assert_eq!(1, forest.get_process(pid).unwrap().idleness());
     }
 
     /// Create a forest with a single tree.
@@ -761,7 +878,7 @@ mod tests {
         let mut processes = factory.with_parent_pids(&[(3, Some(0)), (5, Some(2))], 6);
 
         let mut forest = Forest::new();
-        forest.refresh_from(processes.drain(..), |_| true);
+        forest.refresh_from(processes.drain(..), &AcceptAllProcesses::default());
         let root_pids = forest.root_pids();
         assert_eq!(vec![1], root_pids);
 
@@ -784,7 +901,7 @@ mod tests {
         let mut processes = shuffle(factory.with_parent_pids(&[(4, None)], 8));
 
         let mut forest = Forest::new();
-        forest.refresh_from(processes.drain(..), |_| true);
+        forest.refresh_from(processes.drain(..), &AcceptAllProcesses::default());
 
         let expected_pids = vec![1, 5];
         let pids = sorted(forest.root_pids());
@@ -816,14 +933,14 @@ mod tests {
         let proc7_pid = processes[7].pid();
 
         let mut forest = Forest::new();
-        let predicate = |p: &ProcessInfo| p.pid() == proc4_pid || p.pid() == proc6_pid;
-        forest.refresh_from(processes.drain(..), predicate);
+        let classifier = AcceptProcesses::with_pids(&[proc4_pid, proc6_pid]);
+        forest.refresh_from(processes.drain(..), &classifier);
 
         let root_pid = forest.root_pids()[0];
 
         assert_eq!(6, forest.size()); // Process 3 and 7 are discarded
         for pinfo in forest.descendants(root_pid).unwrap() {
-            assert_eq!(predicate(pinfo), !pinfo.hidden());
+            assert_eq!(classifier.accept(pinfo), !pinfo.hidden());
             // Processes that have been discarded
             assert_ne!(proc3_pid, pinfo.pid());
             assert_ne!(proc7_pid, pinfo.pid());
@@ -848,10 +965,10 @@ mod tests {
         ) where
             I: Iterator<Item = Process>,
         {
-            let pset = BTreeSet::from_iter(selected_pids.iter());
-            forest.refresh_from(processes, |p| pset.contains(&p.pid()));
+            let classifier = AcceptProcesses::with_pids(selected_pids);
+            forest.refresh_from(processes, &classifier);
             for (n, pid) in all_pids.iter().enumerate() {
-                let is_selected = pset.contains(pid);
+                let is_selected = classifier.contains(*pid);
                 let is_hidden = match forest.get_process(*pid) {
                     Some(p) => p.hidden(),
                     None => true,
@@ -894,13 +1011,14 @@ mod tests {
         let mut processes = Vec::new();
         processes.push(root);
 
+        let any_proc = AcceptAllProcesses::default();
         let mut forest = Forest::new();
-        forest.refresh_from(processes.clone().drain(..), |_| true);
+        forest.refresh_from(processes.clone().drain(..), &any_proc);
         for count in 2..6 {
             // Add a new process at each loop.
             let proc = factory.builder().parent_pid(root_pid).build();
             processes.push(proc);
-            forest.refresh_from(shuffle(processes.clone()).drain(..), |_| true);
+            forest.refresh_from(shuffle(processes.clone()).drain(..), &any_proc);
             assert_eq!(count, forest.size());
         }
     }
@@ -918,8 +1036,9 @@ mod tests {
         let proc2_pid = processes1[2].pid();
         let mut processes2 = processes1.clone();
 
+        let any_proc = AcceptAllProcesses::default();
         let mut forest = Forest::new();
-        forest.refresh_from(processes1.drain(..), |_| true);
+        forest.refresh_from(processes1.drain(..), &any_proc);
         assert_eq!(5, forest.size());
 
         let mut ttl = 3;
@@ -930,7 +1049,7 @@ mod tests {
 
         loop {
             ttl = ttl.saturating_sub(1);
-            forest.refresh_from(processes2.clone().drain(..), |_| true);
+            forest.refresh_from(processes2.clone().drain(..), &any_proc);
             match forest.get_process(proc_pid) {
                 Some(info) => assert_eq!(ttl, info.process().ttl().unwrap()),
                 None => break,
@@ -944,7 +1063,7 @@ mod tests {
             .filter(|proc| proc.pid() != proc_pid)
             .cloned()
             .collect::<Vec<Process>>();
-        forest.refresh_from(processes3.drain(..), |_| true);
+        forest.refresh_from(processes3.drain(..), &any_proc);
         assert_eq!(5, forest.size());
     }
 
@@ -966,8 +1085,9 @@ mod tests {
         let proc3_pid = processes1[3].pid();
         let mut processes2 = processes1.clone();
 
+        let any_proc = AcceptAllProcesses::default();
         let mut forest = Forest::new();
-        forest.refresh_from(shuffle(processes1).drain(..), |_| true);
+        forest.refresh_from(shuffle(processes1).drain(..), &any_proc);
         assert_eq!(5, forest.size());
         assert_eq!(vec![root_pid], forest.root_pids());
 
@@ -976,7 +1096,7 @@ mod tests {
         processes2[1].reparent(0);
         processes2[3].reparent(0);
 
-        forest.refresh_from(shuffle(processes2).drain(..), |_| true);
+        forest.refresh_from(shuffle(processes2).drain(..), &any_proc);
         assert_eq!(4, forest.size());
         assert_eq!(vec![proc1_pid, proc3_pid], sorted(forest.root_pids()));
         assert_eq!(0, forest.get_process(proc1_pid).unwrap().parent_pid());
@@ -1005,13 +1125,14 @@ mod tests {
         };
         assert_ne!(first_proc_start, second_proc_start);
 
+        let any_proc = AcceptAllProcesses::default();
         let mut forest = Forest::new();
-        forest.refresh_from(shuffle(processes1).drain(..), |_| true);
+        forest.refresh_from(shuffle(processes1).drain(..), &any_proc);
         let first_proc = forest.get_process(first_proc_pid).unwrap();
         assert_eq!(first_proc_pid, first_proc.pid());
         assert_eq!(first_proc_start, first_proc.start_time);
 
-        forest.refresh_from(shuffle(processes2).drain(..), |_| true);
+        forest.refresh_from(shuffle(processes2).drain(..), &any_proc);
         let second_proc = forest.get_process(first_proc_pid).unwrap();
         assert_eq!(first_proc_pid, second_proc.pid());
         assert_eq!(second_proc_start, second_proc.start_time);

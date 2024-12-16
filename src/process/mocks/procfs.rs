@@ -1,6 +1,34 @@
+// Oprs -- process monitor for Linux
+// Copyright (C) 2024 Laurent Pelecq
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 pub(crate) use std::io::Error as ProcError;
 
 pub(crate) type ProcResult<T> = Result<T, ProcError>;
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct CpuTime {
+    utime: u64,
+    stime: u64,
+}
+
+impl CpuTime {
+    fn new(utime: u64, stime: u64) -> Self {
+        Self { utime, stime }
+    }
+}
 
 pub(crate) mod process {
 
@@ -10,7 +38,7 @@ pub(crate) mod process {
 
     pub(crate) use procfs::process::Stat;
 
-    use super::{ProcError, ProcResult};
+    use super::{CpuTime, ProcError, ProcResult};
 
     #[derive(Debug)]
     pub(crate) struct FDsIter {}
@@ -32,34 +60,32 @@ pub(crate) mod process {
         parent_pid: Rc<RefCell<pid_t>>,
         exe: Option<String>,
         start_time: u64,
+        cpu_time: Rc<RefCell<CpuTime>>,
         ttl: Option<Rc<RefCell<u16>>>,
     }
 
     impl Process {
-        pub(crate) fn new(pid: pid_t) -> ProcResult<Self> {
-            Ok(Self {
-                pid,
-                parent_pid: Rc::new(RefCell::new(0)),
-                exe: None,
-                start_time: 0,
-                ttl: None,
-            })
-        }
-
-        pub(crate) fn with_exe(
+        pub(crate) fn new_fake(
             pid: pid_t,
             parent_pid: pid_t,
-            exe: &str,
+            exe: Option<&str>,
             start_time: u64,
+            cpu_time: CpuTime,
             ttl: Option<u16>,
         ) -> Self {
             Self {
                 pid,
                 parent_pid: Rc::new(RefCell::new(parent_pid)),
-                exe: Some(exe.to_string()),
+                exe: exe.map(str::to_string),
                 start_time,
+                cpu_time: Rc::new(RefCell::new(cpu_time)),
                 ttl: ttl.map(RefCell::new).map(Rc::new),
             }
+        }
+
+        pub(crate) fn new(pid: pid_t) -> ProcResult<Self> {
+            let cpu_time = CpuTime::default();
+            Ok(Self::new_fake(pid, 0, None, 0, cpu_time, None))
         }
 
         pub(crate) fn reparent(&mut self, parent_pid: pid_t) {
@@ -142,6 +168,7 @@ pub(crate) mod process {
 
         pub(crate) fn stat(&self) -> ProcResult<Stat> {
             if self.check_if_alive() {
+                let cpu_time = self.cpu_time.borrow();
                 let mut st: Stat = procfs::FromRead::from_read(io::Cursor::new(format!(
                     "{} ({}) S {} {}",
                     self.pid,
@@ -155,11 +182,11 @@ pub(crate) mod process {
                         .map(|i| i.to_string())
                         .collect::<Vec<String>>()
                         .join(" "),
-                    //self.start_time
                 )))
                 .expect("Process::stat: cannot decode fake stat");
                 st.starttime = self.start_time;
-
+                st.utime = cpu_time.utime;
+                st.stime = cpu_time.stime;
                 Ok(st)
             } else {
                 Err(new_error("Process died"))
@@ -168,6 +195,13 @@ pub(crate) mod process {
 
         pub(crate) fn statm(&self) -> ProcResult<StatM> {
             Err(new_error("Process::statm not implemented"))
+        }
+
+        /// Simulate CPU.
+        pub(crate) fn schedule(&self, utime: u64, stime: u64) {
+            let mut cpu_time = self.cpu_time.borrow_mut();
+            cpu_time.utime += utime;
+            cpu_time.stime += stime;
         }
     }
 
@@ -199,6 +233,7 @@ pub(crate) struct ProcessBuilder {
     parent_pid: pid_t,
     name: String,
     start_time: u64,
+    cpu_time: CpuTime,
     ttl: Option<u16>,
 }
 
@@ -207,8 +242,9 @@ impl ProcessBuilder {
         Self {
             pid: 0,
             parent_pid: 0,
-            start_time: ORIGIN.elapsed().as_nanos() as u64,
             name: name.to_string(),
+            start_time: ORIGIN.elapsed().as_nanos() as u64,
+            cpu_time: CpuTime::default(),
             ttl: None,
         }
     }
@@ -233,6 +269,11 @@ impl ProcessBuilder {
         self
     }
 
+    pub(crate) fn cpu_time(mut self, utime: u64, stime: u64) -> Self {
+        self.cpu_time = CpuTime::new(utime, stime);
+        self
+    }
+
     pub(crate) fn ttl(mut self, ttl: u16) -> Self {
         self.ttl = Some(ttl);
         self
@@ -240,6 +281,13 @@ impl ProcessBuilder {
 
     pub(crate) fn build(self) -> Process {
         let exe = format!("/bin/{}", self.name);
-        Process::with_exe(self.pid, self.parent_pid, &exe, self.start_time, self.ttl)
+        Process::new_fake(
+            self.pid,
+            self.parent_pid,
+            Some(&exe),
+            self.start_time,
+            self.cpu_time,
+            self.ttl,
+        )
     }
 }

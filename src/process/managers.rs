@@ -20,10 +20,13 @@ use std::borrow::Cow;
 use strum_macros::Display as StrumDisplay;
 
 use super::{
-    forest::ProcessResult, format, Aggregation, Collector, Forest, FormattedMetric, Limit,
-    MetricNamesParser, ProcessInfo, Sample, SystemConf, SystemStat, TargetContainer, TargetError,
-    TargetId,
+    forest::{ProcessClassifier, ProcessResult},
+    format, Aggregation, Collector, Forest, FormattedMetric, Limit, MetricNamesParser, ProcessInfo,
+    Sample, SystemConf, SystemStat, TargetContainer, TargetError, TargetId,
 };
+
+/// Number of idle cycles to be considered as inactive.
+const INACTIVITY: u16 = 5;
 
 /// High-level filter on processes
 #[derive(Clone, Copy, Debug, StrumDisplay)]
@@ -32,6 +35,8 @@ pub enum ProcessFilter {
     None,
     #[strum(serialize = "user")]
     UserLand,
+    #[strum(serialize = "active")]
+    Active,
 }
 
 impl Default for ProcessFilter {
@@ -164,12 +169,34 @@ impl ProcessManager for FlatProcessManager<'_> {
     }
 }
 
+/// Accept all processes in userland.
+#[derive(Debug, Default)]
+struct AcceptUserLand(());
+
+impl ProcessClassifier for AcceptUserLand {
+    fn accept(&self, pi: &ProcessInfo) -> bool {
+        !pi.is_kernel()
+    }
+}
+
+/// Accept all active processes.
+#[derive(Debug)]
+struct AcceptActiveProcesses(u16);
+
+impl ProcessClassifier for AcceptActiveProcesses {
+    fn accept(&self, pi: &ProcessInfo) -> bool {
+        let Self(inactivity) = self;
+        !pi.is_kernel() && pi.idleness() < *inactivity
+    }
+}
+
 /// A Process explorer that interactively displays the process tree.
 pub struct ForestProcessManager<'s> {
     sysconf: &'s SystemConf,
     system_limits: Vec<Option<Limit>>,
     forest: Forest,
     filter: ProcessFilter,
+    inactivity: u16,
 }
 
 impl<'s> ForestProcessManager<'s> {
@@ -179,15 +206,8 @@ impl<'s> ForestProcessManager<'s> {
             system_limits: vec![None; metrics.len()],
             forest: Forest::new(),
             filter: ProcessFilter::default(),
+            inactivity: 0,
         })
-    }
-
-    fn no_filter(_pi: &ProcessInfo) -> bool {
-        true
-    }
-
-    fn filter_user_land(pi: &ProcessInfo) -> bool {
-        !pi.is_kernel()
     }
 }
 
@@ -213,10 +233,16 @@ impl ProcessManager for ForestProcessManager<'_> {
             &system.extract_metrics(collector.metrics()),
             &self.system_limits,
         );
-        let changed = self.forest.refresh_if(match self.filter {
-            ProcessFilter::None => ForestProcessManager::no_filter,
-            ProcessFilter::UserLand => ForestProcessManager::filter_user_land,
-        })?;
+        if self.inactivity < INACTIVITY {
+            self.inactivity += 1;
+        }
+        let changed = match self.filter {
+            ProcessFilter::None => self.forest.refresh(),
+            ProcessFilter::UserLand => self.forest.refresh_if(&AcceptUserLand::default()),
+            ProcessFilter::Active => self
+                .forest
+                .refresh_if(&AcceptActiveProcesses(self.inactivity)),
+        }?;
         for root_pid in self.forest.root_pids() {
             self.forest
                 .descendants(root_pid)?

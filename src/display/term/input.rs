@@ -32,6 +32,7 @@ const KEY_FASTER_CHAR: char = '+';
 const KEY_FASTER: Key = Key::Char(KEY_FASTER_CHAR);
 const KEY_FILTER_NONE: Key = Key::Char('n');
 const KEY_FILTER_USER: Key = Key::Char('u');
+const KEY_FILTER_ACTIVE: Key = Key::Char('a');
 const KEY_GOTO_TBL_BOTTOM: Key = Key::CtrlEnd;
 const KEY_GOTO_TBL_LEFT: Key = Key::Home;
 const KEY_GOTO_TBL_RIGHT: Key = Key::End;
@@ -72,6 +73,7 @@ pub enum Action {
     Filters,
     FilterNone,
     FilterUser,
+    FilterActive,
     GotoTableBottom,
     GotoTableLeft,
     GotoTableRight,
@@ -138,6 +140,7 @@ impl KeyMap {
             KeyMap::Filters => match evt {
                 Event::Key(KEY_FILTER_NONE) => Action::FilterNone,
                 Event::Key(KEY_FILTER_USER) => Action::FilterUser,
+                Event::Key(KEY_FILTER_ACTIVE) => Action::FilterActive,
                 _ => Action::None,
             },
             KeyMap::Main | KeyMap::FixedSearch => match evt {
@@ -261,6 +264,7 @@ pub fn menu() -> Vec<MenuEntry> {
         ),
         MenuEntry::with_key(KEY_FILTER_NONE, "None", KeyMapSet::In(KeyMap::Filters)),
         MenuEntry::with_key(KEY_FILTER_USER, "User", KeyMapSet::In(KeyMap::Filters)),
+        MenuEntry::with_key(KEY_FILTER_ACTIVE, "Active", KeyMapSet::In(KeyMap::Filters)),
     ]
 }
 
