@@ -95,6 +95,12 @@ are displayed as a flat list.
 
 Hitting 's' again reverts to the tree mode.
 
+## Filters
+
+- none: show userland and kernel processes
+- user: show only userland processes (default)
+- active: show userland processes that have consumed some CPU in the last 5 cycles.
+
 ## Miscellaneous
 
 The soft or hard limits are displayed by hitting 'l' but only for the selected process.

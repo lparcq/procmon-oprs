@@ -179,17 +179,6 @@ impl ProcessClassifier for AcceptUserLand {
     }
 }
 
-/// Accept all active processes.
-#[derive(Debug)]
-struct AcceptActiveProcesses(u16);
-
-impl ProcessClassifier for AcceptActiveProcesses {
-    fn accept(&self, pi: &ProcessInfo) -> bool {
-        let Self(inactivity) = self;
-        !pi.is_kernel() && pi.idleness() < *inactivity
-    }
-}
-
 /// A Process explorer that interactively displays the process tree.
 pub struct ForestProcessManager<'s> {
     sysconf: &'s SystemConf,
@@ -238,15 +227,17 @@ impl ProcessManager for ForestProcessManager<'_> {
         }
         let changed = match self.filter {
             ProcessFilter::None => self.forest.refresh(),
-            ProcessFilter::UserLand => self.forest.refresh_if(&AcceptUserLand::default()),
-            ProcessFilter::Active => self
-                .forest
-                .refresh_if(&AcceptActiveProcesses(self.inactivity)),
+            ProcessFilter::UserLand | ProcessFilter::Active => {
+                self.forest.refresh_if(&AcceptUserLand::default())
+            }
         }?;
+        let ignore_idleness = !matches!(self.filter, ProcessFilter::Active);
         for root_pid in self.forest.root_pids() {
             self.forest
                 .descendants(root_pid)?
-                .filter(|pinfo| !pinfo.hidden())
+                .filter(|pinfo| {
+                    !pinfo.hidden() && (ignore_idleness || pinfo.idleness() < self.inactivity)
+                })
                 .for_each(|pinfo| collector.collect(pinfo.name(), pinfo, self.sysconf));
         }
         Ok(changed)
