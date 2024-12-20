@@ -1005,7 +1005,8 @@ impl TerminalDevice<'_> {
         let metrics = details.metrics();
         let proc_info = &[
             ("Name", format!(" {} ", details.name())),
-            ("PID", format!("{}", pinfo.pid())),
+            ("Process ID", format!("{}", pinfo.pid())),
+            ("Parent ID", format!("{}", pinfo.parent_pid())),
             ("Owner", TerminalDevice::format_option(pinfo.uid())),
             ("Threads", format_metric!(metrics, thread_count)),
         ];
