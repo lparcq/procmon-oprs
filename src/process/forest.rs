@@ -109,6 +109,7 @@ pub struct ProcessInfo {
     #[getset(get_copy = "pub")]
     state: char,
     /// Process name.
+    #[getset(get = "pub")]
     name: String,
     /// Process instance.
     #[getset(get = "pub")]
@@ -158,10 +159,6 @@ impl ProcessInfo {
     pub fn with_pid(pid: pid_t) -> ProcessResult<Self> {
         let process = Process::new(pid).map_err(|_| ProcessError::UnknownProcess(pid))?;
         Self::new(process)
-    }
-
-    pub fn name(&self) -> &str {
-        self.name.as_str()
     }
 
     pub fn uid(&self) -> Option<u32> {

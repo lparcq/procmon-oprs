@@ -502,6 +502,28 @@ impl<'a> Collector<'a> {
         self.updater.push_system_time(system.total_time());
     }
 
+    /// Check if the process must appear before the last samples.
+    ///
+    /// Children of the same parent are sorted by PID.
+    fn is_before_previous(&self, pinfo: &ProcessInfo) -> bool {
+        self.pids
+            .last()
+            .map(|prev_pid| {
+                let prev_samples = self
+                    .samples
+                    .get(prev_pid)
+                    .expect("internal error: dangling PID");
+                prev_samples
+                    .parent_pid()
+                    .map(|prev_parent_pid| {
+                        // If it's the same parent, order by PID.
+                        prev_parent_pid == pinfo.parent_pid() && prev_samples.pid() > pinfo.pid()
+                    })
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false)
+    }
+
     /// Record metrics
     pub fn record(
         &mut self,
@@ -513,7 +535,14 @@ impl<'a> Collector<'a> {
         let pid = pinfo.map(|pi| pi.pid()).unwrap_or(0);
         let parent_pid = pinfo.map(|pi| pi.parent_pid());
 
-        self.pids.push(pid);
+        if pinfo
+            .map(|pinfo| self.is_before_previous(pinfo))
+            .unwrap_or(false)
+        {
+            self.pids.insert(self.pids.len() - 1, pid);
+        } else {
+            self.pids.push(pid);
+        }
         match self.samples.get_mut(&pid) {
             Some(samples) => {
                 samples.parent_pid = parent_pid;
