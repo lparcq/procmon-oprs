@@ -25,7 +25,7 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, Wrap},
     Frame, Terminal,
 };
-use std::{cmp::Ordering, collections::BTreeSet, fmt, io, time::Duration};
+use std::{cmp::Ordering, collections::BTreeSet, convert::TryFrom, fmt, io, time::Duration};
 use termion::{
     raw::{IntoRawMode, RawTerminal},
     screen::{AlternateScreen, IntoAlternateScreen},
@@ -68,9 +68,25 @@ pub enum Interaction {
     SwitchToHelp,
     SwitchBack,
     SelectPid(pid_t),
+    SelectParent,
     Narrow(Vec<pid_t>),
     Wide,
     Quit,
+}
+
+impl TryFrom<&Action> for Interaction {
+    type Error = ();
+
+    /// Convert actions that have a one to one correspondance.
+    fn try_from(value: &Action) -> Result<Self, Self::Error> {
+        match value {
+            Action::SelectParent => Ok(Interaction::SelectParent),
+            Action::SwitchToHelp => Ok(Interaction::SwitchToHelp),
+            Action::SwitchBack => Ok(Interaction::SwitchBack),
+            Action::Quit => Ok(Interaction::Quit),
+            _ => Err(()),
+        }
+    }
 }
 
 /// Status of a process.
@@ -580,6 +596,7 @@ impl TerminalDevice<'_> {
         match action {
             Action::None
             | Action::Quit
+            | Action::SelectParent
             | Action::SwitchToHelp
             | Action::SwitchToProcess
             | Action::ChangeScope => (),
@@ -680,7 +697,7 @@ impl TerminalDevice<'_> {
 
     /// Convert the action to a possible interaction.
     fn interaction(&mut self, action: Action) -> Interaction {
-        match action {
+        Interaction::try_from(&action).ok().unwrap_or(match action {
             Action::ChangeScope if !self.bookmarks.marks().is_empty() => {
                 let pids = self
                     .bookmarks
@@ -695,15 +712,12 @@ impl TerminalDevice<'_> {
             Action::FilterNone | Action::FilterUser | Action::FilterActive => {
                 Interaction::Filter(self.filter)
             }
-            Action::SwitchToHelp => Interaction::SwitchToHelp,
             Action::SwitchToProcess => match self.bookmarks.selected() {
                 Some(selected) => Interaction::SelectPid(selected.pid),
                 None => Interaction::None,
             },
-            Action::SwitchBack => Interaction::SwitchBack,
-            Action::Quit => Interaction::Quit,
             _ => Interaction::None,
-        }
+        })
     }
 
     /// Make the row of headers.
@@ -1028,14 +1042,16 @@ impl TerminalDevice<'_> {
 
         self.terminal.draw(|frame| {
             const BORDERS_SIZE: u16 = 2;
-            //const MENU_HEIGHT: u16 = 1;
+            const MENU_HEIGHT: u16 = 1;
             let screen = frame.area();
             let inner_width = screen.width - BORDERS_SIZE;
             let block1_height = (cmdline.len() as u16).div_ceil(inner_width) + BORDERS_SIZE;
             let block2_height =
                 std::cmp::max(proc_info.len(), file_info.len()) as u16 + BORDERS_SIZE;
             let block3_height = std::cmp::max(cpu_info.len(), mem_info.len()) as u16 + BORDERS_SIZE;
-
+            let fill = screen
+                .height
+                .saturating_sub(MENU_HEIGHT + block1_height + block2_height + block3_height);
             let rects = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints(
@@ -1043,7 +1059,8 @@ impl TerminalDevice<'_> {
                         Constraint::Length(block1_height),
                         Constraint::Length(block2_height),
                         Constraint::Length(block3_height),
-                        Constraint::Min(0),
+                        Constraint::Length(fill),
+                        Constraint::Min(MENU_HEIGHT),
                     ]
                     .as_ref(),
                 )
@@ -1065,7 +1082,7 @@ impl TerminalDevice<'_> {
             let block3_rects = Layout::horizontal(two_cols_constraint).split(rects[2]);
             TerminalDevice::render_fields(frame, block3_rects[0], "Time", cpu_info);
             TerminalDevice::render_fields(frame, block3_rects[1], "Memory", mem_info);
-            frame.render_widget(Paragraph::new(menu), rects[3]);
+            frame.render_widget(Paragraph::new(menu), rects[4]);
         })?;
         self.pane_offset = pane_offset;
         self.vertical_scroll = 1; // scrolling by block not by line.

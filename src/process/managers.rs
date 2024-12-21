@@ -95,12 +95,32 @@ impl ProcessDetails<'_> {
         })
     }
 
+    /// Details of the parent process.
+    pub fn parent(&self) -> ProcessResult<Self> {
+        let parent_pid = self.process.parent_pid();
+        let process = ProcessInfo::with_pid(parent_pid)?;
+        let name = process.name().to_string();
+        let collector = Collector::new(Cow::Owned(
+            self.collector
+                .metrics()
+                .cloned()
+                .collect::<Vec<FormattedMetric>>(),
+        ));
+        Ok(Self {
+            name,
+            process,
+            collector,
+        })
+    }
+
+    /// Refresh the metrics.
     pub fn refresh(&mut self, sysconf: &SystemConf) -> ProcessResult<()> {
         self.process.refresh()?;
         self.collector.collect(&self.name, &self.process, sysconf);
         Ok(())
     }
 
+    /// Process metrics.
     pub fn metrics(&self) -> Option<ProcessMetrics> {
         self.collector.lines().take(1).next().map(|s| {
             let samples = s.samples_as_slice();

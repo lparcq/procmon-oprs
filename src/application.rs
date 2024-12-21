@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use libc::pid_t;
 use log::info;
 use std::{
     borrow::Cow,
@@ -138,6 +139,34 @@ impl<'s> Application<'s> {
         }
     }
 
+    /// Get process details.
+    fn get_details(&self, pid: pid_t, sysconf: &'_ SystemConf) -> Option<ProcessDetails> {
+        match ProcessDetails::new(pid, self.human) {
+            Ok(mut details) => details.refresh(sysconf).ok().map(|_| details),
+            Err(_) => {
+                log::error!("{pid}: details cannot be selected");
+                None
+            }
+        }
+    }
+
+    /// Get parent process details.
+    fn get_parent_details<'a>(
+        details: Option<ProcessDetails<'a>>,
+        sysconf: &'_ SystemConf,
+    ) -> Option<ProcessDetails<'a>> {
+        details.and_then(|details| match details.parent() {
+            Ok(mut details) => details.refresh(sysconf).ok().map(|_| details),
+            Err(_) => {
+                log::error!(
+                    "{}: details of parent cannot be selected",
+                    details.process().pid()
+                );
+                Some(details)
+            }
+        })
+    }
+
     fn run_loop(
         &self,
         mut device: Box<dyn DisplayDevice>,
@@ -227,18 +256,15 @@ impl<'s> Application<'s> {
                             (_, _) => pane_kind = PaneKind::Main,
                         },
                         Interaction::SelectPid(pid) => {
-                            details = match ProcessDetails::new(pid, self.human) {
-                                Ok(mut details) => match details.refresh(sysconf) {
-                                    Ok(()) => {
-                                        pane_kind = PaneKind::Process;
-                                        Some(details)
-                                    }
-                                    Err(_) => None,
-                                },
-                                Err(_) => {
-                                    log::error!("{pid}: details cannot be selected");
-                                    None
-                                }
+                            details = self.get_details(pid, sysconf);
+                            if details.is_some() {
+                                pane_kind = PaneKind::Process;
+                            }
+                        }
+                        Interaction::SelectParent => {
+                            details = Application::get_parent_details(details, sysconf);
+                            if details.is_some() {
+                                pane_kind = PaneKind::Process;
                             }
                         }
                         Interaction::Narrow(pids) => {

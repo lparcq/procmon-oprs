@@ -28,32 +28,33 @@ use crate::{
 use super::types::BoundedFifo;
 
 /// Standard keys
-const KEY_FASTER_CHAR: char = '+';
+const KEY_ENTER: Key = Key::Char('\n');
+const KEY_ESCAPE: Key = Key::Esc;
 const KEY_FASTER: Key = Key::Char(KEY_FASTER_CHAR);
+const KEY_FASTER_CHAR: char = '+';
+const KEY_FILTERS: Key = Key::Char('f');
+const KEY_FILTER_ACTIVE: Key = Key::Char('a');
 const KEY_FILTER_NONE: Key = Key::Char('n');
 const KEY_FILTER_USER: Key = Key::Char('u');
-const KEY_FILTER_ACTIVE: Key = Key::Char('a');
 const KEY_GOTO_TBL_BOTTOM: Key = Key::CtrlEnd;
 const KEY_GOTO_TBL_LEFT: Key = Key::Home;
 const KEY_GOTO_TBL_RIGHT: Key = Key::End;
 const KEY_GOTO_TBL_TOP: Key = Key::CtrlHome;
 const KEY_HELP: Key = Key::Char('?');
 const KEY_LIMITS: Key = Key::Char('l');
-const KEY_MARK_TOGGLE: Key = Key::Char(' ');
 const KEY_MARK_CLEAR: Key = Key::Ctrl('c');
-const KEY_FILTERS: Key = Key::Char('f');
+const KEY_MARK_TOGGLE: Key = Key::Char(' ');
+const KEY_QUIT: Key = Key::Char('q');
 const KEY_SCOPE: Key = Key::Char('s');
 const KEY_SEARCH: Key = Key::Char('/');
-const KEY_SELECT_PREVIOUS_CHAR: char = 'N';
-const KEY_SELECT_PREVIOUS: Key = Key::Char(KEY_SELECT_PREVIOUS_CHAR);
-const KEY_SELECT_NEXT_CHAR: char = 'n';
-const KEY_SELECT_NEXT: Key = Key::Char(KEY_SELECT_NEXT_CHAR);
 const KEY_SEARCH_CANCEL: Key = Key::Ctrl('c');
-const KEY_ENTER: Key = Key::Char('\n');
-const KEY_SLOWER_CHAR: char = '-';
+const KEY_SELECT_NEXT: Key = Key::Char(KEY_SELECT_NEXT_CHAR);
+const KEY_SELECT_NEXT_CHAR: char = 'n';
+const KEY_SELECT_PARENT: Key = Key::Char('p');
+const KEY_SELECT_PREVIOUS: Key = Key::Char(KEY_SELECT_PREVIOUS_CHAR);
+const KEY_SELECT_PREVIOUS_CHAR: char = 'N';
 const KEY_SLOWER: Key = Key::Char(KEY_SLOWER_CHAR);
-const KEY_ESCAPE: Key = Key::Esc;
-const KEY_QUIT: Key = Key::Char('q');
+const KEY_SLOWER_CHAR: char = '-';
 
 macro_rules! try_return {
     ($option:expr) => {
@@ -97,6 +98,7 @@ pub enum Action {
     SearchPop,
     SelectNext,
     SelectPrevious,
+    SelectParent,
     SearchPush(char),
     ToggleLimits,
 }
@@ -133,6 +135,7 @@ impl KeyMap {
 
             KeyMap::Help | KeyMap::Details => match evt {
                 Event::Key(KEY_QUIT) | Event::Key(KEY_ESCAPE) => Action::SwitchBack,
+                Event::Key(KEY_SELECT_PARENT) => Action::SelectParent,
                 Event::Key(Key::PageDown) => Action::ScrollPageDown,
                 Event::Key(Key::PageUp) => Action::ScrollPageUp,
                 _ => Action::None,
@@ -173,17 +176,17 @@ impl KeyMap {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum KeyMapSet {
-    In(KeyMap),
-    NotIn(KeyMap),
+    OnlyIn(KeyMap),
+    ExceptIn(KeyMap),
 }
 
 impl KeyMapSet {
     pub fn contains(&self, keymap: KeyMap) -> bool {
         match self {
-            Self::In(valid) if keymap == *valid => true,
-            Self::NotIn(invalid) if keymap != *invalid => true,
+            Self::OnlyIn(valid) if keymap == *valid => true,
+            Self::ExceptIn(invalid) if keymap != *invalid => true,
             _ => false,
         }
     }
@@ -247,24 +250,33 @@ impl MenuEntry {
 /// Return the menu
 pub fn menu() -> Vec<MenuEntry> {
     vec![
-        MenuEntry::with_key(KEY_QUIT, "Quit", KeyMapSet::NotIn(KeyMap::Filters)),
-        MenuEntry::with_key(KEY_HELP, "Help", KeyMapSet::In(KeyMap::Main)),
+        MenuEntry::with_key(KEY_QUIT, "Quit", KeyMapSet::ExceptIn(KeyMap::Filters)),
+        MenuEntry::with_key(KEY_HELP, "Help", KeyMapSet::OnlyIn(KeyMap::Main)),
         MenuEntry::new(
             format!("{KEY_SELECT_NEXT_CHAR}/{KEY_SELECT_PREVIOUS_CHAR}",),
             "Next/Prev",
-            KeyMapSet::In(KeyMap::Main),
+            KeyMapSet::OnlyIn(KeyMap::Main),
         ),
-        MenuEntry::with_key(KEY_SEARCH, "Search", KeyMapSet::In(KeyMap::Main)),
-        MenuEntry::with_key(KEY_LIMITS, "Limits", KeyMapSet::In(KeyMap::Main)),
-        MenuEntry::with_key(KEY_FILTERS, "Filters", KeyMapSet::In(KeyMap::Main)),
+        MenuEntry::with_key(KEY_SEARCH, "Search", KeyMapSet::OnlyIn(KeyMap::Main)),
+        MenuEntry::with_key(KEY_LIMITS, "Limits", KeyMapSet::OnlyIn(KeyMap::Main)),
+        MenuEntry::with_key(KEY_FILTERS, "Filters", KeyMapSet::OnlyIn(KeyMap::Main)),
+        MenuEntry::with_key(
+            KEY_SELECT_PARENT,
+            "Parent",
+            KeyMapSet::OnlyIn(KeyMap::Details),
+        ),
         MenuEntry::new(
             format!("{KEY_FASTER_CHAR}/{KEY_SLOWER_CHAR}"),
             "Speed",
-            KeyMapSet::In(KeyMap::Main),
+            KeyMapSet::OnlyIn(KeyMap::Main),
         ),
-        MenuEntry::with_key(KEY_FILTER_NONE, "None", KeyMapSet::In(KeyMap::Filters)),
-        MenuEntry::with_key(KEY_FILTER_USER, "User", KeyMapSet::In(KeyMap::Filters)),
-        MenuEntry::with_key(KEY_FILTER_ACTIVE, "Active", KeyMapSet::In(KeyMap::Filters)),
+        MenuEntry::with_key(KEY_FILTER_NONE, "None", KeyMapSet::OnlyIn(KeyMap::Filters)),
+        MenuEntry::with_key(KEY_FILTER_USER, "User", KeyMapSet::OnlyIn(KeyMap::Filters)),
+        MenuEntry::with_key(
+            KEY_FILTER_ACTIVE,
+            "Active",
+            KeyMapSet::OnlyIn(KeyMap::Filters),
+        ),
     ]
 }
 
