@@ -26,6 +26,7 @@ mod targets;
 mod mocks;
 
 pub mod format;
+pub mod matchers;
 pub mod parsers;
 
 pub(crate) use self::agg::{Aggregation, AggregationSet};

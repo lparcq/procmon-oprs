@@ -21,6 +21,7 @@ chrono = "0.4"
 console = "0"
 ctrlc = { version = "3.0", features = ["termination"] }
 getset = "0.1"
+globset = "0.4"
 indextree = "4"
 itertools = "0.13"
 libc = "0.2"

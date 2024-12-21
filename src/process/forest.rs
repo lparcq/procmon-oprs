@@ -518,6 +518,24 @@ impl Forest {
         self.iter_roots().map(|p| p.pid()).collect::<Vec<pid_t>>()
     }
 
+    /// Iterate on all processes and apply the conditional function
+    pub fn filter_collect<V, F>(&self, func: F) -> Vec<V>
+    where
+        F: Fn(&ProcessInfo) -> Option<V>,
+    {
+        let mut result = Vec::new();
+        self.iter_roots().for_each(|p| {
+            if let Ok(descendants) = self.descendants(p.pid()) {
+                descendants.for_each(|p| {
+                    if let Some(v) = func(p) {
+                        result.push(v)
+                    }
+                })
+            }
+        });
+        result
+    }
+
     /// Refresh existing processes.
     ///
     /// Refresh the stats and hide all processes.

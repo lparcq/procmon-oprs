@@ -42,7 +42,7 @@ use cfg::{
     BuiltinTheme, DisplayMode, ExportType, LoggingLevel, LoggingSettings, MetricFormat,
     LOG_FILE_NAME,
 };
-use process::{parsers::parse_size, TargetId};
+use process::{matchers, parsers::parse_size, TargetId};
 
 const APP_NAME: &str = "oprs";
 
@@ -152,6 +152,13 @@ struct Opt {
 
     #[argh(option, short = 'n', description = "process name")]
     name: Vec<String>,
+
+    #[argh(
+        option,
+        short = 'g',
+        description = "process by pattern matching (ex: syst*)"
+    )]
+    glob: Vec<String>,
 
     #[argh(positional, description = "metric to monitor")]
     metric: Vec<String>,
@@ -289,6 +296,11 @@ fn start(opt: Opt) -> anyhow::Result<()> {
     }
     for name in opt.name {
         target_ids.push(TargetId::ProcessName(name));
+    }
+    if !opt.glob.is_empty() {
+        matchers::glob(&opt.glob)?
+            .iter()
+            .for_each(|name| target_ids.push(TargetId::ProcessName(name.to_string())));
     }
     let metric_names = if opt.metric.is_empty() {
         vec!["time:cpu-raw+ratio", "mem:vm", "time:elapsed"]
