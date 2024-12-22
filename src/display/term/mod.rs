@@ -595,12 +595,15 @@ impl TerminalDevice<'_> {
         const MIN_TIMEOUT_MSECS: u128 = 1;
         match action {
             Action::None
-            | Action::Quit
             | Action::SelectParent
+            | Action::Quit
             | Action::SwitchToHelp
             | Action::SwitchToProcess
             | Action::ChangeScope => (),
-            Action::SwitchBack => self.pane_offset = 0,
+            Action::SwitchBack => {
+                self.set_keymap(KeyMap::Main);
+                self.pane_offset = 0;
+            }
             Action::Filters => self.set_keymap(KeyMap::Filters),
             Action::FilterNone => {
                 self.filter = ProcessFilter::None;
@@ -677,9 +680,13 @@ impl TerminalDevice<'_> {
             Action::GotoTableBottom => void!(self.bookmarks.set_action(BookmarkAction::LastLine)),
             Action::GotoTableLeft => self.table_offset.horizontal_home(),
             Action::GotoTableRight => self.table_offset.horizontal_end(),
-            Action::SearchEnter => self.bookmarks.incremental_search(),
+            Action::SearchEnter => {
+                self.set_keymap(KeyMap::IncrementalSearch);
+                self.bookmarks.incremental_search();
+            }
             Action::SearchExit => {
                 self.terminal.hide_cursor()?;
+                self.set_keymap(KeyMap::Main);
                 self.bookmarks.fixed_search()
             }
             Action::SearchPush(c) => self.bookmarks.edit_search(SearchEdit::Push(c)),
@@ -1138,24 +1145,7 @@ impl DisplayDevice for TerminalDevice<'_> {
     /// Render the current pane.
     fn render(&mut self, pane: Pane, _redraw: bool) -> anyhow::Result<()> {
         match pane {
-            Pane::Main(collector) => {
-                if !matches!(
-                    self.keymap,
-                    KeyMap::Main
-                        | KeyMap::Filters
-                        | KeyMap::IncrementalSearch
-                        | KeyMap::FixedSearch
-                ) {
-                    self.set_keymap(if self.bookmarks.is_incremental_search() {
-                        KeyMap::IncrementalSearch
-                    } else if self.bookmarks.is_search() {
-                        KeyMap::FixedSearch
-                    } else {
-                        KeyMap::Main
-                    });
-                }
-                self.render_tree(collector)
-            }
+            Pane::Main(collector) => self.render_tree(collector),
             Pane::Process(details) => {
                 self.set_keymap(KeyMap::Details);
                 self.render_details(details)

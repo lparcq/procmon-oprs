@@ -112,8 +112,6 @@ pub enum KeyMap {
     Help,
     #[strum(serialize = "filters")]
     Filters,
-    #[strum(serialize = "fixed search")]
-    FixedSearch,
     #[strum(serialize = "incremental search")]
     IncrementalSearch,
     #[strum(serialize = "main")]
@@ -146,7 +144,7 @@ impl KeyMap {
                 Event::Key(KEY_FILTER_ACTIVE) => Action::FilterActive,
                 _ => Action::None,
             },
-            KeyMap::Main | KeyMap::FixedSearch => match evt {
+            KeyMap::Main => match evt {
                 Event::Key(KEY_FASTER) => Action::DivideTimeout(2),
                 Event::Key(KEY_GOTO_TBL_BOTTOM) => Action::GotoTableBottom,
                 Event::Key(KEY_GOTO_TBL_LEFT) => Action::GotoTableLeft,
@@ -535,11 +533,6 @@ impl Bookmarks {
     /// Return the search pattern if any.
     pub fn search_pattern(&self) -> Option<String> {
         self.search.as_ref().map(|s| s.pattern())
-    }
-
-    /// Whether there is an ongoing search.
-    pub fn is_search(&self) -> bool {
-        self.search.is_some()
     }
 
     /// Whether there is an ongoing incremental search.
