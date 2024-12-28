@@ -1145,7 +1145,23 @@ impl DisplayDevice for TerminalDevice<'_> {
     /// Render the current pane.
     fn render(&mut self, pane: Pane, _redraw: bool) -> anyhow::Result<()> {
         match pane {
-            Pane::Main(collector) => self.render_tree(collector),
+            Pane::Main(collector) => {
+                let is_incremental_search = self.bookmarks.is_incremental_search();
+                match self.keymap {
+                    KeyMap::IncrementalSearch if is_incremental_search => (),
+                    KeyMap::Main if !is_incremental_search => (),
+                    KeyMap::Filters => (),
+                    _ if is_incremental_search => {
+                        log::error!("{}: wrong keymap for incremental search", self.keymap);
+                        self.set_keymap(KeyMap::IncrementalSearch);
+                    }
+                    _ => {
+                        log::error!("{}: wrong keymap", self.keymap);
+                        self.set_keymap(KeyMap::Main);
+                    }
+                }
+                self.render_tree(collector)
+            }
             Pane::Process(details) => {
                 self.set_keymap(KeyMap::Details);
                 self.render_details(details)
