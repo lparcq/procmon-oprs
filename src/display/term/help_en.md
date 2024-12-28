@@ -22,7 +22,7 @@
 
 The space bar toggles the mark on:
 1. the matched lines if there is a search,
-2. on the line under the cursor otherwise.
+2. the line under the cursor otherwise.
 
 When no search is enabled, move to the next and previous match with 'n' and 'N'.
 
