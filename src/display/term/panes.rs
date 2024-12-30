@@ -111,29 +111,42 @@ fn navigation_arrows(shifted: Area<bool>, overflows: Area<bool>) -> Text<'static
     .alignment(Alignment::Center)
 }
 
-/// Apply style to rows
-///
-/// The table is truncated to keep only `ncols` column.
-fn style_rows<'a>(
-    mut rows: Vec<Vec<Cell<'a>>>,
-    ncols: usize,
-    even_row_style: Style,
-    odd_row_style: Style,
-) -> Vec<Row<'a>> {
-    rows.drain(..)
-        .enumerate()
-        .map(|(i, mut r)| {
-            let style = if i % 2 != 0 {
-                even_row_style
-            } else {
-                odd_row_style
-            };
-            if r.len() < ncols {
-                panic!("rows must have {} columns instead of {}", ncols, r.len());
-            }
-            Row::new(r.drain(0..ncols)).style(style)
-        })
-        .collect::<Vec<Row>>()
+/// Table style
+#[derive(Debug)]
+pub(crate) struct TableStyle {
+    column_spacing: u16,
+    even_row: Style,
+    odd_row: Style,
+}
+
+impl TableStyle {
+    pub(crate) fn new(column_spacing: u16, even_row: Style, odd_row: Style) -> Self {
+        Self {
+            column_spacing,
+            even_row,
+            odd_row,
+        }
+    }
+
+    /// Apply style to rows
+    ///
+    /// The table is truncated to keep only `ncols` column.
+    fn apply<'a>(&self, mut rows: Vec<Vec<Cell<'a>>>, ncols: usize) -> Vec<Row<'a>> {
+        rows.drain(..)
+            .enumerate()
+            .map(|(i, mut r)| {
+                let style = if i % 2 != 0 {
+                    self.even_row
+                } else {
+                    self.odd_row
+                };
+                if r.len() < ncols {
+                    panic!("rows must have {} columns instead of {}", ncols, r.len());
+                }
+                Row::new(r.drain(0..ncols)).style(style)
+            })
+            .collect::<Vec<Row>>()
+    }
 }
 
 /// Widget that adapt it's layout to the available space.
@@ -218,6 +231,7 @@ impl Widget for OneLineWidget<'_> {
                         .title_alignment(Alignment::Left)
                         .borders(Borders::ALL),
                 )
+                .wrap(Wrap { trim: false })
                 .render(area, buf),
             None => self.text.render(area, buf),
         }
@@ -236,7 +250,7 @@ pub(crate) struct MarkdownWidget<'l> {
 impl MarkdownWidget<'_> {
     pub(crate) fn new(title: &'static str, text: &'static str, offset: u16) -> Self {
         let text = format_text(text);
-        let text_height = text.iter().count() as u16;
+        let text_height = text.len() as u16;
         Self {
             title,
             text,
@@ -291,9 +305,7 @@ pub(crate) struct BigTableWidget<'a, 'b, 'c> {
     widths: &'c [u16],
     offset: UnboundedArea,
     constraints: Vec<Constraint>,
-    spacing: u16,
-    even_style: Style,
-    odd_style: Style,
+    style: TableStyle,
 }
 
 impl<'a, 'b, 'c> BigTableWidget<'a, 'b, 'c> {
@@ -303,9 +315,7 @@ impl<'a, 'b, 'c> BigTableWidget<'a, 'b, 'c> {
         rows: Vec<Vec<Cell<'b>>>,
         widths: &'c [u16],
         offset: UnboundedArea,
-        spacing: u16,
-        even_style: Style,
-        odd_style: Style,
+        style: TableStyle,
     ) -> Self {
         Self {
             headers,
@@ -314,9 +324,7 @@ impl<'a, 'b, 'c> BigTableWidget<'a, 'b, 'c> {
             widths,
             offset,
             constraints: Vec::new(),
-            spacing,
-            even_style,
-            odd_style,
+            style,
         }
     }
 
@@ -328,7 +336,7 @@ impl<'a, 'b, 'c> BigTableWidget<'a, 'b, 'c> {
         let outter_area = Size::new(area.width, area.height);
         let inner_area = Size::new(outter_area.width - borders, outter_area.height - borders);
         let (_table_width, constraints, hoverflow) =
-            width_constraints(inner_area.width, self.widths, self.spacing);
+            width_constraints(inner_area.width, self.widths, self.style.column_spacing);
         self.constraints = constraints;
         let table_height = self.headers_height + self.rows.len() as u16;
         let overflow = Area::new(hoverflow, table_height > inner_area.height);
@@ -354,16 +362,11 @@ impl Widget for BigTableWidget<'_, '_, '_> {
     where
         Self: Sized,
     {
-        let rows = style_rows(
-            self.rows,
-            self.widths.len(),
-            self.even_style,
-            self.odd_style,
-        );
+        let rows = self.style.apply(self.rows, self.widths.len());
         let table = Table::new(rows, self.constraints)
             .block(Block::default().borders(Borders::ALL))
             .header(Row::new(self.headers).height(self.headers_height))
-            .column_spacing(self.spacing);
+            .column_spacing(self.style.column_spacing);
         Widget::render(table, area, buf);
     }
 }
@@ -561,7 +564,7 @@ impl Pane for GridPane {
                 body_height = 0;
             }
             GridLine::Fill => rects.push(None),
-            GridLine::Line(height) if *height < bottom_height => {
+            GridLine::Line(height) if *height <= bottom_height => {
                 rects.push(Some(Rect::new(x, y, width, *height)));
                 y += *height;
                 bottom_height -= height;
@@ -603,7 +606,7 @@ mod test {
     use rstest::*;
     use std::cmp;
 
-    use super::{width_constraints, Pane, ReactiveWidget, SingleScrollablePane};
+    use super::{width_constraints, GridPane, Pane, ReactiveWidget, SingleScrollablePane};
 
     #[test]
     fn test_width_constraints_underflow() {
@@ -694,7 +697,7 @@ mod test {
         }
     }
 
-    /// SingleScrollablePane where the screen is large enough for some widgets.
+    /// SingleScrollablePane
     ///
     /// Case 1:
     /// 0 main
@@ -720,7 +723,7 @@ mod test {
                      Some(Rect::new(0, 9, 15, 1)) ])]
     #[case(2, vec![None, Some(Rect::new(0, 0, 15, 1)), Some(Rect::new(0, 1, 15, 1))])]
     #[case(1, vec![None, None, Some(Rect::new(0, 0, 15, 1))])]
-    fn text_single_scrollable_pane(#[case] height: u16, #[case] expected: Vec<Option<Rect>>) {
+    fn test_single_scrollable_pane(#[case] height: u16, #[case] expected: Vec<Option<Rect>>) {
         let screen = Rect::new(0, 0, 15, height);
         let w1 = MockWidget(2);
         let w2 = MockWidget(1);
@@ -729,6 +732,47 @@ mod test {
             .with(&w2)
             .build();
         assert_eq!(3, rects.len());
+        assert_eq!(expected, rects);
+    }
+
+    /// GridPane
+    ///
+    /// Case 1: large height with a gap between the last widget and the bottom line.
+    /// Case 2: no gap between the last widget and the bottom line.
+    /// Case 3: last row of widgets is truncated.
+    /// Case 4: last row of widgets is invisible.
+    #[rstest]
+    #[case(10, vec![ Some(Rect::new(0, 0, 15, 2)),
+                     Some(Rect::new(0, 2, 8, 3)),
+                     Some(Rect::new(8, 2, 7, 3)),
+                     Some(Rect::new(0, 5, 15, 4)),
+                     Some(Rect::new(0, 9, 15, 1)) ])]
+    #[case(6, vec![ Some(Rect::new(0, 0, 15, 2)),
+                    Some(Rect::new(0, 2, 8, 3)),
+                    Some(Rect::new(8, 2, 7, 3)),
+                    None,
+                    Some(Rect::new(0, 5, 15, 1)) ])]
+    #[case(5, vec![ Some(Rect::new(0, 0, 15, 2)),
+                    Some(Rect::new(0, 2, 8, 2)),
+                    Some(Rect::new(8, 2, 7, 2)),
+                    None,
+                    Some(Rect::new(0, 4, 15, 1)) ])]
+    #[case(3, vec![ Some(Rect::new(0, 0, 15, 2)),
+                    None,
+                    None,
+                    None,
+                    Some(Rect::new(0, 2, 15, 1)) ])]
+    fn test_grid_pane(#[case] height: u16, #[case] expected: Vec<Option<Rect>>) {
+        let screen = Rect::new(0, 0, 15, height);
+        let w1 = MockWidget(2);
+        let w21 = MockWidget(3);
+        let w22 = MockWidget(1);
+        let w3 = MockWidget(1);
+        let rects = GridPane::new(screen)
+            .with_row(&[&w1])
+            .with_row(&[&w21, &w22])
+            .with_line(&w3)
+            .build();
         assert_eq!(expected, rects);
     }
 }

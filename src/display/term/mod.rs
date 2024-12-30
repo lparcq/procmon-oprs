@@ -52,7 +52,7 @@ mod types;
 use input::{menu, Action, BookmarkAction, Bookmarks, KeyMap, MenuEntry, SearchEdit};
 use panes::{
     BigTableWidget, FieldsWidget, GridPane, MarkdownWidget, OneLineWidget, OptionalRenderer, Pane,
-    ReactiveWidget, SingleScrollablePane,
+    ReactiveWidget, SingleScrollablePane, TableStyle,
 };
 use types::{Area, MaxLength, UnboundedArea};
 
@@ -376,9 +376,7 @@ impl TerminalDevice<'_> {
             rows,
             col_widths,
             self.table_offset,
-            column_spacing,
-            even_row_style,
-            odd_row_style,
+            TableStyle::new(column_spacing, even_row_style, odd_row_style),
         );
         let status_bar =
             OneLineWidget::new(Text::from(self.status_bar()), self.styles.status, None);
