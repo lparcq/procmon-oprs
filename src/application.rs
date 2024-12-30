@@ -28,7 +28,7 @@ use crate::{
     clock::{DriftMonitor, Timer},
     console::BuiltinTheme,
     display::{
-        DisplayDevice, Interaction, NullDevice, Pane, PaneKind, PauseStatus, TerminalDevice,
+        DisplayDevice, Interaction, NullDevice, PaneData, PaneKind, PauseStatus, TerminalDevice,
         TextDevice,
     },
     export::{CsvExporter, Exporter, RrdExporter},
@@ -225,9 +225,9 @@ impl<'s> Application<'s> {
             };
             device.render(
                 match pane_kind {
-                    PaneKind::Main => Pane::Main(&collector),
-                    PaneKind::Process => Pane::Process(details.as_ref().unwrap()),
-                    PaneKind::Help => Pane::Help,
+                    PaneKind::Main => PaneData::Main(&collector),
+                    PaneKind::Process => PaneData::Process(details.as_ref().unwrap()),
+                    PaneKind::Help => PaneData::Help,
                 },
                 targets_updated,
             )?;

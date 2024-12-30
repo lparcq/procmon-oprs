@@ -259,6 +259,42 @@ impl<T> BoundedFifo<T> {
     }
 }
 
+/// Compute the maximum length of strings
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct MaxLength(u16);
+
+impl MaxLength {
+    pub(crate) fn with_lines<'a, I>(items: I) -> Self
+    where
+        I: IntoIterator<Item = &'a str>,
+    {
+        let mut ml = MaxLength(0);
+        for item in items.into_iter() {
+            ml.check(item);
+        }
+        ml
+    }
+
+    /// The length:
+    pub(crate) fn len(&self) -> u16 {
+        let Self(length) = self;
+        *length
+    }
+
+    /// Count the maximun length of a string
+    pub(crate) fn check(&mut self, s: &str) {
+        self.set_min(s.len());
+    }
+
+    /// Ensure a minimum length
+    pub(crate) fn set_min(&mut self, l: usize) {
+        let l = l as u16;
+        if l > self.0 {
+            self.0 = l
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
 

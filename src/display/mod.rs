@@ -40,7 +40,7 @@ pub enum PaneKind {
 }
 
 /// Pane to display.
-pub enum Pane<'a, 'p> {
+pub enum PaneData<'a, 'p> {
     /// The main pane to display process metrics.
     Main(&'p Collector<'a>),
     /// The pane to display a single process.
@@ -60,7 +60,7 @@ pub trait DisplayDevice {
     ///
     /// If `redraw` is true, it is a hint to tell to the device to redraw
     /// entirely the output.
-    fn render(&mut self, pane: Pane, redraw: bool) -> anyhow::Result<()>;
+    fn render(&mut self, pane: PaneData, redraw: bool) -> anyhow::Result<()>;
 
     /// Pause for the given duration.
     fn pause(&mut self, _: &mut Timer) -> anyhow::Result<PauseStatus> {

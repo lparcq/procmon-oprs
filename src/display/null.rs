@@ -16,7 +16,7 @@
 
 use crate::process::FormattedMetric;
 
-use super::{DisplayDevice, Pane, SliceIter};
+use super::{DisplayDevice, PaneData, SliceIter};
 
 /// Null device
 pub struct NullDevice {}
@@ -36,7 +36,7 @@ impl DisplayDevice for NullDevice {
         Ok(())
     }
 
-    fn render(&mut self, _pane: Pane, _redraw: bool) -> anyhow::Result<()> {
+    fn render(&mut self, _pane: PaneData, _redraw: bool) -> anyhow::Result<()> {
         Ok(())
     }
 }

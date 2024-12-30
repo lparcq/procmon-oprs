@@ -19,11 +19,12 @@ use itertools::izip;
 use libc::pid_t;
 use ratatui::{
     backend::TermionBackend,
-    layout::{Alignment, Constraint, Direction, Layout, Position, Rect, Size},
+    layout::Alignment,
+    prelude::*,
     style::{Color, Modifier, Style},
-    text::{Line, Span, Text},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table, Wrap},
-    Frame, Terminal,
+    text::{Line, Text},
+    widgets::{Cell, Clear},
+    Terminal,
 };
 use std::{cmp::Ordering, collections::BTreeSet, convert::TryFrom, fmt, io, time::Duration};
 use termion::{
@@ -39,17 +40,21 @@ use crate::{
         ProcessFilter, ProcessIdentity, ProcessSamples,
     },
 };
-use num_traits::Zero;
 
-use super::{DisplayDevice, Pane, PaneKind, PauseStatus, SliceIter};
+use super::{DisplayDevice, PaneData, PaneKind, PauseStatus, SliceIter};
 
 mod input;
+mod panes;
 
 #[macro_use]
 mod types;
 
 use input::{menu, Action, BookmarkAction, Bookmarks, KeyMap, MenuEntry, SearchEdit};
-use types::{Area, UnboundedArea};
+use panes::{
+    BigTableWidget, FieldsWidget, GridPane, MarkdownWidget, OneLineWidget, OptionalRenderer, Pane,
+    ReactiveWidget, SingleScrollablePane,
+};
+use types::{Area, MaxLength, UnboundedArea};
 
 /// Right aligned cell.
 macro_rules! rcell {
@@ -242,165 +247,6 @@ impl PidStack {
     }
 }
 
-/// Navigation arrows dependending on table overflows
-///
-/// # Arguments
-///
-/// * `shifted` - Area boolean saying if the first line or first column are hidden.
-/// * `overflow` - Area boolean saying if the end is visible.
-fn navigation_arrows(shifted: Area<bool>, overflows: Area<bool>) -> Text<'static> {
-    let up_arrow = if shifted.vertical { " " } else { "⬆" };
-    let down_arrow = if overflows.vertical { "⬇" } else { " " };
-    let left_arrow = if shifted.horizontal { " " } else { "⬅" };
-    let right_arrow = if overflows.horizontal { "➡" } else { " " };
-    Text::from(vec![
-        Line::from(up_arrow),
-        Line::from(format!("{left_arrow} {down_arrow} {right_arrow}")),
-    ])
-    .alignment(Alignment::Center)
-}
-
-/// Apply style to rows
-///
-/// The table is truncated to keep only `ncols` column.
-fn style_rows<'a>(
-    rows: &mut Vec<Vec<Cell<'a>>>,
-    ncols: usize,
-    even_row_style: Style,
-    odd_row_style: Style,
-) -> Vec<Row<'a>> {
-    rows.drain(..)
-        .enumerate()
-        .map(|(i, mut r)| {
-            let style = if i % 2 != 0 {
-                even_row_style
-            } else {
-                odd_row_style
-            };
-            if r.len() < ncols {
-                panic!("rows must have {} columns instead of {}", ncols, r.len());
-            }
-            Row::new(r.drain(0..ncols)).style(style)
-        })
-        .collect::<Vec<Row>>()
-}
-
-/// Calculate widths constraints to avoid an overflow
-///
-/// # Arguments
-///
-/// * `inner_width` - The usable width to display the table.
-fn width_constraints(
-    inner_width: u16,
-    column_widths: &[u16],
-    column_spacing: u16,
-) -> (u16, Vec<Constraint>, bool) {
-    let mut total_width = 0;
-    let mut constraints = Vec::with_capacity(column_widths.len());
-    let mut current_column_spacing = 0;
-    let mut truncated = false;
-    while constraints.len() < column_widths.len() {
-        let index = constraints.len();
-        let col_width = column_widths[index];
-        let new_total_width = total_width + current_column_spacing + col_width;
-        if new_total_width <= inner_width {
-            constraints.push(Constraint::Length(col_width));
-        } else {
-            let remaining = inner_width - total_width;
-            if remaining > column_spacing {
-                // Partial last column
-                constraints.push(Constraint::Length(remaining - column_spacing));
-                total_width = inner_width;
-                truncated = true;
-            }
-            break;
-        }
-        total_width = new_total_width;
-        current_column_spacing = column_spacing;
-    }
-    let hoverflow = constraints.len() < column_widths.len() || truncated;
-    (total_width, constraints, hoverflow)
-}
-
-/// Return the menu line for the keymap
-fn menu_line(entries: &[MenuEntry], keymap: KeyMap) -> Text<'static> {
-    let mut spans = Vec::new();
-    let mut sep = "";
-    entries
-        .iter()
-        .filter(|e| e.keymaps().contains(keymap))
-        .for_each(|entry| {
-            spans.push(Span::raw(sep));
-            spans.push(Span::styled(
-                entry.key().to_string(),
-                Style::default().add_modifier(Modifier::REVERSED),
-            ));
-            spans.push(Span::raw(format!(" {}", entry.label())));
-            sep = "  ";
-        });
-    Text::from(Line::from(spans))
-}
-
-/// Compute the maximum length of strings
-#[derive(Clone, Copy, Debug, Default)]
-struct MaxLength(u16);
-
-impl MaxLength {
-    fn with_lines<'a, I>(items: I) -> Self
-    where
-        I: IntoIterator<Item = &'a str>,
-    {
-        let mut ml = MaxLength(0);
-        for item in items.into_iter() {
-            ml.check(item);
-        }
-        ml
-    }
-
-    /// The length:
-    fn len(&self) -> u16 {
-        let Self(length) = self;
-        *length
-    }
-
-    /// Count the maximun length of a string
-    fn check(&mut self, s: &str) {
-        self.set_min(s.len());
-    }
-
-    /// Ensure a minimum length
-    fn set_min(&mut self, l: usize) {
-        let l = l as u16;
-        if l > self.0 {
-            self.0 = l
-        }
-    }
-}
-
-/// Format a text by applying header style.
-///
-/// A header of level 1 or level 2 are followed by lines starting
-/// respectively with ==== and ----.
-fn format_text<'l>(help: &'static str) -> Vec<Line<'l>> {
-    help.lines()
-        .map(|s| {
-            if s.starts_with("## ") {
-                let (_, s) = s.split_at(3);
-                Line::from(s).style(Style::default().add_modifier(Modifier::UNDERLINED))
-            } else if s.starts_with("# ") {
-                let (_, s) = s.split_at(2);
-                Line::from(s).style(
-                    Style::default()
-                        .add_modifier(Modifier::BOLD)
-                        .add_modifier(Modifier::UNDERLINED),
-                )
-            } else {
-                Line::from(s)
-            }
-        })
-        .collect()
-}
-
 macro_rules! format_metric {
     ($metrics:expr, $field:ident) => {
         TerminalDevice::format_option($metrics.as_ref().and_then(|m| m.$field.strings().next()))
@@ -513,75 +359,68 @@ impl TerminalDevice<'_> {
     /// Return the table visible height.
     fn draw_tree(
         &mut self,
-        mut headers: Vec<Cell>,
-        mut rows: Vec<Vec<Cell>>,
-        nrows: usize,
+        headers: Vec<Cell>,
+        rows: Vec<Vec<Cell>>,
         col_widths: &[u16],
     ) -> anyhow::Result<()> {
-        let offset = self.table_offset;
-        let mut new_overflow = Area::default();
+        let column_spacing = self.styles.column_spacing;
         let even_row_style = self.styles.even_row;
         let odd_row_style = self.styles.odd_row;
         let mut body_height = 0;
         let headers_height = self.headers_height as u16;
-        let status_bar = Paragraph::new(Text::from(self.status_bar())).style(self.styles.status);
         let is_search = self.bookmarks.is_incremental_search();
         let show_cursor = is_search;
+        let mut main = BigTableWidget::new(
+            headers,
+            headers_height,
+            rows,
+            col_widths,
+            self.table_offset,
+            column_spacing,
+            even_row_style,
+            odd_row_style,
+        );
+        let status_bar =
+            OneLineWidget::new(Text::from(self.status_bar()), self.styles.status, None);
         let menu = if is_search {
-            Text::from(format!(
-                "Search: {}",
-                self.bookmarks.search_pattern().unwrap()
-            ))
+            OneLineWidget::new(
+                Text::from(format!(
+                    "Search: {}",
+                    self.bookmarks.search_pattern().unwrap()
+                )),
+                Style::default(),
+                None,
+            )
         } else {
-            self.menu_line()
+            OneLineWidget::with_menu(self.menu.iter(), self.keymap)
         };
 
+        let mut new_overflow = Area::default();
         self.terminal.draw(|frame| {
-            const BORDERS_SIZE: u16 = 2;
-            const MENU_HEIGHT: u16 = 1;
-            const STATUS_HEIGHT: u16 = 1;
-            const FOOTER_HEIGHT: u16 = MENU_HEIGHT + STATUS_HEIGHT;
-            let screen = frame.area();
-            let outter_area = Size::new(screen.width, screen.height - FOOTER_HEIGHT);
-            let inner_area = Size::new(
-                outter_area.width - BORDERS_SIZE,
-                outter_area.height - BORDERS_SIZE,
-            );
-            let rects = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints(
-                    [
-                        Constraint::Length(outter_area.height),
-                        Constraint::Min(0),
-                        Constraint::Min(0),
-                    ]
-                    .as_ref(),
-                )
-                .split(screen);
-            let column_spacing = self.styles.column_spacing;
-            let (_table_width, widths, hoverflow) =
-                width_constraints(inner_area.width, col_widths, self.styles.column_spacing);
-            let table_height = headers_height + nrows as u16;
-            new_overflow = Area::new(hoverflow, table_height > inner_area.height);
-            let shifted = Area::new(offset.horizontal.is_zero(), offset.vertical.is_zero());
-            let nav = navigation_arrows(shifted, new_overflow);
-            headers[0] = Cell::from(nav);
+            let area = frame.area();
+            let mut rects = SingleScrollablePane::new(area, 3)
+                .with(&status_bar)
+                .with(&menu)
+                .build();
 
-            let rows = style_rows(&mut rows, widths.len(), even_row_style, odd_row_style);
-            let table = Table::new(rows, widths)
-                .block(Block::default().borders(Borders::ALL))
-                .header(Row::new(headers).height(headers_height))
-                .column_spacing(column_spacing);
-
-            let cursor_pos = Position::new(menu.width() as u16, screen.height - 1);
-            frame.render_widget(table, rects[0]);
-            frame.render_widget(status_bar, rects[1]);
-            frame.render_widget(Paragraph::new(menu), rects[2]);
-
-            if show_cursor {
-                frame.set_cursor_position(cursor_pos);
+            if let Some(Some(main_rect)) = rects.first_mut() {
+                let (inner_height, overflow) = main.prepare(main_rect);
+                body_height = inner_height - headers_height;
+                new_overflow = overflow;
             }
-            body_height = inner_area.height - headers_height;
+            let cursor = if show_cursor {
+                menu.cursor()
+                    .map(|p| Position::new(p.x, area.y + area.height - 1))
+            } else {
+                None
+            };
+            let mut r = OptionalRenderer::new(frame, &mut rects);
+            r.render_widget(main);
+            r.render_widget(status_bar);
+            r.render_widget(menu);
+            if let Some(cursor) = cursor {
+                frame.set_cursor_position(cursor);
+            }
         })?;
         self.overflow = new_overflow;
         self.vertical_scroll = body_height.div_ceil(2) as usize;
@@ -876,10 +715,6 @@ impl TerminalDevice<'_> {
         }
     }
 
-    fn menu_line(&self) -> Text<'static> {
-        menu_line(&self.menu, self.keymap)
-    }
-
     fn render_tree(&mut self, collector: &Collector) -> anyhow::Result<()> {
         self.pane_kind = PaneKind::Main;
         let line_count = collector.line_count();
@@ -944,69 +779,31 @@ impl TerminalDevice<'_> {
         };
 
         let col_widths = cws.iter().map(MaxLength::len).collect::<Vec<u16>>();
-        self.draw_tree(headers, rows, nvisible_rows, &col_widths)?;
+        self.draw_tree(headers, rows, &col_widths)?;
         Ok(())
     }
 
     fn render_help(&mut self) -> anyhow::Result<()> {
         self.pane_kind = PaneKind::Help;
-        let menu = self.menu_line();
-        let help = format_text(HELP);
-        let help_height = help.len() as u16;
-        let mut pane_offset = self.pane_offset;
+        let offset = self.pane_offset;
+        let mut main = MarkdownWidget::new("OPRS", HELP, offset);
+        let menu = OneLineWidget::with_menu(self.menu.iter(), self.keymap);
 
         self.terminal.draw(|frame| {
-            const BORDERS_SIZE: u16 = 2;
-            const MENU_HEIGHT: u16 = 1;
-            let screen = frame.area();
-            let body_height = screen.height - MENU_HEIGHT;
-            let rects = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Length(body_height), Constraint::Min(0)].as_ref())
-                .split(screen);
-            let inner_height = body_height - BORDERS_SIZE;
-            let max_pane_offset = help_height.saturating_sub(inner_height / 2);
-            if pane_offset > max_pane_offset {
-                pane_offset = max_pane_offset;
-            }
-            let help = Paragraph::new(Text::from(help))
-                .block(
-                    Block::new()
-                        .title(" Oprs ")
-                        .title_alignment(Alignment::Center)
-                        .borders(Borders::ALL),
-                )
-                .wrap(Wrap { trim: false })
-                .scroll((pane_offset, 0));
-            frame.render_widget(help, rects[0]);
-            frame.render_widget(Paragraph::new(menu), rects[1]);
-            self.vertical_scroll = inner_height.div_ceil(2) as usize;
-        })?;
-        self.pane_offset = pane_offset;
-        Ok(())
-    }
+            let mut rects = SingleScrollablePane::new(frame.area(), 2)
+                .with(&menu)
+                .build();
 
-    fn render_fields(
-        frame: &mut Frame<'_>,
-        area: Rect,
-        title: &str,
-        lines: &[(&'static str, String)],
-    ) {
-        let rows = lines.iter().map(|(name, value)| {
-            Row::new(vec![
-                Text::from(name.to_string()),
-                Text::from(value.to_string()).alignment(Alignment::Right),
-            ])
-        });
-        let cw1 = MaxLength::with_lines(lines.iter().map(|(name, _)| *name));
-        let constraints = [Constraint::Length(cw1.len()), Constraint::Min(0)];
-        let table = Table::new(rows, constraints).block(
-            Block::new()
-                .title(title)
-                .title_alignment(Alignment::Center)
-                .borders(Borders::ALL),
-        );
-        frame.render_widget(table, area);
+            if let Some(Some(main_rect)) = rects.first_mut() {
+                let (inner_height, offset) = main.prepare(main_rect);
+                self.pane_offset = offset;
+                self.vertical_scroll = inner_height.div_ceil(2) as usize;
+            }
+            let mut r = OptionalRenderer::new(frame, &mut rects);
+            r.render_widget(main);
+            r.render_widget(menu);
+        })?;
+        Ok(())
     }
 
     fn format_option<D: fmt::Display>(option: Option<D>) -> String {
@@ -1018,80 +815,57 @@ impl TerminalDevice<'_> {
 
     fn render_details(&mut self, details: &ProcessDetails) -> anyhow::Result<()> {
         self.pane_kind = PaneKind::Process;
-        let menu = self.menu_line();
-        let pane_offset = self.pane_offset;
-
         let pinfo = details.process();
         let cmdline = pinfo.cmdline();
         let metrics = details.metrics();
-        let proc_info = &[
+
+        let cmdline_widget =
+            OneLineWidget::new(Text::from(cmdline), Style::default(), Some("Command"));
+        let proc_fields = [
             ("Name", format!(" {} ", details.name())),
             ("Process ID", format!("{}", pinfo.pid())),
             ("Parent ID", format!("{}", pinfo.parent_pid())),
             ("Owner", TerminalDevice::format_option(pinfo.uid())),
             ("Threads", format_metric!(metrics, thread_count)),
         ];
-        let file_info = &[
+        let proc_widget = FieldsWidget::new("Process", &proc_fields);
+        let file_fields = [
             ("Descriptors", format_metric!(metrics, fd_all)),
             ("Files", format_metric!(metrics, fd_file)),
             ("I/O Read", format_metric!(metrics, io_read_total)),
             ("I/O Write", format_metric!(metrics, io_write_total)),
         ];
-        let cpu_info = &[
+        let file_widget = FieldsWidget::new("Files", &file_fields);
+        let cpu_fields = [
             ("CPU", format_metric!(metrics, time_cpu)),
             ("Elapsed", format_metric!(metrics, time_elapsed)),
         ];
-        let mem_info = &[
+        let cpu_widget = FieldsWidget::new("Time", &cpu_fields);
+        let mem_fields = [
             ("VM", format_metric!(metrics, mem_vm)),
             ("RSS", format_metric!(metrics, mem_rss)),
             ("Data", format_metric!(metrics, mem_data)),
         ];
 
-        self.terminal.draw(|frame| {
-            const BORDERS_SIZE: u16 = 2;
-            const MENU_HEIGHT: u16 = 1;
-            let screen = frame.area();
-            let inner_width = screen.width - BORDERS_SIZE;
-            let block1_height = (cmdline.len() as u16).div_ceil(inner_width) + BORDERS_SIZE;
-            let block2_height =
-                std::cmp::max(proc_info.len(), file_info.len()) as u16 + BORDERS_SIZE;
-            let block3_height = std::cmp::max(cpu_info.len(), mem_info.len()) as u16 + BORDERS_SIZE;
-            let fill = screen
-                .height
-                .saturating_sub(MENU_HEIGHT + block1_height + block2_height + block3_height);
-            let rects = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints(
-                    [
-                        Constraint::Length(block1_height),
-                        Constraint::Length(block2_height),
-                        Constraint::Length(block3_height),
-                        Constraint::Length(fill),
-                        Constraint::Min(MENU_HEIGHT),
-                    ]
-                    .as_ref(),
-                )
-                .split(screen);
-            let cmdline = Paragraph::new(cmdline)
-                .block(
-                    Block::new()
-                        .title(" Command Line ")
-                        .title_alignment(Alignment::Center)
-                        .borders(Borders::ALL),
-                )
-                .wrap(Wrap { trim: false });
-            frame.render_widget(cmdline, rects[0]);
+        let mem_widget = FieldsWidget::new("Memory", &mem_fields);
+        let menu = OneLineWidget::with_menu(self.menu.iter(), self.keymap);
 
-            let two_cols_constraint = &[Constraint::Percentage(50), Constraint::Percentage(50)];
-            let block2_rects = Layout::horizontal(two_cols_constraint).split(rects[1]);
-            TerminalDevice::render_fields(frame, block2_rects[0], "Process", proc_info);
-            TerminalDevice::render_fields(frame, block2_rects[1], "Files", file_info);
-            let block3_rects = Layout::horizontal(two_cols_constraint).split(rects[2]);
-            TerminalDevice::render_fields(frame, block3_rects[0], "Time", cpu_info);
-            TerminalDevice::render_fields(frame, block3_rects[1], "Memory", mem_info);
-            frame.render_widget(Paragraph::new(menu), rects[4]);
+        self.terminal.draw(|frame| {
+            let mut rects = GridPane::new(frame.area())
+                .with_row(&[&cmdline_widget])
+                .with_row(&[&proc_widget, &file_widget])
+                .with_row(&[&cpu_widget, &mem_widget])
+                .with_line(&menu)
+                .build();
+            let mut r = OptionalRenderer::new(frame, &mut rects);
+            r.render_widget(cmdline_widget);
+            r.render_widget(proc_widget);
+            r.render_widget(file_widget);
+            r.render_widget(cpu_widget);
+            r.render_widget(mem_widget);
+            r.render_widget(Clear);
+            r.render_widget(menu);
         })?;
-        self.pane_offset = pane_offset;
         self.vertical_scroll = 1; // scrolling by block not by line.
         Ok(())
     }
@@ -1143,9 +917,9 @@ impl DisplayDevice for TerminalDevice<'_> {
     }
 
     /// Render the current pane.
-    fn render(&mut self, pane: Pane, _redraw: bool) -> anyhow::Result<()> {
+    fn render(&mut self, pane: PaneData, _redraw: bool) -> anyhow::Result<()> {
         match pane {
-            Pane::Main(collector) => {
+            PaneData::Main(collector) => {
                 let is_incremental_search = self.bookmarks.is_incremental_search();
                 match self.keymap {
                     KeyMap::IncrementalSearch if is_incremental_search => (),
@@ -1162,11 +936,11 @@ impl DisplayDevice for TerminalDevice<'_> {
                 }
                 self.render_tree(collector)
             }
-            Pane::Process(details) => {
+            PaneData::Process(details) => {
                 self.set_keymap(KeyMap::Details);
                 self.render_details(details)
             }
-            Pane::Help => {
+            PaneData::Help => {
                 self.set_keymap(KeyMap::Help);
                 self.render_help()
             }
@@ -1185,86 +959,5 @@ impl DisplayDevice for TerminalDevice<'_> {
         } else {
             Ok(PauseStatus::TimeOut)
         }
-    }
-}
-
-#[cfg(test)]
-mod test {
-
-    use ratatui::layout::Constraint;
-
-    use super::width_constraints;
-
-    #[test]
-    fn test_width_constraints_underflow() {
-        // 0         1
-        // 01234567890123456789
-        // aaaaa bbbb bbbb
-        const SCREEN_WIDTH: u16 = 20;
-        const FIRST_COLUMN_WIDTH: u16 = 5;
-        const COLUMN_WIDTH: u16 = 4;
-        let column_widths = vec![FIRST_COLUMN_WIDTH, COLUMN_WIDTH, COLUMN_WIDTH];
-        const COLUMN_SPACING: u16 = 1;
-        const NCOLS: usize = 3;
-        let (table_width, widths, hoverflow) =
-            width_constraints(SCREEN_WIDTH, &column_widths, COLUMN_SPACING);
-        const SPACED_COLUMN_WIDTH: u16 = COLUMN_WIDTH + COLUMN_SPACING;
-        const EXPECTED_WIDTH: u16 = FIRST_COLUMN_WIDTH + (NCOLS as u16 - 1) * SPACED_COLUMN_WIDTH;
-        assert_eq!(EXPECTED_WIDTH, table_width);
-        assert_eq!(NCOLS, widths.len());
-        assert_eq!(Constraint::Length(FIRST_COLUMN_WIDTH), widths[0]);
-        assert_eq!(Constraint::Length(COLUMN_WIDTH), widths[1]);
-        assert!(!hoverflow);
-    }
-
-    #[test]
-    fn test_width_constraints_exact() {
-        // 0         1
-        // 01234567890123456789
-        // aaaaa bbbb bbbb bbbb
-        const SCREEN_WIDTH: u16 = 20;
-        const FIRST_COLUMN_WIDTH: u16 = 5;
-        const COLUMN_WIDTH: u16 = 4;
-        let column_widths = vec![FIRST_COLUMN_WIDTH, COLUMN_WIDTH, COLUMN_WIDTH, COLUMN_WIDTH];
-        const COLUMN_SPACING: u16 = 1;
-        let (table_width, widths, hoverflow) =
-            width_constraints(SCREEN_WIDTH, &column_widths, COLUMN_SPACING);
-        const SPACED_COLUMN_WIDTH: u16 = COLUMN_WIDTH + COLUMN_SPACING;
-        let expected_width: u16 =
-            FIRST_COLUMN_WIDTH + (column_widths.len() as u16 - 1) * SPACED_COLUMN_WIDTH;
-        const EXPECTED_NCOLS: usize = 4;
-        assert_eq!(expected_width, table_width);
-        assert_eq!(EXPECTED_NCOLS, widths.len());
-        assert_eq!(Constraint::Length(FIRST_COLUMN_WIDTH), widths[0]);
-        assert_eq!(Constraint::Length(COLUMN_WIDTH), widths[1]);
-        assert!(!hoverflow);
-    }
-
-    #[test]
-    fn test_width_constraints_overflow() {
-        // 0         1
-        // 01234567890123456789
-        // aaaaa bbb bbb bbb bbb bbb
-        const SCREEN_WIDTH: u16 = 20;
-        const FIRST_COLUMN_WIDTH: u16 = 5;
-        const COLUMN_WIDTH: u16 = 3;
-        let column_widths = vec![
-            FIRST_COLUMN_WIDTH,
-            COLUMN_WIDTH,
-            COLUMN_WIDTH,
-            COLUMN_WIDTH,
-            COLUMN_WIDTH,
-            COLUMN_WIDTH,
-        ];
-        const COLUMN_SPACING: u16 = 1;
-        let (table_width, widths, hoverflow) =
-            width_constraints(SCREEN_WIDTH, &column_widths, COLUMN_SPACING);
-        const EXPECTED_NCOLS: usize = 5;
-        assert_eq!(SCREEN_WIDTH, table_width);
-        assert_eq!(EXPECTED_NCOLS, widths.len());
-        assert_eq!(Constraint::Length(FIRST_COLUMN_WIDTH), widths[0]);
-        assert_eq!(Constraint::Length(COLUMN_WIDTH), widths[1]);
-        assert_eq!(Constraint::Length(2), widths[4]);
-        assert!(hoverflow);
     }
 }
