@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.30.0] - 2025-01-04
+
+### 🐛 Bug Fixes
+
+- Typo in help message
+- Check if the keymap is correct when displaying the main pane
+- Wrong keymap name for details.
+- Truncate process name if it is larger than half screen line.
+
+### 🚜 Refactor
+
+- Create custom widgets to manage the layout.
+- Fix clippy warnings and minor changes.
+
 ## [0.29.0] - 2024-12-22
 
 ### 🚀 Features
@@ -16,6 +30,7 @@ All notable changes to this project will be documented in this file.
 ### ⚙️ Miscellaneous Tasks
 
 - Changelog for new release
+- Release procmon-oprs version 0.29.0
 
 ## [0.28.0] - 2024-12-21
 
