@@ -63,6 +63,7 @@ fn format_text<'l>(help: &'static str) -> Vec<Line<'l>> {
 /// * `inner_width` - The usable width to display the table.
 fn width_constraints(
     inner_width: u16,
+    max_column_width: u16,
     column_widths: &[u16],
     column_spacing: u16,
 ) -> (u16, Vec<Constraint>, bool) {
@@ -72,7 +73,7 @@ fn width_constraints(
     let mut truncated = false;
     while constraints.len() < column_widths.len() {
         let index = constraints.len();
-        let col_width = column_widths[index];
+        let col_width = cmp::min(max_column_width, column_widths[index]);
         let new_total_width = total_width + current_column_spacing + col_width;
         if new_total_width <= inner_width {
             constraints.push(Constraint::Length(col_width));
@@ -335,8 +336,14 @@ impl<'a, 'b, 'c> BigTableWidget<'a, 'b, 'c> {
         let borders = BORDER_SIZE * 2;
         let outter_area = Size::new(area.width, area.height);
         let inner_area = Size::new(outter_area.width - borders, outter_area.height - borders);
-        let (_table_width, constraints, hoverflow) =
-            width_constraints(inner_area.width, self.widths, self.style.column_spacing);
+        // Max column width hard-coded to half the line width.
+        let max_column_width = inner_area.width / 2;
+        let (_table_width, constraints, hoverflow) = width_constraints(
+            inner_area.width,
+            max_column_width,
+            self.widths,
+            self.style.column_spacing,
+        );
         self.constraints = constraints;
         let table_height = self.headers_height + self.rows.len() as u16;
         let overflow = Area::new(hoverflow, table_height > inner_area.height);
@@ -620,7 +627,7 @@ mod test {
         const COLUMN_SPACING: u16 = 1;
         const NCOLS: usize = 3;
         let (table_width, widths, hoverflow) =
-            width_constraints(SCREEN_WIDTH, &column_widths, COLUMN_SPACING);
+            width_constraints(SCREEN_WIDTH, SCREEN_WIDTH, &column_widths, COLUMN_SPACING);
         const SPACED_COLUMN_WIDTH: u16 = COLUMN_WIDTH + COLUMN_SPACING;
         const EXPECTED_WIDTH: u16 = FIRST_COLUMN_WIDTH + (NCOLS as u16 - 1) * SPACED_COLUMN_WIDTH;
         assert_eq!(EXPECTED_WIDTH, table_width);
@@ -641,7 +648,7 @@ mod test {
         let column_widths = vec![FIRST_COLUMN_WIDTH, COLUMN_WIDTH, COLUMN_WIDTH, COLUMN_WIDTH];
         const COLUMN_SPACING: u16 = 1;
         let (table_width, widths, hoverflow) =
-            width_constraints(SCREEN_WIDTH, &column_widths, COLUMN_SPACING);
+            width_constraints(SCREEN_WIDTH, SCREEN_WIDTH, &column_widths, COLUMN_SPACING);
         const SPACED_COLUMN_WIDTH: u16 = COLUMN_WIDTH + COLUMN_SPACING;
         let expected_width: u16 =
             FIRST_COLUMN_WIDTH + (column_widths.len() as u16 - 1) * SPACED_COLUMN_WIDTH;
@@ -671,13 +678,40 @@ mod test {
         ];
         const COLUMN_SPACING: u16 = 1;
         let (table_width, widths, hoverflow) =
-            width_constraints(SCREEN_WIDTH, &column_widths, COLUMN_SPACING);
+            width_constraints(SCREEN_WIDTH, SCREEN_WIDTH, &column_widths, COLUMN_SPACING);
         const EXPECTED_NCOLS: usize = 5;
         assert_eq!(SCREEN_WIDTH, table_width);
         assert_eq!(EXPECTED_NCOLS, widths.len());
         assert_eq!(Constraint::Length(FIRST_COLUMN_WIDTH), widths[0]);
         assert_eq!(Constraint::Length(COLUMN_WIDTH), widths[1]);
         assert_eq!(Constraint::Length(2), widths[4]);
+        assert!(hoverflow);
+    }
+
+    #[test]
+    fn test_width_constraints_max_col_width() {
+        // 0         1
+        // 01234567890123456789
+        // aaaaaaa bbb bbb bbb
+        const SCREEN_WIDTH: u16 = 20;
+        const MAX_COL_WIDTH: u16 = 7;
+        const FIRST_COLUMN_WIDTH: u16 = 12;
+        const COLUMN_WIDTH: u16 = 3;
+        let column_widths = vec![
+            FIRST_COLUMN_WIDTH,
+            COLUMN_WIDTH,
+            COLUMN_WIDTH,
+            COLUMN_WIDTH,
+            COLUMN_WIDTH,
+        ];
+        const COLUMN_SPACING: u16 = 1;
+        let (table_width, widths, hoverflow) =
+            width_constraints(SCREEN_WIDTH, MAX_COL_WIDTH, &column_widths, COLUMN_SPACING);
+        const EXPECTED_NCOLS: usize = 4;
+        assert_eq!(SCREEN_WIDTH - COLUMN_SPACING, table_width);
+        assert_eq!(EXPECTED_NCOLS, widths.len());
+        assert_eq!(Constraint::Length(MAX_COL_WIDTH), widths[0]);
+        assert_eq!(Constraint::Length(COLUMN_WIDTH), widths[1]);
         assert!(hoverflow);
     }
 
