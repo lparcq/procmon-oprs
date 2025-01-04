@@ -114,7 +114,7 @@ pub enum KeyMap {
     Filters,
     #[strum(serialize = "incremental search")]
     IncrementalSearch,
-    #[strum(serialize = "main")]
+    #[strum(serialize = "details")]
     Details,
 }
 

@@ -331,6 +331,7 @@ impl TerminalDevice<'_> {
     /// Set the keymap
     fn set_keymap(&mut self, keymap: KeyMap) {
         if self.keymap != keymap {
+            log::debug!("switch keymap from {} to {keymap}", self.keymap);
             self.keymap = keymap;
         }
     }
