@@ -742,40 +742,47 @@ impl TerminalDevice<'_> {
         let mut pids = PidStack::default();
         collector
             .lines()
+            .skip(1)
             .take(voffset)
             .for_each(|sample| pids.push(sample));
 
+        let mut rows: Vec<Vec<Cell>> = Vec::with_capacity(nvisible_rows);
+        let system_row = TerminalDevice::make_metrics_row(
+            PidStatus::Unknown,
+            hoffset,
+            0,
+            &mut cws,
+            collector.lines().take(1).next().unwrap(),
+            &self.styles,
+        );
+        rows.push(system_row);
         let with_limits = matches!(self.display_limits, LimitKind::Soft | LimitKind::Hard);
         let display_limits = self.display_limits.clone();
-        let rows = {
-            let mut rows: Vec<Vec<Cell>> = Vec::with_capacity(nvisible_rows);
-            collector.lines().skip(voffset).for_each(|samples| {
-                pids.push(samples);
-                let pid = samples.pid();
-                let pid_status = self.pid_status(pid);
+        collector.lines().skip(voffset + 1).for_each(|samples| {
+            pids.push(samples);
+            let pid = samples.pid();
+            let pid_status = self.pid_status(pid);
 
-                let row = TerminalDevice::make_metrics_row(
-                    pid_status,
+            let row = TerminalDevice::make_metrics_row(
+                pid_status,
+                hoffset,
+                pids.len().saturating_sub(1), // indent
+                &mut cws,
+                samples,
+                &self.styles,
+            );
+            rows.push(row);
+            if matches!(pid_status, PidStatus::Selected) && with_limits {
+                let row = TerminalDevice::make_limits_row(
                     hoffset,
-                    pids.len().saturating_sub(1), // indent
                     &mut cws,
                     samples,
-                    &self.styles,
+                    display_limits.clone(),
+                    &self.limit_slots,
                 );
                 rows.push(row);
-                if matches!(pid_status, PidStatus::Selected) && with_limits {
-                    let row = TerminalDevice::make_limits_row(
-                        hoffset,
-                        &mut cws,
-                        samples,
-                        display_limits.clone(),
-                        &self.limit_slots,
-                    );
-                    rows.push(row);
-                }
-            });
-            rows
-        };
+            }
+        });
 
         let col_widths = cws.iter().map(MaxLength::len).collect::<Vec<u16>>();
         self.draw_tree(headers, rows, &col_widths)?;

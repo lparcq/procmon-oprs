@@ -713,9 +713,13 @@ impl Bookmarks {
                 | BookmarkAction::Next
                 | BookmarkAction::ClosestMatch
                 | BookmarkAction::ToggleMarks => {
-                    if self.search_pattern().is_none() && self.marks.is_empty() {
+                    if self.search_pattern().is_none()
+                        && self.marks.is_empty()
+                        && !matches!(action, BookmarkAction::ToggleMarks)
+                    {
                         return self.select(lineno, pid, top, height, true);
-                    } else if let Some(pattern) = pattern.as_ref() {
+                    }
+                    if let Some(pattern) = pattern.as_ref() {
                         if pi.name().contains(pattern) {
                             matches.push(LinePid::new(lineno, pid));
                             occurrences.insert(pid);
