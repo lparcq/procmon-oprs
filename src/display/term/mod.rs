@@ -722,7 +722,7 @@ impl TerminalDevice<'_> {
         let top = self.top(line_count);
         let voffset = self.bookmarks.execute(
             &mut self.occurrences,
-            collector.lines(),
+            collector.lines().skip(1),
             top,
             self.body_height,
         );

@@ -645,30 +645,6 @@ impl Bookmarks {
         }
     }
 
-    /// Check if the action doesn't depend on the lines and return the offset in this case.
-    fn execute_without_lines(
-        &self,
-        action: BookmarkAction,
-        top: usize,
-        height: usize,
-    ) -> Option<usize> {
-        if matches!((self.selected, action), (None, BookmarkAction::None)) {
-            Some(Bookmarks::recenter(0, top, height, false))
-        } else if matches!(
-            action,
-            BookmarkAction::Previous | BookmarkAction::Next | BookmarkAction::ClosestMatch
-        ) {
-            if self.search_pattern().is_none() && self.marks.is_empty() {
-                let lineno = self.selected.map(|lp| lp.lineno).unwrap_or(0);
-                Some(Bookmarks::recenter(lineno, top, height, false))
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
-
     /// Execute the action and return the vertical offset.
     ///
     /// * `occurrences` - The set of matching pid in case of search.
@@ -692,9 +668,6 @@ impl Bookmarks {
             None => BookmarkAction::None,
         };
         occurrences.clear();
-        if let Some(voffset) = self.execute_without_lines(action, top, height) {
-            return voffset;
-        }
         let page_size = match action {
             BookmarkAction::PreviousPage | BookmarkAction::NextPage => std::cmp::max(1, height / 2),
             _ => 1,
@@ -720,17 +693,14 @@ impl Bookmarks {
                 }
             }
             match action {
-                BookmarkAction::None => {
-                    match self.selected {
-                        Some(ref mut selected) if pid == selected.pid => {
-                            selected.lineno = lineno;
-                            return Bookmarks::recenter(lineno, top, height, false);
-                        }
-                        Some(_) => (),
-                        // Should have been matched in execute_without_lines.
-                        None => panic!("internal error: empty selection"),
+                BookmarkAction::None => match self.selected {
+                    Some(ref mut selected) if pid == selected.pid => {
+                        selected.lineno = lineno;
+                        return Bookmarks::recenter(lineno, top, height, false);
                     }
-                }
+                    Some(_) => (),
+                    None => return Bookmarks::recenter(0, top, height, false),
+                },
                 BookmarkAction::FirstLine => return self.select(lineno, pid, top, height, true),
                 BookmarkAction::LastLine => last_lineno = Some(lineno),
                 BookmarkAction::PreviousLine | BookmarkAction::PreviousPage => {
@@ -743,7 +713,9 @@ impl Bookmarks {
                 | BookmarkAction::Next
                 | BookmarkAction::ClosestMatch
                 | BookmarkAction::ToggleMarks => {
-                    if let Some(pattern) = pattern.as_ref() {
+                    if self.search_pattern().is_none() && self.marks.is_empty() {
+                        return self.select(lineno, pid, top, height, true);
+                    } else if let Some(pattern) = pattern.as_ref() {
                         if pi.name().contains(pattern) {
                             matches.push(LinePid::new(lineno, pid));
                             occurrences.insert(pid);
