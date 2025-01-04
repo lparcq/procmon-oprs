@@ -16,6 +16,10 @@ All notable changes to this project will be documented in this file.
 - Create custom widgets to manage the layout.
 - Fix clippy warnings and minor changes.
 
+### ⚙️ Miscellaneous Tasks
+
+- Changelog for release 0.30.0
+
 ## [0.29.0] - 2024-12-22
 
 ### 🚀 Features
