@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.31.0] - 2025-01-05
+
+### 🚀 Features
+
+- Always display the system metrics on first line.
+
+### 🐛 Bug Fixes
+
+- Don't allow to select the first line
+
 ## [0.30.0] - 2025-01-04
 
 ### 🐛 Bug Fixes
@@ -19,6 +29,7 @@ All notable changes to this project will be documented in this file.
 ### ⚙️ Miscellaneous Tasks
 
 - Changelog for release 0.30.0
+- Release procmon-oprs version 0.30.0
 
 ## [0.29.0] - 2024-12-22
 
