@@ -35,6 +35,10 @@ are displayed as a flat list.
 
 Hitting 's' again reverts to the tree mode.
 
+The root process of the tree can be defined with 'r' on the selected process. Revert
+to the full tree with 'R'. The command can be started at a given root with option
+'--root' on the command line.
+
 ## Filters
 
 - none: show userland and kernel processes

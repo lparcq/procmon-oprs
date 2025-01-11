@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2024  Laurent Pelecq
+// Copyright (C) 2024-2025  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -53,6 +53,8 @@ const KEY_SELECT_NEXT_CHAR: char = 'n';
 const KEY_SELECT_PARENT: Key = Key::Char('p');
 const KEY_SELECT_PREVIOUS: Key = Key::Char(KEY_SELECT_PREVIOUS_CHAR);
 const KEY_SELECT_PREVIOUS_CHAR: char = 'N';
+const KEY_SELECT_ROOT_PID: Key = Key::Char('r');
+const KEY_UNSELECT_ROOT_PID: Key = Key::Char('R');
 const KEY_SLOWER: Key = Key::Char(KEY_SLOWER_CHAR);
 const KEY_SLOWER_CHAR: char = '-';
 
@@ -99,6 +101,8 @@ pub enum Action {
     SelectNext,
     SelectPrevious,
     SelectParent,
+    SelectRootPid,
+    UnselectRootPid,
     SearchPush(char),
     ToggleLimits,
 }
@@ -159,6 +163,8 @@ impl KeyMap {
                 Event::Key(KEY_SEARCH) => Action::SearchEnter,
                 Event::Key(KEY_SELECT_PREVIOUS) => Action::SelectPrevious,
                 Event::Key(KEY_SELECT_NEXT) => Action::SelectNext,
+                Event::Key(KEY_SELECT_ROOT_PID) => Action::SelectRootPid,
+                Event::Key(KEY_UNSELECT_ROOT_PID) => Action::UnselectRootPid,
                 Event::Key(KEY_SLOWER) => Action::MultiplyTimeout(2),
                 Event::Key(KEY_QUIT) | Event::Key(KEY_ESCAPE) => Action::Quit,
                 Event::Key(Key::PageDown) => Action::ScrollPageDown,
@@ -263,6 +269,7 @@ pub fn menu() -> Vec<MenuEntry> {
             "Parent",
             KeyMapSet::OnlyIn(KeyMap::Details),
         ),
+        MenuEntry::with_key(KEY_SELECT_ROOT_PID, "Root", KeyMapSet::OnlyIn(KeyMap::Main)),
         MenuEntry::new(
             format!("{KEY_FASTER_CHAR}/{KEY_SLOWER_CHAR}"),
             "Speed",

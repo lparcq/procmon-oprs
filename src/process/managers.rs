@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2024, 2025  Laurent Pelecq
+// Copyright (C) 2024-2025  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -43,6 +43,15 @@ impl Default for ProcessFilter {
     fn default() -> Self {
         Self::UserLand
     }
+}
+
+/// Context for mananagers.
+#[derive(Debug, Default, Getters, Setters)]
+pub struct ManagerContext {
+    #[getset(set = "pub")]
+    filter: ProcessFilter,
+    #[getset(get_copy = "pub", set = "pub")]
+    root_pid: Option<pid_t>,
 }
 
 /// Specific metrics.
@@ -142,7 +151,10 @@ impl ProcessDetails<'_> {
 
 /// A process manager must define which processes must be followed.
 pub trait ProcessManager {
-    fn set_filter(&mut self, _filter: ProcessFilter) {}
+    /// Set context if supported.
+    fn context(&mut self) -> Option<&mut ManagerContext> {
+        None
+    }
 
     fn refresh(&mut self, collector: &mut Collector) -> ProcessResult<bool>;
 }
@@ -200,29 +212,21 @@ impl ProcessClassifier for AcceptUserLand {
 }
 
 /// A Process explorer that interactively displays the process tree.
-#[derive(Setters)]
 pub struct ForestProcessManager<'s> {
     sysconf: &'s SystemConf,
     system_limits: Vec<Option<Limit>>,
     forest: Forest,
-    filter: ProcessFilter,
-    #[getset(set)]
-    root_pid: Option<pid_t>,
+    context: ManagerContext,
     inactivity: u16,
 }
 
 impl<'s> ForestProcessManager<'s> {
-    pub fn new(
-        sysconf: &'s SystemConf,
-        metrics: &[FormattedMetric],
-        root_pid: Option<pid_t>,
-    ) -> Result<Self, TargetError> {
+    pub fn new(sysconf: &'s SystemConf, metrics: &[FormattedMetric]) -> Result<Self, TargetError> {
         Ok(Self {
             sysconf,
             system_limits: vec![None; metrics.len()],
             forest: Forest::new(),
-            filter: ProcessFilter::default(),
-            root_pid,
+            context: ManagerContext::default(),
             inactivity: 0,
         })
     }
@@ -246,8 +250,8 @@ impl<'s> ForestProcessManager<'s> {
 }
 
 impl ProcessManager for ForestProcessManager<'_> {
-    fn set_filter(&mut self, filter: ProcessFilter) {
-        self.filter = filter;
+    fn context(&mut self) -> Option<&mut ManagerContext> {
+        Some(&mut self.context)
     }
 
     fn refresh(&mut self, collector: &mut Collector) -> ProcessResult<bool> {
@@ -270,14 +274,14 @@ impl ProcessManager for ForestProcessManager<'_> {
         if self.inactivity < INACTIVITY {
             self.inactivity += 1;
         }
-        let changed = match self.filter {
+        let changed = match self.context.filter {
             ProcessFilter::None => self.forest.refresh(),
             ProcessFilter::UserLand | ProcessFilter::Active => {
                 self.forest.refresh_if(&AcceptUserLand::default())
             }
         }?;
-        let ignore_idleness = !matches!(self.filter, ProcessFilter::Active);
-        match self.root_pid {
+        let ignore_idleness = !matches!(self.context.filter, ProcessFilter::Active);
+        match self.context.root_pid {
             Some(root_pid) if self.forest.has_process(root_pid) => {
                 self.collect_descendants(collector, &[root_pid], ignore_idleness)?
             }

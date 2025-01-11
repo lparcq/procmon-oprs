@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020-2024  Laurent Pelecq
+// Copyright (C) 2020-2025  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -74,6 +74,7 @@ pub enum Interaction {
     SwitchBack,
     SelectPid(pid_t),
     SelectParent,
+    SelectRootPid(Option<pid_t>),
     Narrow(Vec<pid_t>),
     Wide,
     Quit,
@@ -433,11 +434,13 @@ impl TerminalDevice<'_> {
         const MIN_TIMEOUT_MSECS: u128 = 1;
         match action {
             Action::None
+            | Action::ChangeScope
             | Action::SelectParent
-            | Action::Quit
+            | Action::SelectRootPid
             | Action::SwitchToHelp
             | Action::SwitchToProcess
-            | Action::ChangeScope => (),
+            | Action::UnselectRootPid
+            | Action::Quit => (),
             Action::SwitchBack => {
                 self.set_keymap(KeyMap::Main);
                 self.pane_offset = 0;
@@ -557,6 +560,11 @@ impl TerminalDevice<'_> {
             Action::FilterNone | Action::FilterUser | Action::FilterActive => {
                 Interaction::Filter(self.filter)
             }
+            Action::SelectRootPid => match self.bookmarks.selected() {
+                Some(selected) => Interaction::SelectRootPid(Some(selected.pid)),
+                None => Interaction::None,
+            },
+            Action::UnselectRootPid => Interaction::SelectRootPid(None),
             Action::SwitchToProcess => match self.bookmarks.selected() {
                 Some(selected) => Interaction::SelectPid(selected.pid),
                 None => Interaction::None,

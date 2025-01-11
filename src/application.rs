@@ -1,5 +1,5 @@
 // Oprs -- details monitor for Linux
-// Copyright (C) 2020-2024  Laurent Pelecq
+// Copyright (C) 2020-2025  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -177,15 +177,16 @@ impl<'s> Application<'s> {
         mut device: Box<dyn DisplayDevice>,
         sysconf: &'_ SystemConf,
         target_ids: &[TargetId],
-        root_pid: Option<pid_t>,
+        mut root_pid: Option<pid_t>,
         is_interactive: bool,
     ) -> anyhow::Result<()> {
         let mut collector = Collector::new(Cow::Borrowed(&self.metrics));
         let mut tmgt: Box<dyn ProcessManager> = if target_ids.is_empty() {
-            Box::new(ForestProcessManager::new(sysconf, &self.metrics, root_pid)?)
+            Box::new(ForestProcessManager::new(sysconf, &self.metrics)?)
         } else {
             Box::new(FlatProcessManager::new(sysconf, &self.metrics, target_ids)?)
         };
+        tmgt.context().map(|c| c.set_root_pid(root_pid));
         let mut details: Option<ProcessDetails> = None;
         let mut pane_kind = PaneKind::Main;
 
@@ -249,7 +250,7 @@ impl<'s> Application<'s> {
                     match action {
                         Interaction::Quit => break,
                         Interaction::Filter(filter) => {
-                            tmgt.set_filter(filter);
+                            tmgt.context().map(|c| c.set_filter(filter));
                             tmgt.refresh(&mut collector)?;
                         }
                         Interaction::SwitchToHelp => pane_kind = PaneKind::Help,
@@ -273,6 +274,11 @@ impl<'s> Application<'s> {
                                 pane_kind = PaneKind::Process;
                             }
                         }
+                        Interaction::SelectRootPid(new_root_pid) => {
+                            root_pid = new_root_pid;
+                            tmgt.context().map(|c| c.set_root_pid(root_pid));
+                            tmgt.refresh(&mut collector)?;
+                        }
                         Interaction::Narrow(pids) => {
                             log::debug!("switch to flat mode with {} PIDs", pids.len());
                             tmgt = Box::new(FlatProcessManager::with_pids(
@@ -284,11 +290,8 @@ impl<'s> Application<'s> {
                         }
                         Interaction::Wide => {
                             log::debug!("switch to explorer mode");
-                            tmgt = Box::new(ForestProcessManager::new(
-                                sysconf,
-                                &self.metrics,
-                                root_pid,
-                            )?);
+                            tmgt = Box::new(ForestProcessManager::new(sysconf, &self.metrics)?);
+                            tmgt.context().map(|c| c.set_root_pid(root_pid));
                             tmgt.refresh(&mut collector)?;
                         }
                         Interaction::None => (),
