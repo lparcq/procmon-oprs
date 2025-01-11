@@ -1,6 +1,6 @@
 [package]
 name = "procmon-oprs"
-version = "0.31.0"
+version = "0.31.1"
 authors = ["Laurent Pelecq <lpelecq+rust@circoise.eu>"]
 description = "A process monitor for Linux"
 readme = "README.md"
