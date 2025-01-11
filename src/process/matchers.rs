@@ -38,7 +38,7 @@ pub fn glob(patterns: &[String]) -> anyhow::Result<HashSet<String>> {
                 .process()
                 .cmdline()
                 .ok()
-                .map_or(false, |cmdline| match cmdline.first() {
+                .is_some_and(|cmdline| match cmdline.first() {
                     Some(path) => gset.is_match(path),
                     None => false,
                 })
