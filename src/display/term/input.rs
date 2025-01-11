@@ -566,18 +566,16 @@ impl Bookmarks {
         Bookmarks::recenter(lineno, top, height, force)
     }
 
-    /// Apply a function on the selection if set.
-    fn selected_and_then<F>(&mut self, f: F) -> usize
+    /// Apply a function on the selection.
+    fn change_selection_in_ring<F>(&mut self, ring: &[LinePid], f: F) -> usize
     where
-        F: Fn(&LinePid) -> Option<LinePid>,
+        F: Fn(&LinePid, &[LinePid]) -> Option<LinePid>,
     {
-        match self.selected.as_ref().and_then(f) {
-            Some(lp) => {
-                self.selected = Some(lp);
-                lp.lineno
-            }
-            None => 0,
-        }
+        self.selected = match self.selected.as_ref() {
+            Some(lp) => f(lp, ring).or(Some(*lp)),
+            None => ring.first().copied(),
+        };
+        self.selected.map(|lp| lp.lineno).unwrap_or(0)
     }
 
     /// Select the previous PID if the current PID is the current selection.
@@ -758,10 +756,14 @@ impl Bookmarks {
                     0
                 }
             },
-            BookmarkAction::Previous => self.selected_and_then(|s| s.previous_in(ring).copied()),
-            BookmarkAction::Next => self.selected_and_then(|s| s.next_in(ring).copied()),
+            BookmarkAction::Previous => {
+                self.change_selection_in_ring(ring, |s, ring| s.previous_in(ring).copied())
+            }
+            BookmarkAction::Next => {
+                self.change_selection_in_ring(ring, |s, ring| s.next_in(ring).copied())
+            }
             BookmarkAction::ClosestMatch => {
-                self.selected_and_then(|s| s.closest_in(&matches).copied())
+                self.change_selection_in_ring(&matches, |s, ring| s.closest_in(ring).copied())
             }
             BookmarkAction::ToggleMarks => {
                 if occurrences.is_empty() {
