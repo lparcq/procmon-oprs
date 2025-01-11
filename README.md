@@ -18,6 +18,9 @@ Features
 * Display in plain text or a terminal UI.
 * Export in CSV or RRDtool format.
 
+In a terminal, if no process is specified on the command line, all the visible processes are displayed
+in a tree.
+
 Example
 -------
 
@@ -27,8 +30,6 @@ file (pulseaudio) and a process by name (bash), run:
     oprs -F human -p 29220 -f pulseaudio.pid -n zellij mem:vm mem:rss+max time:elapsed fault:major
 
 ![Screenshot of oprs](doc/screenshot.jpeg)
-
-If no process is specified, all the visible processes are displayed.
 
 Metrics
 -------
@@ -144,7 +145,7 @@ Example `~/.config/oprs/settings.ini`:
 License
 -------
 
-Copyright (c) 2020-2024 Laurent Pelecq
+Copyright (c) 2020-2025 Laurent Pelecq
 
 `oprs` is distributed under the terms of the GNU General Public License version 3.
 

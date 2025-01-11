@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2024  Laurent Pelecq
+// Copyright (C) 2024, 2025  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use getset::Getters;
+use getset::{Getters, Setters};
 use libc::pid_t;
 use std::borrow::Cow;
 use strum_macros::Display as StrumDisplay;
@@ -200,23 +200,48 @@ impl ProcessClassifier for AcceptUserLand {
 }
 
 /// A Process explorer that interactively displays the process tree.
+#[derive(Setters)]
 pub struct ForestProcessManager<'s> {
     sysconf: &'s SystemConf,
     system_limits: Vec<Option<Limit>>,
     forest: Forest,
     filter: ProcessFilter,
+    #[getset(set)]
+    root_pid: Option<pid_t>,
     inactivity: u16,
 }
 
 impl<'s> ForestProcessManager<'s> {
-    pub fn new(sysconf: &'s SystemConf, metrics: &[FormattedMetric]) -> Result<Self, TargetError> {
+    pub fn new(
+        sysconf: &'s SystemConf,
+        metrics: &[FormattedMetric],
+        root_pid: Option<pid_t>,
+    ) -> Result<Self, TargetError> {
         Ok(Self {
             sysconf,
             system_limits: vec![None; metrics.len()],
             forest: Forest::new(),
             filter: ProcessFilter::default(),
+            root_pid,
             inactivity: 0,
         })
+    }
+
+    fn collect_descendants(
+        &mut self,
+        collector: &mut Collector,
+        root_pids: &[pid_t],
+        ignore_idleness: bool,
+    ) -> ProcessResult<()> {
+        for root_pid in root_pids {
+            self.forest
+                .descendants(*root_pid)?
+                .filter(|pinfo| {
+                    !pinfo.hidden() && (ignore_idleness || pinfo.idleness() < self.inactivity)
+                })
+                .for_each(|pinfo| collector.collect(pinfo.name(), pinfo, self.sysconf));
+        }
+        Ok(())
     }
 }
 
@@ -252,13 +277,14 @@ impl ProcessManager for ForestProcessManager<'_> {
             }
         }?;
         let ignore_idleness = !matches!(self.filter, ProcessFilter::Active);
-        for root_pid in self.forest.root_pids() {
-            self.forest
-                .descendants(root_pid)?
-                .filter(|pinfo| {
-                    !pinfo.hidden() && (ignore_idleness || pinfo.idleness() < self.inactivity)
-                })
-                .for_each(|pinfo| collector.collect(pinfo.name(), pinfo, self.sysconf));
+        match self.root_pid {
+            Some(root_pid) if self.forest.has_process(root_pid) => {
+                self.collect_descendants(collector, &[root_pid], ignore_idleness)?
+            }
+            Some(_) => (),
+            None => {
+                self.collect_descendants(collector, &self.forest.root_pids(), ignore_idleness)?
+            }
         }
         Ok(changed)
     }

@@ -121,7 +121,12 @@ impl<'s> Application<'s> {
         })
     }
 
-    pub fn run(&self, target_ids: &[TargetId], sysconf: &'_ SystemConf) -> anyhow::Result<()> {
+    pub fn run(
+        &self,
+        target_ids: &[TargetId],
+        sysconf: &'_ SystemConf,
+        root_pid: Option<pid_t>,
+    ) -> anyhow::Result<()> {
         info!("starting");
         let mut is_interactive = false;
         let device: Box<dyn DisplayDevice> = match self.display_mode {
@@ -135,7 +140,7 @@ impl<'s> Application<'s> {
         if target_ids.is_empty() && !is_interactive {
             Err(anyhow::anyhow!(Error::NoTargets))
         } else {
-            self.run_loop(device, sysconf, target_ids, is_interactive)
+            self.run_loop(device, sysconf, target_ids, root_pid, is_interactive)
         }
     }
 
@@ -172,11 +177,12 @@ impl<'s> Application<'s> {
         mut device: Box<dyn DisplayDevice>,
         sysconf: &'_ SystemConf,
         target_ids: &[TargetId],
+        root_pid: Option<pid_t>,
         is_interactive: bool,
     ) -> anyhow::Result<()> {
         let mut collector = Collector::new(Cow::Borrowed(&self.metrics));
         let mut tmgt: Box<dyn ProcessManager> = if target_ids.is_empty() {
-            Box::new(ForestProcessManager::new(sysconf, &self.metrics)?)
+            Box::new(ForestProcessManager::new(sysconf, &self.metrics, root_pid)?)
         } else {
             Box::new(FlatProcessManager::new(sysconf, &self.metrics, target_ids)?)
         };
@@ -278,7 +284,11 @@ impl<'s> Application<'s> {
                         }
                         Interaction::Wide => {
                             log::debug!("switch to explorer mode");
-                            tmgt = Box::new(ForestProcessManager::new(sysconf, &self.metrics)?);
+                            tmgt = Box::new(ForestProcessManager::new(
+                                sysconf,
+                                &self.metrics,
+                                root_pid,
+                            )?);
                             tmgt.refresh(&mut collector)?;
                         }
                         Interaction::None => (),

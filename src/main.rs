@@ -160,6 +160,13 @@ struct Opt {
     )]
     glob: Vec<String>,
 
+    #[argh(
+        option,
+        short = 'r',
+        description = "the process id of the root in tree mode"
+    )]
+    root: Option<i32>,
+
     #[argh(positional, description = "metric to monitor")]
     metric: Vec<String>,
 }
@@ -331,7 +338,7 @@ fn start(opt: Opt) -> anyhow::Result<()> {
         }
     }));
     let sysconf = process::SystemConf::new()?;
-    if let Err(err) = app.run(&target_ids, &sysconf) {
+    if let Err(err) = app.run(&target_ids, &sysconf, opt.root) {
         log::error!("{}", err);
         if settings.logging.file.is_some() {
             eprintln!("{err}");

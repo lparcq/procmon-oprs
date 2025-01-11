@@ -475,6 +475,10 @@ impl Forest {
             .map(|node_id| self.get_known_info(*node_id))
     }
 
+    pub fn has_process(&self, pid: pid_t) -> bool {
+        self.processes.contains_key(&pid)
+    }
+
     // Remove a process that doesn't exists.
     //
     // The children are moved on the parent.
@@ -814,6 +818,7 @@ mod tests {
         assert_eq!(first_pid, pinfo.pid());
         assert_eq!(first_pid, pinfo.process().pid());
         assert_eq!(NAME, pinfo.name());
+        assert!(forest.has_process(first_pid));
     }
 
     #[test]
