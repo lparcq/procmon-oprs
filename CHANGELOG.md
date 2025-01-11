@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.32.0] - 2025-01-11
+
+### 🚀 Features
+
+- Add option --root to select the root PID.
+- Select the root of the tree interactively.
+
 ## [0.31.1] - 2025-01-11
 
 ### 🐛 Bug Fixes
@@ -16,6 +23,7 @@ All notable changes to this project will be documented in this file.
 ### ⚙️ Miscellaneous Tasks
 
 - Update itertools and rstest
+- Release procmon-oprs version 0.31.1
 
 ## [0.31.0] - 2025-01-05
 
