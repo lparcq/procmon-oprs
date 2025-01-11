@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.31.1] - 2025-01-11
+
+### 🐛 Bug Fixes
+
+- Starting an incremental search select the first item.
+- Process crash when displaying limits.
+
+### 🚜 Refactor
+
+- Fix clippy warnings
+
+### ⚙️ Miscellaneous Tasks
+
+- Update itertools and rstest
+
 ## [0.31.0] - 2025-01-05
 
 ### 🚀 Features
@@ -11,6 +26,10 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug Fixes
 
 - Don't allow to select the first line
+
+### ⚙️ Miscellaneous Tasks
+
+- Release procmon-oprs version 0.31.0
 
 ## [0.30.0] - 2025-01-04
 
