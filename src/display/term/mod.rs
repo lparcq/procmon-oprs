@@ -666,7 +666,9 @@ impl TerminalDevice<'_> {
         };
         cws[0].check(limits_title);
         row.push(rcell!(limits_title));
-        row.push(Cell::new(""));
+        for _ in 0..2 {
+            row.push(Cell::new(""));
+        }
         let mut col_index = 0;
         const NOT_APPLICABLE: &str = "n/a";
         ps.samples().for_each(|sample| {
