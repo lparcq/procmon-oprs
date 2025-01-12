@@ -255,6 +255,9 @@ enum VerticalScroll {
 }
 
 impl Into<u16> for VerticalScroll {
+    // From<u16> cannot be implemented since there is no way to tell if it's a
+    // line or a block.
+    #![allow(clippy::from_over_into)]
     fn into(self) -> u16 {
         match self {
             Self::Line(value) => value as u16,
@@ -521,8 +524,7 @@ impl TerminalDevice<'_> {
                     }
                 }
                 _ => {
-                    self.pane_offset +=
-                        self.pane_offset.saturating_add(self.vertical_scroll.into());
+                    self.pane_offset = self.pane_offset.saturating_add(self.vertical_scroll.into());
                 }
             },
             Action::ScrollLineUp => {
@@ -894,9 +896,9 @@ impl TerminalDevice<'_> {
         let menu = OneLineWidget::with_menu(self.menu.iter(), self.keymap);
 
         self.terminal.draw(|frame| {
-            let with_cmdline = offset <= 0;
-            let with_cwd = offset <= 1;
-            let with_proc_file = offset <= 2;
+            let with_cmdline = offset < 1;
+            let with_cwd = offset < 2;
+            let with_proc_file = offset < 3;
             let mut rects = GridPane::new(frame.area())
                 .with_row_if(&[&cmdline_widget], with_cmdline)
                 .with_row_if(&[&cwd_widget], with_cwd)
