@@ -248,6 +248,21 @@ impl PidStack {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum VerticalScroll {
+    Line(usize),
+    Block,
+}
+
+impl Into<u16> for VerticalScroll {
+    fn into(self) -> u16 {
+        match self {
+            Self::Line(value) => value as u16,
+            Self::Block => 1u16,
+        }
+    }
+}
+
 macro_rules! format_metric {
     ($metrics:expr, $field:ident) => {
         TerminalDevice::format_option($metrics.as_ref().and_then(|m| m.$field.strings().next()))
@@ -267,7 +282,7 @@ pub struct TerminalDevice<'t> {
     /// Pane offset (except for the table)
     pane_offset: u16,
     /// Number of lines to scroll vertically up and down
-    vertical_scroll: usize,
+    vertical_scroll: VerticalScroll,
     /// Horizontal and vertical overflow (whether the table is bigger than the screen)
     overflow: Area<bool>,
     /// Column headers for metrics
@@ -308,7 +323,7 @@ impl TerminalDevice<'_> {
             terminal,
             table_offset: Default::default(),
             pane_offset: 0,
-            vertical_scroll: 1,
+            vertical_scroll: VerticalScroll::Line(1),
             overflow: Area::default(),
             metric_headers: Vec::new(),
             limit_slots: Vec::new(),
@@ -423,7 +438,7 @@ impl TerminalDevice<'_> {
             }
         })?;
         self.overflow = new_overflow;
-        self.vertical_scroll = body_height.div_ceil(2) as usize;
+        self.vertical_scroll = VerticalScroll::Line(body_height.div_ceil(2) as usize);
         self.body_height = body_height as usize;
         Ok(())
     }
@@ -495,7 +510,7 @@ impl TerminalDevice<'_> {
                     void!(self.bookmarks.set_action(BookmarkAction::PreviousPage));
                 }
                 _ => {
-                    self.pane_offset = self.pane_offset.saturating_sub(self.vertical_scroll as u16);
+                    self.pane_offset = self.pane_offset.saturating_sub(self.vertical_scroll.into());
                 }
             },
             Action::ScrollPageDown => match self.pane_kind {
@@ -506,7 +521,8 @@ impl TerminalDevice<'_> {
                     }
                 }
                 _ => {
-                    self.pane_offset += self.vertical_scroll as u16;
+                    self.pane_offset +=
+                        self.pane_offset.saturating_add(self.vertical_scroll.into());
                 }
             },
             Action::ScrollLineUp => {
@@ -813,7 +829,7 @@ impl TerminalDevice<'_> {
             if let Some(Some(main_rect)) = rects.first_mut() {
                 let (inner_height, offset) = main.prepare(main_rect);
                 self.pane_offset = offset;
-                self.vertical_scroll = inner_height.div_ceil(2) as usize;
+                self.vertical_scroll = VerticalScroll::Line(inner_height.div_ceil(2) as usize);
             }
             let mut r = OptionalRenderer::new(frame, &mut rects);
             r.render_widget(main);
@@ -831,6 +847,7 @@ impl TerminalDevice<'_> {
 
     fn render_details(&mut self, details: &ProcessDetails) -> anyhow::Result<()> {
         self.pane_kind = PaneKind::Process;
+        let offset = self.pane_offset;
         let pinfo = details.process();
         let cmdline = pinfo.cmdline();
         let metrics = details.metrics();
@@ -867,22 +884,31 @@ impl TerminalDevice<'_> {
         let menu = OneLineWidget::with_menu(self.menu.iter(), self.keymap);
 
         self.terminal.draw(|frame| {
+            let with_cmdline = offset <= 0;
+            let with_proc_file = offset <= 1;
             let mut rects = GridPane::new(frame.area())
-                .with_row(&[&cmdline_widget])
-                .with_row(&[&proc_widget, &file_widget])
+                .with_row_if(&[&cmdline_widget], with_cmdline)
+                .with_row_if(&[&proc_widget, &file_widget], with_proc_file)
                 .with_row(&[&cpu_widget, &mem_widget])
                 .with_line(&menu)
                 .build();
             let mut r = OptionalRenderer::new(frame, &mut rects);
-            r.render_widget(cmdline_widget);
-            r.render_widget(proc_widget);
-            r.render_widget(file_widget);
+            if with_cmdline {
+                r.render_widget(cmdline_widget);
+            }
+            if with_proc_file {
+                r.render_widget(proc_widget);
+                r.render_widget(file_widget);
+            }
             r.render_widget(cpu_widget);
             r.render_widget(mem_widget);
             r.render_widget(Clear);
             r.render_widget(menu);
         })?;
-        self.vertical_scroll = 1; // scrolling by block not by line.
+        if self.pane_offset > 2 {
+            self.pane_offset = 2;
+        }
+        self.vertical_scroll = VerticalScroll::Block; // scrolling by block not by line.
         Ok(())
     }
 }

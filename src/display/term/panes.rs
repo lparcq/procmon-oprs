@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2024  Laurent Pelecq
+// Copyright (C) 2024-2025  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -508,6 +508,14 @@ impl GridPane {
         }
         self.lines.push(GridLine::Row(row.len(), height));
         self
+    }
+
+    pub(crate) fn with_row_if<W: ReactiveWidget>(self, row: &[&W], cond: bool) -> Self {
+        if cond {
+            self.with_row(row)
+        } else {
+            self
+        }
     }
 
     pub(crate) fn with_line<W: ReactiveWidget>(mut self, widget: &W) -> Self {
