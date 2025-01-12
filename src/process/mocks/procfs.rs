@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2024 Laurent Pelecq
+// Copyright (C) 2024-2025 Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -144,6 +144,10 @@ pub(crate) mod process {
                 .as_ref()
                 .map(PathBuf::from)
                 .ok_or_else(|| new_error("no executable"))
+        }
+
+        pub(crate) fn cwd(&self) -> ProcResult<PathBuf> {
+            Err(new_error("Process::cwd not implemented"))
         }
 
         pub(crate) fn fd(&self) -> ProcResult<FDsIter> {

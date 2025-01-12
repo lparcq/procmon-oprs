@@ -36,8 +36,8 @@ use crate::{
     clock::Timer,
     console::{is_tty, BuiltinTheme, EventChannel},
     process::{
-        format::human_duration, Aggregation, Collector, FormattedMetric, LimitKind, ProcessDetails,
-        ProcessFilter, ProcessIdentity, ProcessSamples,
+        self, format::human_duration, Aggregation, Collector, FormattedMetric, LimitKind,
+        ProcessDetails, ProcessFilter, ProcessIdentity, ProcessSamples,
     },
 };
 
@@ -852,8 +852,16 @@ impl TerminalDevice<'_> {
         let cmdline = pinfo.cmdline();
         let metrics = details.metrics();
 
+        let mut block_count = 0;
         let cmdline_widget =
             OneLineWidget::new(Text::from(cmdline), Style::default(), Some("Command"));
+        block_count += 1;
+        let cwd_widget = OneLineWidget::new(
+            Text::from(process::format_result(pinfo.process().cwd())),
+            Style::default(),
+            Some("Working Directory"),
+        );
+        block_count += 1;
         let proc_fields = [
             ("Name", format!(" {} ", details.name())),
             ("Process ID", format!("{}", pinfo.pid())),
@@ -869,6 +877,7 @@ impl TerminalDevice<'_> {
             ("I/O Write", format_metric!(metrics, io_write_total)),
         ];
         let file_widget = FieldsWidget::new("Files", &file_fields);
+        block_count += 1;
         let cpu_fields = [
             ("CPU", format_metric!(metrics, time_cpu)),
             ("Elapsed", format_metric!(metrics, time_elapsed)),
@@ -879,15 +888,18 @@ impl TerminalDevice<'_> {
             ("RSS", format_metric!(metrics, mem_rss)),
             ("Data", format_metric!(metrics, mem_data)),
         ];
-
         let mem_widget = FieldsWidget::new("Memory", &mem_fields);
+        block_count += 1;
+
         let menu = OneLineWidget::with_menu(self.menu.iter(), self.keymap);
 
         self.terminal.draw(|frame| {
             let with_cmdline = offset <= 0;
-            let with_proc_file = offset <= 1;
+            let with_cwd = offset <= 1;
+            let with_proc_file = offset <= 2;
             let mut rects = GridPane::new(frame.area())
                 .with_row_if(&[&cmdline_widget], with_cmdline)
+                .with_row_if(&[&cwd_widget], with_cwd)
                 .with_row_if(&[&proc_widget, &file_widget], with_proc_file)
                 .with_row(&[&cpu_widget, &mem_widget])
                 .with_line(&menu)
@@ -895,6 +907,9 @@ impl TerminalDevice<'_> {
             let mut r = OptionalRenderer::new(frame, &mut rects);
             if with_cmdline {
                 r.render_widget(cmdline_widget);
+            }
+            if with_cwd {
+                r.render_widget(cwd_widget);
             }
             if with_proc_file {
                 r.render_widget(proc_widget);
@@ -905,8 +920,8 @@ impl TerminalDevice<'_> {
             r.render_widget(Clear);
             r.render_widget(menu);
         })?;
-        if self.pane_offset > 2 {
-            self.pane_offset = 2;
+        if self.pane_offset >= block_count {
+            self.pane_offset = block_count.saturating_sub(1);
         }
         self.vertical_scroll = VerticalScroll::Block; // scrolling by block not by line.
         Ok(())

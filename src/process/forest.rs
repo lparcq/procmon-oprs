@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2024 Laurent Pelecq
+// Copyright (C) 2024-2025  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -38,6 +38,48 @@ pub(crate) use super::mocks::procfs::{
     ProcResult,
 };
 
+fn format_path(path: PathBuf) -> String {
+    path.to_str()
+        .map(String::from)
+        .unwrap_or_else(|| path.to_string_lossy().to_string())
+}
+
+#[cfg(not(test))]
+mod format {
+    use super::format_path;
+    use procfs::ProcError;
+
+    pub(crate) fn format_process_error(err: ProcError) -> String {
+        let msg = match err {
+            ProcError::PermissionDenied(_) => "permission denied",
+            ProcError::NotFound(_) => "not found",
+            ProcError::Incomplete(_) => "incomplete",
+            _ => "unknown error",
+        };
+        match err {
+            ProcError::PermissionDenied(None)
+            | ProcError::NotFound(None)
+            | ProcError::Incomplete(None) => msg.to_string(),
+            ProcError::PermissionDenied(Some(path))
+            | ProcError::NotFound(Some(path))
+            | ProcError::Incomplete(Some(path)) => format!("{}: {}", format_path(path), msg),
+            ProcError::Io(err, None) => err.to_string(),
+            ProcError::Io(err, Some(path)) => format!("{}: {}", format_path(path), err),
+            ProcError::Other(err) => err,
+            ProcError::InternalError(err) => err.to_string(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod format {
+    use super::super::mocks::procfs::ProcError;
+
+    pub(crate) fn format_process_error(err: ProcError) -> String {
+        format!("{:?}", err)
+    }
+}
+
 use super::{FormattedMetric, Limit, ProcessStat, SystemConf};
 
 #[derive(thiserror::Error, Debug)]
@@ -49,6 +91,14 @@ pub enum ProcessError {
 }
 
 pub type ProcessResult<T> = Result<T, ProcessError>;
+
+/// Format a result returned by procfs.
+pub fn format_result(res: ProcResult<PathBuf>) -> String {
+    match res {
+        Ok(path) => format_path(path),
+        Err(err) => format::format_process_error(err),
+    }
+}
 
 /// Executable name
 ///
