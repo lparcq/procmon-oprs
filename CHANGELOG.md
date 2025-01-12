@@ -2,12 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.33.0] - 2025-01-12
+
+### 🚀 Features
+
+- Display the process working directory in the details
+
+### 🐛 Bug Fixes
+
+- Scroll the details by blocks
+- Scroll down one block at a time in details
+
 ## [0.32.0] - 2025-01-11
 
 ### 🚀 Features
 
 - Add option --root to select the root PID.
 - Select the root of the tree interactively.
+
+### ⚙️ Miscellaneous Tasks
+
+- Release procmon-oprs version 0.32.0
 
 ## [0.31.1] - 2025-01-11
 
