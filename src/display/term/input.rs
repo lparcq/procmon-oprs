@@ -120,6 +120,8 @@ pub enum KeyMap {
     IncrementalSearch,
     #[strum(serialize = "details")]
     Details,
+    #[strum(serialize = "process")]
+    Process,
 }
 
 impl KeyMap {
@@ -134,8 +136,13 @@ impl KeyMap {
                 Event::Key(KEY_SEARCH_CANCEL) => Action::SearchCancel,
                 _ => Action::None,
             },
-
-            KeyMap::Help | KeyMap::Details => match evt {
+            KeyMap::Help | KeyMap::Process => match evt {
+                Event::Key(KEY_QUIT) | Event::Key(KEY_ESCAPE) => Action::SwitchBack,
+                Event::Key(Key::PageDown) => Action::ScrollPageDown,
+                Event::Key(Key::PageUp) => Action::ScrollPageUp,
+                _ => Action::None,
+            },
+            KeyMap::Details => match evt {
                 Event::Key(KEY_QUIT) | Event::Key(KEY_ESCAPE) => Action::SwitchBack,
                 Event::Key(KEY_SELECT_PARENT) => Action::SelectParent,
                 Event::Key(Key::PageDown) => Action::ScrollPageDown,

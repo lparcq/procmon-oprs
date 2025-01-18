@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2024  Laurent Pelecq
+// Copyright (C) 2024-2025  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -16,7 +16,7 @@
 
 use crate::process::FormattedMetric;
 
-use super::{DisplayDevice, PaneData, SliceIter};
+use super::{DisplayDevice, PaneData, PaneKind, SliceIter};
 
 /// Null device
 pub struct NullDevice {}
@@ -36,7 +36,12 @@ impl DisplayDevice for NullDevice {
         Ok(())
     }
 
-    fn render(&mut self, _pane: PaneData, _redraw: bool) -> anyhow::Result<()> {
+    fn render(
+        &mut self,
+        _pane_kind: PaneKind,
+        _data: PaneData,
+        _redraw: bool,
+    ) -> anyhow::Result<()> {
         Ok(())
     }
 }

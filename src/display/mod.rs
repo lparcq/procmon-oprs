@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020-2024  Laurent Pelecq
+// Copyright (C) 2020-2025  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@ use std::slice::Iter as SliceIter;
 
 use crate::{
     clock::Timer,
-    process::{Collector, FormattedMetric, ProcessDetails},
+    process::{Collector, FormattedMetric, Process, ProcessDetails},
 };
 
 pub mod null;
@@ -32,21 +32,32 @@ pub enum PauseStatus {
     Action(Interaction),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
+pub enum DataKind {
+    Details,
+    Environment,
+    Files,
+    Maps,
+    Threads,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum PaneKind {
     Main,
-    Process,
+    Process(DataKind),
     Help,
 }
 
-/// Pane to display.
+/// Data to display the pane.
 pub enum PaneData<'a, 'p> {
-    /// The main pane to display process metrics.
-    Main(&'p Collector<'a>),
-    /// The pane to display a single process.
-    Process(&'p ProcessDetails<'a>),
-    /// The pane for help.
-    Help,
+    /// No data.
+    None,
+    /// The collector for all processes.
+    Collector(&'p Collector<'a>),
+    /// The details for one process.
+    Details(&'p ProcessDetails<'a>),
+    /// The process.
+    Process(&'p Process),
 }
 
 pub trait DisplayDevice {
@@ -60,7 +71,7 @@ pub trait DisplayDevice {
     ///
     /// If `redraw` is true, it is a hint to tell to the device to redraw
     /// entirely the output.
-    fn render(&mut self, pane: PaneData, redraw: bool) -> anyhow::Result<()>;
+    fn render(&mut self, pane_kind: PaneKind, data: PaneData, redraw: bool) -> anyhow::Result<()>;
 
     /// Pause for the given duration.
     fn pause(&mut self, _: &mut Timer) -> anyhow::Result<PauseStatus> {

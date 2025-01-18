@@ -19,7 +19,7 @@ use crate::{
     process::{Aggregation, Collector, FormattedMetric, ProcessIdentity},
 };
 
-use super::{DisplayDevice, PaneData, SliceIter};
+use super::{DisplayDevice, PaneData, PaneKind, SliceIter};
 
 const REPEAT_HEADER_EVERY: u16 = 20;
 const RESIZE_IF_COLUMNS_SHRINK: usize = 2;
@@ -307,9 +307,9 @@ impl DisplayDevice for TextDevice {
         Ok(())
     }
 
-    fn render(&mut self, pane: PaneData, redraw: bool) -> anyhow::Result<()> {
-        match pane {
-            PaneData::Main(collector) => {
+    fn render(&mut self, kind: PaneKind, data: PaneData, redraw: bool) -> anyhow::Result<()> {
+        match (kind, data) {
+            (PaneKind::Main, PaneData::Collector(collector)) => {
                 if collector.is_empty() {
                     eprintln!("no process found")
                 } else {
@@ -327,8 +327,7 @@ impl DisplayDevice for TextDevice {
                     self.table.print(redraw);
                 }
             }
-            PaneData::Process(_) => panic!("no process pane for text device"),
-            PaneData::Help => panic!("no process help for text device"),
+            (_, _) => panic!("invalid pane for text device"),
         }
         Ok(())
     }

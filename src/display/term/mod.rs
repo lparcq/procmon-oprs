@@ -36,12 +36,12 @@ use crate::{
     clock::Timer,
     console::{is_tty, BuiltinTheme, EventChannel},
     process::{
-        self, format::human_duration, Aggregation, Collector, FormattedMetric, LimitKind,
+        self, format::human_duration, Aggregation, Collector, FormattedMetric, LimitKind, Process,
         ProcessDetails, ProcessFilter, ProcessIdentity, ProcessSamples,
     },
 };
 
-use super::{DisplayDevice, PaneData, PaneKind, PauseStatus, SliceIter};
+use super::{DataKind, DisplayDevice, PaneData, PaneKind, PauseStatus, SliceIter};
 
 mod input;
 mod panes;
@@ -52,7 +52,7 @@ mod types;
 use input::{menu, Action, BookmarkAction, Bookmarks, KeyMap, MenuEntry, SearchEdit};
 use panes::{
     BigTableWidget, FieldsWidget, GridPane, MarkdownWidget, OneLineWidget, OptionalRenderer, Pane,
-    ReactiveWidget, SingleScrollablePane, TableStyle,
+    ScrollableWidgetState, SingleScrollablePane, TableStyle,
 };
 use types::{Area, MaxLength, UnboundedArea};
 
@@ -426,16 +426,15 @@ impl TerminalDevice<'_> {
                 body_height = inner_height - headers_height;
                 new_overflow = overflow;
             }
-            let cursor = if show_cursor {
-                menu.cursor()
-                    .map(|p| Position::new(p.x, area.y + area.height - 1))
+            let mut cursor = if show_cursor {
+                Some(Position::new(0, area.y + area.height - 1))
             } else {
                 None
             };
             let mut r = OptionalRenderer::new(frame, &mut rects);
             r.render_widget(main);
             r.render_widget(status_bar);
-            r.render_widget(menu);
+            r.render_stateful_widget(menu, &mut cursor);
             if let Some(cursor) = cursor {
                 frame.set_cursor_position(cursor);
             }
@@ -817,10 +816,11 @@ impl TerminalDevice<'_> {
         Ok(())
     }
 
-    fn render_help(&mut self) -> anyhow::Result<()> {
-        self.pane_kind = PaneKind::Help;
-        let offset = self.pane_offset;
-        let mut main = MarkdownWidget::new("OPRS", HELP, offset);
+    fn render_scrollable_pane<W>(&mut self, widget: W) -> anyhow::Result<()>
+    where
+        W: StatefulWidget<State = ScrollableWidgetState>,
+    {
+        let mut state = ScrollableWidgetState::new(self.pane_offset, 0);
         let menu = OneLineWidget::with_menu(self.menu.iter(), self.keymap);
 
         self.terminal.draw(|frame| {
@@ -828,16 +828,18 @@ impl TerminalDevice<'_> {
                 .with(&menu)
                 .build();
 
-            if let Some(Some(main_rect)) = rects.first_mut() {
-                let (inner_height, offset) = main.prepare(main_rect);
-                self.pane_offset = offset;
-                self.vertical_scroll = VerticalScroll::Line(inner_height.div_ceil(2) as usize);
-            }
             let mut r = OptionalRenderer::new(frame, &mut rects);
-            r.render_widget(main);
+            r.render_stateful_widget(widget, &mut state);
             r.render_widget(menu);
+            self.pane_offset = state.offset;
+            self.vertical_scroll = VerticalScroll::Line(state.inner_height.div_ceil(2) as usize);
         })?;
         Ok(())
+    }
+
+    fn render_help(&mut self) -> anyhow::Result<()> {
+        self.pane_kind = PaneKind::Help;
+        self.render_scrollable_pane(MarkdownWidget::new("OPRS", HELP))
     }
 
     fn format_option<D: fmt::Display>(option: Option<D>) -> String {
@@ -848,7 +850,7 @@ impl TerminalDevice<'_> {
     }
 
     fn render_details(&mut self, details: &ProcessDetails) -> anyhow::Result<()> {
-        self.pane_kind = PaneKind::Process;
+        self.pane_kind = PaneKind::Process(DataKind::Details);
         let offset = self.pane_offset;
         let pinfo = details.process();
         let cmdline = pinfo.cmdline();
@@ -928,6 +930,11 @@ impl TerminalDevice<'_> {
         self.vertical_scroll = VerticalScroll::Block; // scrolling by block not by line.
         Ok(())
     }
+
+    fn render_process(&mut self, kind: DataKind, process: &Process) -> anyhow::Result<()> {
+        self.pane_kind = PaneKind::Process(kind);
+        panic!("not implemented");
+    }
 }
 
 impl DisplayDevice for TerminalDevice<'_> {
@@ -976,9 +983,9 @@ impl DisplayDevice for TerminalDevice<'_> {
     }
 
     /// Render the current pane.
-    fn render(&mut self, pane: PaneData, _redraw: bool) -> anyhow::Result<()> {
-        match pane {
-            PaneData::Main(collector) => {
+    fn render(&mut self, kind: PaneKind, data: PaneData, _redraw: bool) -> anyhow::Result<()> {
+        match (kind, data) {
+            (PaneKind::Main, PaneData::Collector(collector)) => {
                 let is_incremental_search = self.bookmarks.is_incremental_search();
                 match self.keymap {
                     KeyMap::IncrementalSearch if is_incremental_search => (),
@@ -995,14 +1002,19 @@ impl DisplayDevice for TerminalDevice<'_> {
                 }
                 self.render_tree(collector)
             }
-            PaneData::Process(details) => {
+            (PaneKind::Process(DataKind::Details), PaneData::Details(details)) => {
                 self.set_keymap(KeyMap::Details);
                 self.render_details(details)
             }
-            PaneData::Help => {
+            (PaneKind::Process(kind), PaneData::Process(proc)) => {
+                self.set_keymap(KeyMap::Process);
+                self.render_process(kind, proc)
+            }
+            (PaneKind::Help, _) => {
                 self.set_keymap(KeyMap::Help);
                 self.render_help()
             }
+            (kind, _) => panic!("{kind:?}: invalid pane kind or data"),
         }
     }
 

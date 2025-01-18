@@ -28,8 +28,8 @@ use crate::{
     clock::{DriftMonitor, Timer},
     console::BuiltinTheme,
     display::{
-        DisplayDevice, Interaction, NullDevice, PaneData, PaneKind, PauseStatus, TerminalDevice,
-        TextDevice,
+        DataKind, DisplayDevice, Interaction, NullDevice, PaneData, PaneKind, PauseStatus,
+        TerminalDevice, TextDevice,
     },
     export::{CsvExporter, Exporter, RrdExporter},
     process::{
@@ -231,10 +231,16 @@ impl<'s> Application<'s> {
                 false
             };
             device.render(
+                pane_kind,
                 match pane_kind {
-                    PaneKind::Main => PaneData::Main(&collector),
-                    PaneKind::Process => PaneData::Process(details.as_ref().unwrap()),
-                    PaneKind::Help => PaneData::Help,
+                    PaneKind::Main => PaneData::Collector(&collector),
+                    PaneKind::Process(DataKind::Details) => {
+                        PaneData::Details(details.as_ref().unwrap())
+                    }
+                    PaneKind::Process(_) => {
+                        PaneData::Process(details.as_ref().unwrap().process().process())
+                    }
+                    PaneKind::Help => PaneData::None,
                 },
                 targets_updated,
             )?;
@@ -255,8 +261,10 @@ impl<'s> Application<'s> {
                         }
                         Interaction::SwitchToHelp => pane_kind = PaneKind::Help,
                         Interaction::SwitchBack => match (pane_kind, &details) {
-                            (PaneKind::Help, Some(_)) => pane_kind = PaneKind::Process,
-                            (PaneKind::Process, Some(_)) => {
+                            (PaneKind::Help, Some(_)) => {
+                                pane_kind = PaneKind::Process(DataKind::Details)
+                            }
+                            (PaneKind::Process(_), Some(_)) => {
                                 details = None;
                                 pane_kind = PaneKind::Main;
                             }
@@ -265,13 +273,13 @@ impl<'s> Application<'s> {
                         Interaction::SelectPid(pid) => {
                             details = self.get_details(pid, sysconf);
                             if details.is_some() {
-                                pane_kind = PaneKind::Process;
+                                pane_kind = PaneKind::Process(DataKind::Details);
                             }
                         }
                         Interaction::SelectParent => {
                             details = Application::get_parent_details(details, sysconf);
                             if details.is_some() {
-                                pane_kind = PaneKind::Process;
+                                pane_kind = PaneKind::Process(DataKind::Details);
                             }
                         }
                         Interaction::SelectRootPid(new_root_pid) => {

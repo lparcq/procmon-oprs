@@ -20,7 +20,7 @@ use ratatui::{
     prelude::*,
     style::{Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table, Widget, Wrap},
+    widgets::{Block, Borders, Cell, Paragraph, Row, StatefulWidget, Table, Widget, Wrap},
     Frame,
 };
 use std::{cmp, fmt};
@@ -30,7 +30,7 @@ use super::{
     KeyMap, MenuEntry,
 };
 
-const BORDER_SIZE: u16 = 1;
+pub const BORDER_SIZE: u16 = 1;
 
 /// Format a text by applying header style.
 ///
@@ -150,13 +150,23 @@ impl TableStyle {
     }
 }
 
+/// Offset state
+pub struct ScrollableWidgetState {
+    pub offset: u16,
+    pub inner_height: u16,
+}
+
+impl ScrollableWidgetState {
+    pub fn new(offset: u16, inner_height: u16) -> Self {
+        Self {
+            offset,
+            inner_height,
+        }
+    }
+}
+
 /// Widget that adapt it's layout to the available space.
 pub trait ReactiveWidget: fmt::Debug + Widget {
-    /// Cursor position relative to widget origin
-    fn cursor(&self) -> Option<Position> {
-        None
-    }
-
     /// Minimum height in area.
     fn min_height(&self, area: Rect) -> u16;
 }
@@ -202,10 +212,6 @@ impl<'t> OneLineWidget<'t> {
 }
 
 impl ReactiveWidget for OneLineWidget<'_> {
-    fn cursor(&self) -> Option<Position> {
-        Some(Position::new(self.text_length, 0))
-    }
-
     fn min_height(&self, area: Rect) -> u16 {
         let borders = if self.title.is_some() {
             2 * BORDER_SIZE
@@ -239,51 +245,47 @@ impl Widget for OneLineWidget<'_> {
     }
 }
 
+impl StatefulWidget for OneLineWidget<'_> {
+    type State = Option<Position>;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        *state = state.map(|pos| Position::new(self.text_length, pos.y));
+        Widget::render(self, area, buf);
+    }
+}
+
 /// Scrollable long text that can exceed the screen height.
 #[derive(Debug)]
 pub(crate) struct MarkdownWidget<'l> {
     title: &'static str,
     text: Vec<Line<'l>>,
     text_height: u16,
-    offset: u16,
 }
 
 impl MarkdownWidget<'_> {
-    pub(crate) fn new(title: &'static str, text: &'static str, offset: u16) -> Self {
+    pub(crate) fn new(title: &'static str, text: &'static str) -> Self {
         let text = format_text(text);
         let text_height = text.len() as u16;
         Self {
             title,
             text,
             text_height,
-            offset,
         }
     }
-
-    /// Prepare the widget to fit in the area.
-    ///
-    /// Returns the inner height and the offset.
-    pub(crate) fn prepare(&mut self, area: &Rect) -> (u16, u16) {
-        let borders = BORDER_SIZE * 2;
-        let inner_height = area.height - borders;
-        let max_offset = self.text_height.saturating_sub(inner_height / 2);
-        self.offset = cmp::min(self.offset, max_offset);
-        (inner_height, self.offset)
-    }
 }
 
-impl ReactiveWidget for MarkdownWidget<'_> {
-    fn min_height(&self, area: Rect) -> u16 {
-        cmp::min(self.text_height + BORDER_SIZE * 2, area.height)
-    }
-}
+impl StatefulWidget for MarkdownWidget<'_> {
+    type State = ScrollableWidgetState;
 
-impl Widget for MarkdownWidget<'_> {
-    // Required method
-    fn render(self, area: Rect, buf: &mut Buffer)
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State)
     where
         Self: Sized,
     {
+        let borders = BORDER_SIZE * 2;
+        let inner_height = area.height - borders;
+        let max_offset = self.text_height.saturating_sub(inner_height / 2);
+        state.offset = cmp::min(state.offset, max_offset);
+        state.inner_height = inner_height;
         Paragraph::new(Text::from(self.text))
             .block(
                 Block::new()
@@ -292,7 +294,7 @@ impl Widget for MarkdownWidget<'_> {
                     .borders(Borders::ALL),
             )
             .wrap(Wrap { trim: false })
-            .scroll((self.offset, 0))
+            .scroll((state.offset, 0))
             .render(area, buf);
     }
 }
@@ -606,6 +608,21 @@ impl<'a, 'f, 'v> OptionalRenderer<'a, 'f, 'v> {
         match self.iter.next() {
             Some(Some(rect)) => {
                 self.frame.render_widget(widget, rect);
+                true
+            }
+            Some(None) => true,
+            None => false,
+        }
+    }
+
+    pub(crate) fn render_stateful_widget<W: StatefulWidget>(
+        &mut self,
+        widget: W,
+        state: &mut W::State,
+    ) -> bool {
+        match self.iter.next() {
+            Some(Some(rect)) => {
+                self.frame.render_stateful_widget(widget, rect, state);
                 true
             }
             Some(None) => true,
