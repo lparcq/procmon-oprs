@@ -20,10 +20,13 @@ use ratatui::{
     prelude::*,
     style::{Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Cell, Paragraph, Row, StatefulWidget, Table, Widget, Wrap},
+    widgets::{
+        Block, Borders, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        StatefulWidget, Table, Widget, Wrap,
+    },
     Frame,
 };
-use std::{cmp, fmt};
+use std::{cell::RefCell, cmp, fmt};
 
 use super::{
     types::{Area, MaxLength, UnboundedArea},
@@ -151,17 +154,24 @@ impl TableStyle {
 }
 
 /// Offset state
+#[derive(Debug, Default)]
 pub struct ScrollableWidgetState {
     pub offset: u16,
     pub inner_height: u16,
+    pub overflow: Area<bool>,
 }
 
 impl ScrollableWidgetState {
-    pub fn new(offset: u16, inner_height: u16) -> Self {
+    pub fn new(offset: u16, inner_height: u16, overflow: Area<bool>) -> Self {
         Self {
             offset,
             inner_height,
+            overflow,
         }
+    }
+
+    pub fn with_offset(offset: u16) -> Self {
+        Self::new(offset, 0, Area::default())
     }
 }
 
@@ -286,6 +296,8 @@ impl StatefulWidget for MarkdownWidget<'_> {
         let max_offset = self.text_height.saturating_sub(inner_height / 2);
         state.offset = cmp::min(state.offset, max_offset);
         state.inner_height = inner_height;
+        let mut scroll_state =
+            ScrollbarState::new(max_offset as usize).position(state.offset as usize);
         Paragraph::new(Text::from(self.text))
             .block(
                 Block::new()
@@ -296,18 +308,25 @@ impl StatefulWidget for MarkdownWidget<'_> {
             .wrap(Wrap { trim: false })
             .scroll((state.offset, 0))
             .render(area, buf);
+        let inner_area = area.inner(Margin {
+            vertical: BORDER_SIZE,
+            horizontal: 0,
+        });
+        Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .render(inner_area, buf, &mut scroll_state);
     }
 }
 
 /// Table that can overflow horizontally and vertically.
 #[derive(Debug)]
 pub(crate) struct BigTableWidget<'a, 'b, 'c> {
-    headers: Vec<Cell<'a>>,
+    headers: RefCell<Vec<Cell<'a>>>,
     headers_height: u16,
     rows: Vec<Vec<Cell<'b>>>,
     widths: &'c [u16],
-    offset: UnboundedArea,
-    constraints: Vec<Constraint>,
+    shifted: Area<bool>,
     style: TableStyle,
 }
 
@@ -321,20 +340,23 @@ impl<'a, 'b, 'c> BigTableWidget<'a, 'b, 'c> {
         style: TableStyle,
     ) -> Self {
         Self {
-            headers,
+            headers: RefCell::new(headers),
             headers_height,
             rows,
             widths,
-            offset,
-            constraints: Vec::new(),
+            shifted: Area::new(offset.horizontal.is_zero(), offset.vertical.is_zero()),
             style,
         }
     }
+}
 
-    /// Prepare the widget to fit in the area.
-    ///
-    /// Returns the inner height and the overflow.
-    pub(crate) fn prepare(&mut self, area: &Rect) -> (u16, Area<bool>) {
+impl StatefulWidget for BigTableWidget<'_, '_, '_> {
+    type State = ScrollableWidgetState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State)
+    where
+        Self: Sized,
+    {
         let borders = BORDER_SIZE * 2;
         let outter_area = Size::new(area.width, area.height);
         let inner_area = Size::new(outter_area.width - borders, outter_area.height - borders);
@@ -346,35 +368,16 @@ impl<'a, 'b, 'c> BigTableWidget<'a, 'b, 'c> {
             self.widths,
             self.style.column_spacing,
         );
-        self.constraints = constraints;
         let table_height = self.headers_height + self.rows.len() as u16;
-        let overflow = Area::new(hoverflow, table_height > inner_area.height);
-        let shifted = Area::new(
-            self.offset.horizontal.is_zero(),
-            self.offset.vertical.is_zero(),
-        );
-        let nav = navigation_arrows(shifted, overflow);
-        self.headers[0] = Cell::from(nav);
-        (inner_area.height, overflow)
-    }
-}
-
-impl ReactiveWidget for BigTableWidget<'_, '_, '_> {
-    fn min_height(&self, area: Rect) -> u16 {
-        cmp::min(self.headers_height + BORDER_SIZE * 2, area.height)
-    }
-}
-
-impl Widget for BigTableWidget<'_, '_, '_> {
-    // Required method
-    fn render(self, area: Rect, buf: &mut Buffer)
-    where
-        Self: Sized,
-    {
+        state.overflow = Area::new(hoverflow, table_height > inner_area.height);
+        state.inner_height = inner_area.height;
+        let mut headers = Vec::with_capacity(self.headers.borrow().len());
+        headers.push(Cell::from(navigation_arrows(self.shifted, state.overflow)));
+        headers.extend(self.headers.into_inner().drain(..).skip(1));
         let rows = self.style.apply(self.rows, self.widths.len());
-        let table = Table::new(rows, self.constraints)
+        let table = Table::new(rows, constraints)
             .block(Block::default().borders(Borders::ALL))
-            .header(Row::new(self.headers).height(self.headers_height))
+            .header(Row::new(headers).height(self.headers_height))
             .column_spacing(self.style.column_spacing);
         Widget::render(table, area, buf);
     }

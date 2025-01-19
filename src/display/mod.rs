@@ -35,10 +35,10 @@ pub enum PauseStatus {
 #[derive(Debug, Clone, Copy)]
 pub enum DataKind {
     Details,
-    Environment,
-    Files,
-    Maps,
-    Threads,
+    _Environment,
+    _Files,
+    _Maps,
+    _Threads,
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -390,7 +390,7 @@ impl TerminalDevice<'_> {
         let headers_height = self.headers_height as u16;
         let is_search = self.bookmarks.is_incremental_search();
         let show_cursor = is_search;
-        let mut main = BigTableWidget::new(
+        let main = BigTableWidget::new(
             headers,
             headers_height,
             rows,
@@ -421,20 +421,18 @@ impl TerminalDevice<'_> {
                 .with(&menu)
                 .build();
 
-            if let Some(Some(main_rect)) = rects.first_mut() {
-                let (inner_height, overflow) = main.prepare(main_rect);
-                body_height = inner_height - headers_height;
-                new_overflow = overflow;
-            }
+            let mut state = ScrollableWidgetState::default();
             let mut cursor = if show_cursor {
                 Some(Position::new(0, area.y + area.height - 1))
             } else {
                 None
             };
             let mut r = OptionalRenderer::new(frame, &mut rects);
-            r.render_widget(main);
+            r.render_stateful_widget(main, &mut state);
             r.render_widget(status_bar);
             r.render_stateful_widget(menu, &mut cursor);
+            body_height = state.inner_height - headers_height;
+            new_overflow = state.overflow;
             if let Some(cursor) = cursor {
                 frame.set_cursor_position(cursor);
             }
@@ -820,7 +818,7 @@ impl TerminalDevice<'_> {
     where
         W: StatefulWidget<State = ScrollableWidgetState>,
     {
-        let mut state = ScrollableWidgetState::new(self.pane_offset, 0);
+        let mut state = ScrollableWidgetState::with_offset(self.pane_offset);
         let menu = OneLineWidget::with_menu(self.menu.iter(), self.keymap);
 
         self.terminal.draw(|frame| {
@@ -931,7 +929,7 @@ impl TerminalDevice<'_> {
         Ok(())
     }
 
-    fn render_process(&mut self, kind: DataKind, process: &Process) -> anyhow::Result<()> {
+    fn render_process(&mut self, kind: DataKind, _process: &Process) -> anyhow::Result<()> {
         self.pane_kind = PaneKind::Process(kind);
         panic!("not implemented");
     }
