@@ -21,7 +21,7 @@ use strum_macros::Display as StrumDisplay;
 
 use super::{
     forest::{ProcessClassifier, ProcessResult},
-    format, Aggregation, Collector, Forest, FormattedMetric, Limit, MetricNamesParser, ProcessInfo,
+    format, Aggregation, Collector, Forest, FormattedMetric, MetricNamesParser, ProcessInfo,
     Sample, SystemConf, SystemStat, TargetContainer, TargetError, TargetId,
 };
 
@@ -176,19 +176,17 @@ impl<'s> FlatProcessManager<'s> {
 
         let mut targets = TargetContainer::new(sysconf, with_system);
         targets.push_all(target_ids)?;
-        targets.initialize(metrics.len());
         Ok(Self { targets })
     }
 
     /// Create a process manager only from PIDS. Discard PIDS that are not valid.
-    pub fn with_pids(sysconf: &'s SystemConf, metrics: &[FormattedMetric], pids: &[pid_t]) -> Self {
+    pub fn with_pids(sysconf: &'s SystemConf, pids: &[pid_t]) -> Self {
         let mut targets = TargetContainer::new(sysconf, true);
         pids.iter().for_each(|pid| {
             if let Err(err) = targets.push_by_pid(&TargetId::Pid(*pid)) {
                 log::warn!("{pid}: {err}");
             }
         });
-        targets.initialize(metrics.len());
         Self { targets }
     }
 }
@@ -214,17 +212,15 @@ impl ProcessClassifier for AcceptUserLand {
 /// A Process explorer that interactively displays the process tree.
 pub struct ForestProcessManager<'s> {
     sysconf: &'s SystemConf,
-    system_limits: Vec<Option<Limit>>,
     forest: Forest,
     context: ManagerContext,
     inactivity: u16,
 }
 
 impl<'s> ForestProcessManager<'s> {
-    pub fn new(sysconf: &'s SystemConf, metrics: &[FormattedMetric]) -> Result<Self, TargetError> {
+    pub fn new(sysconf: &'s SystemConf) -> Result<Self, TargetError> {
         Ok(Self {
             sysconf,
-            system_limits: vec![None; metrics.len()],
             forest: Forest::new(),
             context: ManagerContext::default(),
             inactivity: 0,
@@ -269,7 +265,6 @@ impl ProcessManager for ForestProcessManager<'_> {
             &system_info,
             None,
             &system.extract_metrics(collector.metrics()),
-            &self.system_limits,
         );
         if self.inactivity < INACTIVITY {
             self.inactivity += 1;

@@ -819,7 +819,6 @@ mod test {
             ColumnStatus::Rejected if !truncated => (),
             status => panic!("invalid status {status:?}"),
         }
-        const EXPECTED_NCOLS: usize = 5;
         assert_eq!(SCREEN_WIDTH, cc.inner_width);
         assert_eq!(0, cc.remaining_width);
         assert_eq!(expected_ncols, cc.constraints.len());

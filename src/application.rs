@@ -182,7 +182,7 @@ impl<'s> Application<'s> {
     ) -> anyhow::Result<()> {
         let mut collector = Collector::new(Cow::Borrowed(&self.metrics));
         let mut tmgt: Box<dyn ProcessManager> = if target_ids.is_empty() {
-            Box::new(ForestProcessManager::new(sysconf, &self.metrics)?)
+            Box::new(ForestProcessManager::new(sysconf)?)
         } else {
             Box::new(FlatProcessManager::new(sysconf, &self.metrics, target_ids)?)
         };
@@ -259,16 +259,20 @@ impl<'s> Application<'s> {
                             tmgt.context().map(|c| c.set_filter(filter));
                             tmgt.refresh(&mut collector)?;
                         }
-                        Interaction::SwitchToHelp => pane_kind = PaneKind::Help,
                         Interaction::SwitchBack => match (pane_kind, &details) {
-                            (PaneKind::Help, Some(_)) => {
-                                pane_kind = PaneKind::Process(DataKind::Details)
-                            }
-                            (PaneKind::Process(_), Some(_)) => {
+                            (PaneKind::Process(DataKind::Details), Some(_)) => {
                                 details = None;
                                 pane_kind = PaneKind::Main;
                             }
+                            (PaneKind::Help | PaneKind::Process(_), Some(_)) => {
+                                pane_kind = PaneKind::Process(DataKind::Details)
+                            }
                             (_, _) => pane_kind = PaneKind::Main,
+                        },
+                        Interaction::SwitchToHelp => pane_kind = PaneKind::Help,
+                        Interaction::SwitchTo(kind) => match pane_kind {
+                            PaneKind::Process(_) => pane_kind = PaneKind::Process(kind),
+                            _ => (),
                         },
                         Interaction::SelectPid(pid) => {
                             details = self.get_details(pid, sysconf);
@@ -289,16 +293,12 @@ impl<'s> Application<'s> {
                         }
                         Interaction::Narrow(pids) => {
                             log::debug!("switch to flat mode with {} PIDs", pids.len());
-                            tmgt = Box::new(FlatProcessManager::with_pids(
-                                sysconf,
-                                &self.metrics,
-                                &pids,
-                            ));
+                            tmgt = Box::new(FlatProcessManager::with_pids(sysconf, &pids));
                             tmgt.refresh(&mut collector)?;
                         }
                         Interaction::Wide => {
                             log::debug!("switch to explorer mode");
-                            tmgt = Box::new(ForestProcessManager::new(sysconf, &self.metrics)?);
+                            tmgt = Box::new(ForestProcessManager::new(sysconf)?);
                             tmgt.context().map(|c| c.set_root_pid(root_pid));
                             tmgt.refresh(&mut collector)?;
                         }

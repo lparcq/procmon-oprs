@@ -23,7 +23,7 @@ use strum_macros::{EnumIter, EnumMessage, EnumString, IntoStaticStr};
 use super::{
     format::{self, Formatter},
     parsers::parse_metric_spec,
-    Aggregation, AggregationSet,
+    AggregationSet,
 };
 
 const SHORT_NAME_MAX_LEN: usize = 10;
@@ -367,21 +367,6 @@ impl FormattedMetric {
             aggregations,
             format,
         }
-    }
-
-    /// Return true if it exists a limit associated to the metric for a given process
-    ///
-    /// A limit makes sense only for the raw value, not aggregations.
-    pub fn has_limit(&self) -> bool {
-        matches!(
-            self.id,
-            MetricId::FdAll
-                | MetricId::MapStackSize
-                | MetricId::MemRss
-                | MetricId::MemVm
-                | MetricId::ThreadCount
-                | MetricId::TimeCpu
-        ) && self.aggregations.has(Aggregation::None)
     }
 }
 

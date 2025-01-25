@@ -23,12 +23,9 @@ use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     slice::Iter as SliceIter,
 };
-use strum::{AsRefStr, IntoEnumIterator};
+use strum::IntoEnumIterator;
 
-use super::{
-    format, Aggregation, FormattedMetric, Limit, LimitValue, MetricId, ProcessInfo, SystemConf,
-    SystemStat,
-};
+use super::{format, Aggregation, FormattedMetric, MetricId, ProcessInfo, SystemConf, SystemStat};
 
 /// Tell if it makes sense to track metric changes
 ///
@@ -40,40 +37,6 @@ fn track_change(id: MetricId) -> bool {
     )
 }
 
-const UNLIMITED: &str = "∞";
-
-#[derive(Clone, Debug, AsRefStr)]
-pub enum LimitKind {
-    #[strum(serialize = "none")]
-    None,
-    #[strum(serialize = "soft")]
-    Soft,
-    #[strum(serialize = "hard")]
-    Hard,
-}
-
-/// Limit formatted like the corresponding metric
-#[derive(Debug)]
-struct FormattedLimit {
-    soft: String,
-    hard: String,
-}
-
-impl FormattedLimit {
-    fn new(metric: &FormattedMetric, limit: Limit) -> Self {
-        let soft = FormattedLimit::limit_to_string(limit.soft_limit, metric.format);
-        let hard = FormattedLimit::limit_to_string(limit.hard_limit, metric.format);
-        Self { soft, hard }
-    }
-
-    fn limit_to_string(value: LimitValue, fmt: format::Formatter) -> String {
-        match value {
-            LimitValue::Unlimited => UNLIMITED.to_string(),
-            LimitValue::Value(value) => fmt(value),
-        }
-    }
-}
-
 /// The raw sample value and the derived aggregations.
 ///
 /// The first value in _values_ is the raw value from the system. The following
@@ -82,24 +45,14 @@ impl FormattedLimit {
 /// Strings are the formatted values. If the samples don't contain the raw value
 /// (i.e. Aggregation::None is not selected), the first element in _values_ is the
 /// raw value that doesn't have a counterpart in _strings_.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Sample {
     values: Vec<u64>,
     strings: Vec<String>,
     trends: Vec<Ordering>,
-    limit: Option<FormattedLimit>,
 }
 
 impl Sample {
-    fn new(limit: Option<FormattedLimit>) -> Sample {
-        Sample {
-            values: Vec::new(),
-            strings: Vec::new(),
-            trends: Vec::new(),
-            limit,
-        }
-    }
-
     fn get_raw_value(&self) -> u64 {
         self.values[0]
     }
@@ -107,11 +60,6 @@ impl Sample {
     /// Return the numeric values.
     pub fn values(&self) -> SliceIter<u64> {
         self.values.iter()
-    }
-
-    /// Return the number of formatted strings
-    pub fn string_count(&self) -> usize {
-        self.strings.len()
     }
 
     /// Return the formatted strings
@@ -122,24 +70,6 @@ impl Sample {
     /// Return the trend of formatted strings
     pub fn trends(&self) -> SliceIter<Ordering> {
         self.trends.iter()
-    }
-
-    /// Return the soft limit for this metric as string
-    pub fn soft_limit(&'_ self) -> Option<&'_ str> {
-        self.limit.as_ref().map(|fl| fl.soft.as_str())
-    }
-
-    /// Return the hard limit for this metric as string
-    pub fn hard_limit(&'_ self) -> Option<&'_ str> {
-        self.limit.as_ref().map(|fl| fl.hard.as_str())
-    }
-
-    pub fn limit(&'_ self, kind: LimitKind) -> Option<&'_ str> {
-        match kind {
-            LimitKind::None => None,
-            LimitKind::Soft => self.soft_limit(),
-            LimitKind::Hard => self.hard_limit(),
-        }
     }
 
     fn push_raw(&mut self, value: u64) {
@@ -202,7 +132,6 @@ impl From<&[&str]> for Sample {
             values: Vec::new(),
             strings: strings.iter().map(|s| s.to_string()).collect(),
             trends: vec![Ordering::Equal; strings.len()],
-            limit: None,
         }
     }
 }
@@ -341,17 +270,15 @@ impl Updater {
         pinfo: Option<&ProcessInfo>,
         metrics: &[FormattedMetric],
         values: &[u64],
-        limits: &[Option<Limit>],
     ) -> ProcessSamples {
         let pid = pinfo.map(|pi| pi.pid()).unwrap_or(0);
         let parent_pid = pinfo.map(|pi| pi.parent_pid());
         let state = pinfo.map(|pi| pi.state()).unwrap_or(' ');
         let samples = metrics
             .iter()
-            .zip(values.iter().zip(limits.iter()))
-            .map(|(metric, (value_ref, limit_ref))| {
-                let flimit = limit_ref.map(|limit| FormattedLimit::new(metric, limit));
-                let mut sample = Sample::new(flimit);
+            .zip(values.iter())
+            .map(|(metric, value_ref)| {
+                let mut sample = Sample::default();
                 if !metric.aggregations.has(Aggregation::None) {
                     sample.push_raw(*value_ref);
                 }
@@ -525,13 +452,7 @@ impl<'a> Collector<'a> {
     }
 
     /// Record metrics
-    pub fn record(
-        &mut self,
-        target_name: &str,
-        pinfo: Option<&ProcessInfo>,
-        values: &[u64],
-        limits: &[Option<Limit>],
-    ) {
+    pub fn record(&mut self, target_name: &str, pinfo: Option<&ProcessInfo>, values: &[u64]) {
         let pid = pinfo.map(|pi| pi.pid()).unwrap_or(0);
         let parent_pid = pinfo.map(|pi| pi.parent_pid());
 
@@ -555,13 +476,8 @@ impl<'a> Collector<'a> {
                     .samples
                     .insert(
                         pid,
-                        self.updater.new_computed_values(
-                            target_name,
-                            pinfo,
-                            &self.metrics,
-                            values,
-                            limits,
-                        ),
+                        self.updater
+                            .new_computed_values(target_name, pinfo, &self.metrics, values),
                     )
                     .is_some()
                 {
@@ -574,8 +490,7 @@ impl<'a> Collector<'a> {
     /// Collect metrics
     pub fn collect(&mut self, target_name: &str, pinfo: &ProcessInfo, sysconf: &SystemConf) {
         let values = pinfo.extract_metrics(self.metrics(), sysconf);
-        let limits = pinfo.extract_limits(self.metrics(), sysconf);
-        self.record(target_name, Some(pinfo), &values, &limits);
+        self.record(target_name, Some(pinfo), &values);
     }
 
     /// Called when there is no more targets

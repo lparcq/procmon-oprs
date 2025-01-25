@@ -23,8 +23,6 @@ use procfs::{
     CpuInfo, CpuTime, Current, CurrentSI, KernelStats, Meminfo, ProcResult,
 };
 
-pub use procfs::process::{Limit, LimitValue};
-
 use super::{FormattedMetric, MetricId, Process};
 
 #[derive(thiserror::Error, Debug)]
@@ -41,26 +39,6 @@ fn elapsed_seconds_since(start_time: u64) -> u64 {
     match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
         Ok(duration) => duration.as_secs().saturating_sub(start_time),
         Err(_) => 0,
-    }
-}
-
-fn map_limit_value<F>(value: LimitValue, func: F) -> LimitValue
-where
-    F: Fn(u64) -> u64,
-{
-    match value {
-        LimitValue::Value(value) => LimitValue::Value(func(value)),
-        LimitValue::Unlimited => LimitValue::Unlimited,
-    }
-}
-
-fn map_limit<F>(limit: Limit, func: F) -> Limit
-where
-    F: Fn(u64) -> u64,
-{
-    Limit {
-        soft_limit: map_limit_value(limit.soft_limit, &func),
-        hard_limit: map_limit_value(limit.hard_limit, &func),
     }
 }
 
@@ -500,36 +478,6 @@ impl ProcessStat {
                 MetricId::ThreadCount => self.on_stat(process, |stat| stat.num_threads as u64),
             })
             .collect()
-    }
-
-    pub fn extract_limits(
-        &mut self,
-        metrics: Iter<FormattedMetric>,
-        process: &Process,
-        sysconf: &SystemConf,
-    ) -> Vec<Option<Limit>> {
-        match process.limits() {
-            Ok(limits) => metrics
-                .map(|metric| match metric.id {
-                    MetricId::FdAll => Some(limits.max_open_files),
-                    //MetricId::MemData => {} // max_data_size
-                    MetricId::MapStackSize => Some(limits.max_stack_size),
-                    MetricId::MemRss => Some(map_limit(limits.max_resident_set, |value| {
-                        value * sysconf.page_size
-                    })),
-                    MetricId::MemVm => Some(limits.max_address_space),
-                    MetricId::ThreadCount => Some(limits.max_processes),
-                    MetricId::TimeCpu => Some(map_limit(limits.max_cpu_time, |value| value * 1000)),
-                    _ => {
-                        if cfg!(debug_assertions) && metric.has_limit() {
-                            panic!("internal error: metric {} should have a limit", metric.id);
-                        }
-                        None
-                    }
-                })
-                .collect(),
-            Err(_) => vec![None; metrics.len()],
-        }
     }
 }
 

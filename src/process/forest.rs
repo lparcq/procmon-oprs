@@ -80,7 +80,7 @@ mod format {
     }
 }
 
-use super::{FormattedMetric, Limit, ProcessStat, SystemConf};
+use super::{FormattedMetric, ProcessStat, SystemConf};
 
 #[derive(thiserror::Error, Debug)]
 pub enum ProcessError {
@@ -255,16 +255,6 @@ impl ProcessInfo {
         self.stats
             .borrow_mut()
             .extract_metrics(metrics, &self.process, sysconf)
-    }
-
-    pub fn extract_limits(
-        &self,
-        metrics: Iter<FormattedMetric>,
-        sysconf: &SystemConf,
-    ) -> Vec<Option<Limit>> {
-        self.stats
-            .borrow_mut()
-            .extract_limits(metrics, &self.process, sysconf)
     }
 }
 

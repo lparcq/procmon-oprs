@@ -83,7 +83,8 @@ pub enum Action {
     GotoTableTop,
     SwitchToHelp,
     SwitchBack,
-    SwitchToProcess,
+    SwitchToDetails,
+    SwitchToLimits,
     ClearMarks,
     ToggleMarks,
     MultiplyTimeout(u16),
@@ -104,7 +105,6 @@ pub enum Action {
     SelectRootPid,
     UnselectRootPid,
     SearchPush(char),
-    ToggleLimits,
 }
 
 /// Keymap
@@ -145,6 +145,7 @@ impl KeyMap {
             KeyMap::Details => match evt {
                 Event::Key(KEY_QUIT) | Event::Key(KEY_ESCAPE) => Action::SwitchBack,
                 Event::Key(KEY_SELECT_PARENT) => Action::SelectParent,
+                Event::Key(KEY_LIMITS) => Action::SwitchToLimits,
                 Event::Key(Key::PageDown) => Action::ScrollPageDown,
                 Event::Key(Key::PageUp) => Action::ScrollPageUp,
                 _ => Action::None,
@@ -161,7 +162,7 @@ impl KeyMap {
                 Event::Key(KEY_GOTO_TBL_LEFT) => Action::GotoTableLeft,
                 Event::Key(KEY_GOTO_TBL_RIGHT) => Action::GotoTableRight,
                 Event::Key(KEY_GOTO_TBL_TOP) => Action::GotoTableTop,
-                Event::Key(KEY_ENTER) => Action::SwitchToProcess,
+                Event::Key(KEY_ENTER) => Action::SwitchToDetails,
                 Event::Key(KEY_HELP) => Action::SwitchToHelp,
                 Event::Key(KEY_MARK_CLEAR) => Action::ClearMarks,
                 Event::Key(KEY_MARK_TOGGLE) => Action::ToggleMarks,
@@ -180,7 +181,6 @@ impl KeyMap {
                 Event::Key(Key::Up) => Action::ScrollLineUp,
                 Event::Key(Key::Left) => Action::ScrollLeft,
                 Event::Key(Key::Right) => Action::ScrollRight,
-                Event::Key(KEY_LIMITS) => Action::ToggleLimits,
                 _ => Action::None,
             },
         }
@@ -269,7 +269,7 @@ pub fn menu() -> Vec<MenuEntry> {
             KeyMapSet::OnlyIn(KeyMap::Main),
         ),
         MenuEntry::with_key(KEY_SEARCH, "Search", KeyMapSet::OnlyIn(KeyMap::Main)),
-        MenuEntry::with_key(KEY_LIMITS, "Limits", KeyMapSet::OnlyIn(KeyMap::Main)),
+        MenuEntry::with_key(KEY_LIMITS, "Limits", KeyMapSet::OnlyIn(KeyMap::Details)),
         MenuEntry::with_key(KEY_FILTERS, "Filters", KeyMapSet::OnlyIn(KeyMap::Main)),
         MenuEntry::with_key(
             KEY_SELECT_PARENT,

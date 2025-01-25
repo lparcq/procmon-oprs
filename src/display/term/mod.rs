@@ -15,20 +15,16 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use chrono::Local;
-use itertools::izip;
 use libc::pid_t;
 use ratatui::{
     backend::TermionBackend,
-    layout::Alignment,
     prelude::*,
-    style::{Color, Modifier, Style},
+    style::Style,
     text::{Line, Text},
-    widgets::{Cell, Clear},
+    widgets::Clear,
     Terminal,
 };
-use std::{
-    cmp::Ordering, collections::BTreeSet, convert::TryFrom, fmt, io, rc::Rc, time::Duration,
-};
+use std::{convert::TryFrom, fmt, io, rc::Rc, time::Duration};
 use termion::{
     raw::{IntoRawMode, RawTerminal},
     screen::{AlternateScreen, IntoAlternateScreen},
@@ -38,8 +34,8 @@ use crate::{
     clock::Timer,
     console::{is_tty, BuiltinTheme, EventChannel},
     process::{
-        self, format::human_duration, Aggregation, Collector, FormattedMetric, LimitKind, Process,
-        ProcessDetails, ProcessFilter, ProcessIdentity, ProcessSamples,
+        self, format::human_duration, Aggregation, Collector, FormattedMetric, Process,
+        ProcessDetails, ProcessFilter,
     },
 };
 
@@ -47,23 +43,18 @@ use super::{DataKind, DisplayDevice, PaneData, PaneKind, PauseStatus, SliceIter}
 
 mod input;
 mod panes;
+mod tables;
 
 #[macro_use]
 mod types;
 
-use input::{menu, Action, BookmarkAction, Bookmarks, KeyMap, MenuEntry, SearchEdit};
+use input::{menu, Action, BookmarkAction, KeyMap, MenuEntry, SearchEdit};
 use panes::{
     BigTableWidget, DoubleZoom, FieldsWidget, GridPane, MarkdownWidget, OneLineWidget,
-    OptionalRenderer, Pane, SingleScrollablePane, TableGenerator, TableStyle, Zoom,
+    OptionalRenderer, Pane, SingleScrollablePane, TableStyle, Zoom,
 };
-use types::{Area, MaxLength, UnboundedArea};
-
-/// Right aligned cell.
-macro_rules! rcell {
-    ($s:expr) => {
-        Cell::from(Text::from($s).alignment(Alignment::Right))
-    };
-}
+use tables::{ProcessTreeTable, Styles, TreeData};
+use types::{Area, UnboundedArea};
 
 const HELP: &str = include_str!("help_en.md");
 
@@ -72,8 +63,9 @@ const HELP: &str = include_str!("help_en.md");
 pub enum Interaction {
     None,
     Filter(ProcessFilter),
-    SwitchToHelp,
     SwitchBack,
+    SwitchToHelp,
+    SwitchTo(DataKind),
     SelectPid(pid_t),
     SelectParent,
     SelectRootPid(Option<pid_t>),
@@ -93,160 +85,6 @@ impl TryFrom<&Action> for Interaction {
             Action::SwitchBack => Ok(Interaction::SwitchBack),
             Action::Quit => Ok(Interaction::Quit),
             _ => Err(()),
-        }
-    }
-}
-
-/// Status of a process.
-#[derive(Clone, Copy, Debug)]
-pub enum PidStatus {
-    /// No specific status.
-    Unknown,
-    /// Under the cursor.
-    Selected,
-    /// Bookmarked.
-    Marked,
-    /// Search match.
-    Matching,
-}
-
-/// Theme styles
-#[derive(Debug)]
-struct Styles {
-    /// Even rows
-    even_row: Style,
-    /// Odd rows
-    odd_row: Style,
-    /// Increasing value
-    increase: Style,
-    /// Decreasing value
-    decrease: Style,
-    /// Unselected line
-    unselected: Style,
-    /// Selected line
-    selected: Style,
-    /// Bookmarked line.
-    marked: Style,
-    /// Matching line
-    matching: Style,
-    /// Status line
-    status: Style,
-    /// Space between columns in number of characters
-    column_spacing: u16,
-}
-
-impl Styles {
-    fn new(theme: Option<BuiltinTheme>) -> Self {
-        let default_style = Style::default();
-        let bold = Style::default().add_modifier(Modifier::BOLD);
-        let bold_reversed = bold.add_modifier(Modifier::REVERSED);
-        let white_on_blue = Style::default().fg(Color::White).bg(Color::Blue);
-        match theme {
-            Some(BuiltinTheme::Dark) => Styles {
-                even_row: default_style,
-                odd_row: Style::default().bg(Color::Indexed(238)),
-                increase: Style::default().fg(Color::Indexed(196)),
-                decrease: Style::default().fg(Color::Indexed(46)),
-                unselected: bold,
-                selected: Style::default().fg(Color::Black).bg(Color::LightMagenta),
-                marked: Style::default().fg(Color::LightCyan),
-                matching: Style::default().fg(Color::LightMagenta),
-                status: white_on_blue,
-                column_spacing: 2,
-            },
-            Some(BuiltinTheme::Light) => Styles {
-                even_row: default_style,
-                odd_row: Style::default().bg(Color::Indexed(254)),
-                increase: Style::default().fg(Color::Indexed(124)),
-                decrease: Style::default().fg(Color::Indexed(40)),
-                unselected: bold,
-                selected: Style::default().fg(Color::White).bg(Color::Magenta),
-                marked: Style::default().fg(Color::Cyan),
-                matching: Style::default().fg(Color::Magenta),
-                status: white_on_blue,
-                column_spacing: 2,
-            },
-            Some(BuiltinTheme::Dark16) => Styles {
-                even_row: default_style,
-                odd_row: default_style,
-                increase: Style::default().fg(Color::LightMagenta),
-                decrease: Style::default().fg(Color::LightGreen),
-                unselected: bold,
-                selected: Style::default().fg(Color::Black).bg(Color::LightMagenta),
-                marked: Style::default().fg(Color::LightCyan),
-                matching: Style::default().fg(Color::LightMagenta),
-                status: white_on_blue,
-                column_spacing: 2,
-            },
-            Some(BuiltinTheme::Light16) => Styles {
-                even_row: default_style,
-                odd_row: default_style,
-                increase: Style::default().fg(Color::Red),
-                decrease: Style::default().fg(Color::Green),
-                unselected: bold,
-                selected: Style::default().fg(Color::White).bg(Color::Magenta),
-                marked: Style::default().fg(Color::Cyan),
-                matching: Style::default().fg(Color::Magenta),
-                status: white_on_blue,
-                column_spacing: 2,
-            },
-            None => Styles {
-                even_row: default_style,
-                odd_row: default_style,
-                increase: bold,
-                decrease: bold,
-                unselected: bold,
-                selected: bold_reversed,
-                marked: bold.add_modifier(Modifier::UNDERLINED),
-                matching: Style::default().add_modifier(Modifier::UNDERLINED),
-                status: bold_reversed,
-                column_spacing: 2,
-            },
-        }
-    }
-
-    fn name_style(&self, status: PidStatus) -> Style {
-        match status {
-            PidStatus::Unknown => self.unselected,
-            PidStatus::Selected => self.selected,
-            PidStatus::Marked => self.marked,
-            PidStatus::Matching => self.matching,
-        }
-    }
-
-    fn trend_style(&self, trend: &Ordering) -> Style {
-        match trend {
-            Ordering::Less => self.decrease,
-            Ordering::Equal => Style::default(),
-            Ordering::Greater => self.increase,
-        }
-    }
-}
-
-/// Stack of parent child PIDs
-#[derive(Default)]
-struct PidStack(Vec<pid_t>);
-
-impl PidStack {
-    /// Stack len
-    fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    /// Pop pids that are not a parent of the given process and push the new pid on the stack.
-    fn push(&mut self, samples: &ProcessSamples) {
-        let Self(ref mut stack) = self;
-        match samples.parent_pid() {
-            Some(parent_pid) => {
-                while let Some(top_pid) = stack.last() {
-                    if *top_pid == parent_pid {
-                        break;
-                    }
-                    let _ = stack.pop();
-                }
-                stack.push(samples.pid());
-            }
-            None => stack.clear(), // Cannot happened. Only the system has no parent.
         }
     }
 }
@@ -275,174 +113,6 @@ macro_rules! format_metric {
     };
 }
 
-/// Data used to generate the tree as a table.
-#[derive(Debug)]
-struct TreeData<'t> {
-    /// Column headers for metrics
-    metric_headers: Vec<Text<'t>>,
-    /// Display styles
-    styles: Styles,
-    /// Bookmarks for PIDs.
-    bookmarks: Bookmarks,
-    /// PID matched by a search.
-    occurrences: BTreeSet<pid_t>,
-}
-
-impl<'t> TreeData<'t> {
-    fn new(styles: Styles) -> Self {
-        Self {
-            metric_headers: Vec::new(),
-            styles,
-            bookmarks: Bookmarks::default(),
-            occurrences: BTreeSet::default(),
-        }
-    }
-
-    /// Status of a process.
-    fn pid_status(&self, pid: pid_t) -> PidStatus {
-        if self.bookmarks.is_selected(pid) {
-            PidStatus::Selected
-        } else if self.occurrences.contains(&pid) {
-            PidStatus::Matching
-        } else if self.bookmarks.is_marked(pid) {
-            PidStatus::Marked
-        } else {
-            PidStatus::Unknown
-        }
-    }
-}
-
-/// Table generator for a tree of processes.
-struct ProcessTreeTable<'a, 'b, 't> {
-    /// Sample collector.
-    collector: &'b Collector<'a>,
-    /// Tree data.
-    data: Rc<TreeData<'t>>,
-    /// Headers size.
-    headers_size: Area<usize>,
-    /// Column widths
-    widths: Vec<u16>,
-    /// Indentation
-    indents: Vec<usize>,
-}
-
-impl<'a, 'b, 't> ProcessTreeTable<'a, 'b, 't> {
-    const TITLE_PROCESS: &'static str = "Process";
-    const TITLE_PID: &'static str = "PID";
-    const TITLE_STATE: &'static str = "S";
-    const FIXED_HEADERS: [&'static str; 3] =
-        [Self::TITLE_PROCESS, Self::TITLE_PID, Self::TITLE_STATE];
-
-    fn new(collector: &'b Collector<'a>, data: Rc<TreeData<'t>>) -> Self {
-        let mut pids = PidStack::default();
-        let mut headers_height = 0;
-        let mut widths = Self::FIXED_HEADERS
-            .iter()
-            .map(|s| MaxLength::from(*s))
-            .chain(data.metric_headers.iter().map(|text| {
-                if headers_height < text.lines.len() {
-                    headers_height = text.lines.len();
-                }
-                MaxLength::from(text.iter().map(|line| line.width()).max().unwrap_or(0))
-            }))
-            .collect::<Vec<MaxLength>>();
-        let headers_size = Area::new(Self::FIXED_HEADERS.len(), headers_height);
-        let mut indents = Vec::with_capacity(collector.line_count());
-        collector.lines().for_each(|ps| {
-            pids.push(ps);
-            let indent = pids.len().saturating_sub(1);
-            indents.push(indent);
-            widths[0].set_min(indent + ps.name().len());
-            widths[1].set_min(ps.pid().to_string().len());
-            // widths[2].set_min(1);
-            ps.samples().enumerate().for_each(|(i, s)| {
-                widths[i + headers_size.horizontal]
-                    .set_min(s.strings().map(|s| s.len()).max().unwrap_or(0))
-            });
-        });
-        Self {
-            collector,
-            headers_size,
-            data,
-            widths: widths.iter().map(|ml| ml.len()).collect::<Vec<u16>>(),
-            indents,
-        }
-    }
-
-    /// Number of columns in the body.
-    fn body_column_count(&self) -> usize {
-        self.data.metric_headers.len()
-    }
-
-    /// Number of rows in the body.
-    fn body_row_count(&self) -> usize {
-        self.collector.line_count()
-    }
-}
-
-impl<'a, 'b, 't> TableGenerator for ProcessTreeTable<'a, 'b, 't> {
-    fn headers_size(&self) -> Area<usize> {
-        self.headers_size
-    }
-
-    fn top_headers(&self, zoom: &Zoom) -> Vec<Cell> {
-        Self::FIXED_HEADERS
-            .iter()
-            .map(|s| Cell::from(Text::from(*s)))
-            .chain(
-                self.data
-                    .metric_headers
-                    .iter()
-                    .skip(zoom.position)
-                    .take(zoom.visible_length)
-                    .map(|text| Cell::from(text.clone().alignment(Alignment::Center))),
-            )
-            .collect::<Vec<Cell>>()
-    }
-
-    fn rows(&self, zoom: &DoubleZoom) -> Vec<Vec<Cell>> {
-        self.collector
-            .lines()
-            .skip(zoom.vertical.position)
-            .take(zoom.vertical.visible_length)
-            .enumerate()
-            .map(|(n, ps)| {
-                let pid_status = self.data.pid_status(ps.pid());
-                let name = {
-                    let name = ps.name();
-                    format!("{:>width$}", name, width = self.indents[n] + name.len())
-                };
-                let name_style = self.data.styles.name_style(pid_status);
-                vec![
-                    Cell::from(name).style(name_style),
-                    rcell!(ps.pid().to_string()),
-                    rcell!(ps.state().to_string()),
-                ]
-                .drain(..)
-                .chain(
-                    ps.samples()
-                        .flat_map(|sample| {
-                            izip!(sample.strings(), sample.trends()).map(|(value, trend)| {
-                                Cell::from(
-                                    Text::from(value.as_str())
-                                        .style(self.data.styles.trend_style(trend))
-                                        .alignment(Alignment::Right),
-                                )
-                            })
-                        })
-                        .skip(zoom.horizontal.position)
-                        .take(zoom.horizontal.visible_length),
-                )
-                .collect::<Vec<Cell>>()
-            })
-            .collect::<Vec<Vec<Cell>>>()
-    }
-
-    fn widths(&self) -> &[u16] {
-        &self.widths
-    }
-}
-
 /// Print on standard output as a table
 pub struct TerminalDevice<'t> {
     /// Interval to update the screen
@@ -463,8 +133,6 @@ pub struct TerminalDevice<'t> {
     overflow: Area<bool>,
     /// Slots where limits are displayed under the metric (only for raw metrics).
     limit_slots: Vec<bool>,
-    /// Mode to display limits.
-    display_limits: LimitKind,
     /// Number of available lines to display the table
     body_height: usize,
     /// Filter
@@ -493,7 +161,6 @@ impl TerminalDevice<'_> {
             vertical_scroll: VerticalScroll::Line(1),
             overflow: Area::default(),
             limit_slots: Vec::new(),
-            display_limits: LimitKind::None,
             body_height: 0,
             filter: ProcessFilter::default(),
             menu: menu(),
@@ -526,8 +193,7 @@ impl TerminalDevice<'_> {
             format!("{time_string} -- interval:{delay} -- marks:{marks_count}",)
         } else {
             format!(
-                "{time_string} -- interval:{delay} -- limit:{} -- filter:{}",
-                self.display_limits.as_ref(),
+                "{time_string} -- interval:{delay} -- filter:{}",
                 self.filter
             )
         }
@@ -578,7 +244,8 @@ impl TerminalDevice<'_> {
             | Action::SelectParent
             | Action::SelectRootPid
             | Action::SwitchToHelp
-            | Action::SwitchToProcess
+            | Action::SwitchToDetails
+            | Action::SwitchToLimits
             | Action::UnselectRootPid
             | Action::Quit => (),
             Action::SwitchBack => {
@@ -614,13 +281,6 @@ impl TerminalDevice<'_> {
                         timer.set_delay(delay);
                         self.every = delay;
                     }
-                }
-            }
-            Action::ToggleLimits => {
-                self.display_limits = match self.display_limits {
-                    LimitKind::None => LimitKind::Soft,
-                    LimitKind::Soft => LimitKind::Hard,
-                    LimitKind::Hard => LimitKind::None,
                 }
             }
             Action::ScrollLeft => self.table_offset.scroll_left(1),
@@ -697,10 +357,11 @@ impl TerminalDevice<'_> {
                 None => Interaction::None,
             },
             Action::UnselectRootPid => Interaction::SelectRootPid(None),
-            Action::SwitchToProcess => match self.tree_data.bookmarks.selected() {
+            Action::SwitchToDetails => match self.tree_data.bookmarks.selected() {
                 Some(selected) => Interaction::SelectPid(selected.pid),
                 None => Interaction::None,
             },
+            Action::SwitchToLimits => Interaction::SwitchTo(DataKind::Limits),
             _ => Interaction::None,
         })
     }
@@ -796,7 +457,7 @@ impl TerminalDevice<'_> {
             r.render_stateful_widget(main, &mut state);
             r.render_widget(status_bar);
             r.render_stateful_widget(menu, &mut cursor);
-            body_height = state.vertical.visible_length - table.headers_size.vertical;
+            body_height = state.vertical.visible_length - table.headers_size().vertical;
             new_overflow = Area::new(!state.horizontal.at_end(), !state.vertical.at_end());
             log::debug!(
                 "state: {:?} -- overflow: {:?}",

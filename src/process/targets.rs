@@ -28,7 +28,7 @@ use std::fs;
 use super::mocks::fs;
 
 use super::{
-    Collector, Forest as ProcessForest, Limit, ProcessError, ProcessInfo, SystemConf, SystemStat,
+    Collector, Forest as ProcessForest, ProcessError, ProcessInfo, SystemConf, SystemStat,
 };
 
 #[derive(thiserror::Error, Debug)]
@@ -153,7 +153,6 @@ impl<'a> Target<'a> {
 pub struct TargetContainer<'a> {
     targets: Vec<Target<'a>>,
     sysconf: &'a SystemConf,
-    system_limits: Option<Vec<Option<Limit>>>,
     with_system: bool,
 }
 
@@ -162,7 +161,6 @@ impl<'a> TargetContainer<'a> {
         TargetContainer {
             targets: Vec::new(),
             sysconf,
-            system_limits: None,
             with_system,
         }
     }
@@ -186,23 +184,12 @@ impl<'a> TargetContainer<'a> {
         changed
     }
 
-    pub fn initialize(&mut self, metric_count: usize) {
-        if self.with_system {
-            self.system_limits = Some(vec![None; metric_count]);
-        }
-    }
-
     pub fn collect(&self, collector: &mut Collector) {
         collector.rewind();
-        if let Some(ref limits) = self.system_limits {
+        if self.with_system {
             let mut system = SystemStat::new(self.sysconf);
             collector.collect_system(&mut system);
-            collector.record(
-                "system",
-                None,
-                &system.extract_metrics(collector.metrics()),
-                limits,
-            );
+            collector.record("system", None, &system.extract_metrics(collector.metrics()));
         }
         self.targets
             .iter()
