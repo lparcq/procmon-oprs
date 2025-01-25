@@ -14,7 +14,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use num_traits::Zero;
 use ratatui::{
     layout::{Alignment, Constraint, Layout},
     prelude::*,
@@ -26,10 +25,10 @@ use ratatui::{
     },
     Frame,
 };
-use std::{cell::RefCell, cmp, fmt};
+use std::{cmp, fmt};
 
 use super::{
-    types::{Area, MaxLength, UnboundedArea},
+    types::{Area, MaxLength},
     KeyMap, MenuEntry,
 };
 
@@ -59,60 +58,66 @@ fn format_text<'l>(help: &'static str) -> Vec<Line<'l>> {
         .collect()
 }
 
-/// Calculate widths constraints to avoid an overflow
-///
-/// # Arguments
-///
-/// * `inner_width` - The usable width to display the table.
-fn width_constraints(
-    inner_width: u16,
-    max_column_width: u16,
-    column_widths: &[u16],
-    column_spacing: u16,
-) -> (u16, Vec<Constraint>, bool) {
-    let mut total_width = 0;
-    let mut constraints = Vec::with_capacity(column_widths.len());
-    let mut current_column_spacing = 0;
-    let mut truncated = false;
-    while constraints.len() < column_widths.len() {
-        let index = constraints.len();
-        let col_width = cmp::min(max_column_width, column_widths[index]);
-        let new_total_width = total_width + current_column_spacing + col_width;
-        if new_total_width <= inner_width {
-            constraints.push(Constraint::Length(col_width));
-        } else {
-            let remaining = inner_width - total_width;
-            if remaining > column_spacing {
-                // Partial last column
-                constraints.push(Constraint::Length(remaining - column_spacing));
-                total_width = inner_width;
-                truncated = true;
-            }
-            break;
-        }
-        total_width = new_total_width;
-        current_column_spacing = column_spacing;
-    }
-    let hoverflow = constraints.len() < column_widths.len() || truncated;
-    (total_width, constraints, hoverflow)
+/// Column constraint status
+#[derive(Debug)]
+enum ColumnStatus {
+    Accepted,
+    Truncated,
+    Rejected,
 }
 
-/// Navigation arrows dependending on table overflows
-///
-/// # Arguments
-///
-/// * `shifted` - Area boolean saying if the first line or first column are hidden.
-/// * `overflow` - Area boolean saying if the end is visible.
-fn navigation_arrows(shifted: Area<bool>, overflows: Area<bool>) -> Text<'static> {
-    let up_arrow = if shifted.vertical { " " } else { "⬆" };
-    let down_arrow = if overflows.vertical { "⬇" } else { " " };
-    let left_arrow = if shifted.horizontal { " " } else { "⬅" };
-    let right_arrow = if overflows.horizontal { "➡" } else { " " };
-    Text::from(vec![
-        Line::from(up_arrow),
-        Line::from(format!("{left_arrow} {down_arrow} {right_arrow}")),
-    ])
-    .alignment(Alignment::Center)
+/// Calculate widths constraints to avoid an overflow
+#[derive(Debug)]
+struct ColumnConstraints {
+    constraints: Vec<Constraint>,
+    inner_width: u16,
+    max_column_width: u16,
+    column_spacing: u16,
+    remaining_width: u16,
+}
+
+impl ColumnConstraints {
+    fn new(inner_width: u16, max_column_width: u16, column_spacing: u16) -> Self {
+        Self {
+            constraints: Vec::new(),
+            inner_width,
+            max_column_width,
+            column_spacing,
+            remaining_width: inner_width,
+        }
+    }
+
+    /// Table width (the columns plus the gaps).
+    fn table_width(&self) -> u16 {
+        self.inner_width - self.remaining_width
+    }
+
+    /// Add a column in the constraints.
+    ///
+    /// Return true if it has been added and not truncated.
+    fn add_column(&mut self, width: u16) -> ColumnStatus {
+        let column_spacing = if self.constraints.is_empty() {
+            0
+        } else {
+            self.column_spacing
+        };
+        let mut actual_width = cmp::min(self.max_column_width, width);
+        let required_width = column_spacing + actual_width;
+        if required_width <= self.remaining_width {
+            self.constraints.push(Constraint::Length(actual_width));
+            self.remaining_width -= required_width;
+            ColumnStatus::Accepted
+        } else if self.remaining_width > column_spacing {
+            // Partial last column
+            actual_width = self.remaining_width - column_spacing;
+            self.constraints.push(Constraint::Length(actual_width));
+            self.remaining_width = 0;
+            ColumnStatus::Truncated
+        } else {
+            self.remaining_width = 0;
+            ColumnStatus::Rejected
+        }
+    }
 }
 
 /// Table style
@@ -133,47 +138,70 @@ impl TableStyle {
     }
 
     /// Apply style to rows
-    ///
-    /// The table is truncated to keep only `ncols` column.
-    fn apply<'a>(&self, mut rows: Vec<Vec<Cell<'a>>>, ncols: usize) -> Vec<Row<'a>> {
+    fn apply<'a>(&self, mut rows: Vec<Vec<Cell<'a>>>) -> Vec<Row<'a>> {
         rows.drain(..)
             .enumerate()
-            .map(|(i, mut r)| {
+            .map(|(i, r)| {
                 let style = if i % 2 != 0 {
                     self.even_row
                 } else {
                     self.odd_row
                 };
-                if r.len() < ncols {
-                    panic!("rows must have {} columns instead of {}", ncols, r.len());
-                }
-                Row::new(r.drain(0..ncols)).style(style)
+                Row::new(r).style(style)
             })
             .collect::<Vec<Row>>()
     }
 }
 
-/// Offset state
-#[derive(Debug, Default)]
-pub struct ScrollableWidgetState {
-    pub offset: u16,
-    pub inner_height: u16,
-    pub overflow: Area<bool>,
+/// Visible part of an element in one direction.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Zoom {
+    pub position: usize,
+    pub visible_length: usize,
+    pub total_length: usize,
 }
 
-impl ScrollableWidgetState {
-    pub fn new(offset: u16, inner_height: u16, overflow: Area<bool>) -> Self {
+impl Zoom {
+    pub fn new(position: usize, visible_length: usize, total_length: usize) -> Self {
         Self {
-            offset,
-            inner_height,
-            overflow,
+            position,
+            visible_length,
+            total_length,
         }
     }
 
-    pub fn with_offset(offset: u16) -> Self {
-        Self::new(offset, 0, Area::default())
+    pub fn with_position(position: usize) -> Self {
+        Self::new(position, 0, 0)
+    }
+
+    /// Check if at end.
+    pub fn at_end(&self) -> bool {
+        self.position + self.visible_length >= self.total_length
+    }
+
+    /// Reframe the zoom to avoid empty space at the end.
+    pub fn reframe(&mut self) {
+        if self.position + self.visible_length > self.total_length {
+            self.position = self.total_length.saturating_sub(self.visible_length);
+        }
+    }
+
+    /// Create a scrollbar state if content is bigger than visible size.
+    pub fn scrollbar_state(&self) -> Option<ScrollbarState> {
+        if self.position > 0 || self.visible_length < self.total_length {
+            Some(
+                ScrollbarState::new(self.total_length.saturating_sub(self.visible_length))
+                    .position(self.position)
+                    .viewport_content_length(self.visible_length),
+            )
+        } else {
+            None
+        }
     }
 }
+
+/// Zoom in two directions.
+pub type DoubleZoom = Area<Zoom>;
 
 /// Widget that adapt it's layout to the available space.
 pub trait ReactiveWidget: fmt::Debug + Widget {
@@ -269,23 +297,17 @@ impl StatefulWidget for OneLineWidget<'_> {
 pub(crate) struct MarkdownWidget<'l> {
     title: &'static str,
     text: Vec<Line<'l>>,
-    text_height: u16,
 }
 
 impl MarkdownWidget<'_> {
     pub(crate) fn new(title: &'static str, text: &'static str) -> Self {
         let text = format_text(text);
-        let text_height = text.len() as u16;
-        Self {
-            title,
-            text,
-            text_height,
-        }
+        Self { title, text }
     }
 }
 
 impl StatefulWidget for MarkdownWidget<'_> {
-    type State = ScrollableWidgetState;
+    type State = Zoom;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State)
     where
@@ -293,11 +315,10 @@ impl StatefulWidget for MarkdownWidget<'_> {
     {
         let borders = BORDER_SIZE * 2;
         let inner_height = area.height - borders;
-        let max_offset = self.text_height.saturating_sub(inner_height / 2);
-        state.offset = cmp::min(state.offset, max_offset);
-        state.inner_height = inner_height;
-        let mut scroll_state =
-            ScrollbarState::new(max_offset as usize).position(state.offset as usize);
+        let max_offset = self.text.len().saturating_sub(inner_height as usize / 2);
+        state.position = cmp::min(state.position, max_offset);
+        state.visible_length = inner_height as usize;
+        let mut scroll_state = ScrollbarState::new(max_offset as usize).position(state.position);
         Paragraph::new(Text::from(self.text))
             .block(
                 Block::new()
@@ -306,12 +327,9 @@ impl StatefulWidget for MarkdownWidget<'_> {
                     .borders(Borders::ALL),
             )
             .wrap(Wrap { trim: false })
-            .scroll((state.offset, 0))
+            .scroll((state.position as u16, 0))
             .render(area, buf);
-        let inner_area = area.inner(Margin {
-            vertical: BORDER_SIZE,
-            horizontal: 0,
-        });
+        let inner_area = area.inner(Margin::new(0, BORDER_SIZE));
         Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(None)
             .end_symbol(None)
@@ -319,67 +337,111 @@ impl StatefulWidget for MarkdownWidget<'_> {
     }
 }
 
+/// Table generator
+pub trait TableGenerator {
+    /// The number of fixed columns on the left and fixed rows on the top.
+    ///
+    /// If the width is not zero, it's a crosstab.
+    fn headers_size(&self) -> Area<usize>;
+
+    /// The visible headers.
+    ///
+    /// The fixed columns must always be included.
+    fn top_headers(&self, zoom: &Zoom) -> Vec<Cell>;
+
+    /// The visible rows.
+    ///
+    /// The fixed columns must always be included.
+    fn rows(&self, zoom: &DoubleZoom) -> Vec<Vec<Cell>>;
+
+    /// The width of each column.
+    fn widths(&self) -> &[u16];
+}
+
 /// Table that can overflow horizontally and vertically.
-#[derive(Debug)]
-pub(crate) struct BigTableWidget<'a, 'b, 'c> {
-    headers: RefCell<Vec<Cell<'a>>>,
-    headers_height: u16,
-    rows: Vec<Vec<Cell<'b>>>,
-    widths: &'c [u16],
-    shifted: Area<bool>,
+pub(crate) struct BigTableWidget<'a, T: TableGenerator> {
+    table: &'a T,
     style: TableStyle,
 }
 
-impl<'a, 'b, 'c> BigTableWidget<'a, 'b, 'c> {
-    pub(crate) fn new(
-        headers: Vec<Cell<'a>>,
-        headers_height: u16,
-        rows: Vec<Vec<Cell<'b>>>,
-        widths: &'c [u16],
-        offset: UnboundedArea,
-        style: TableStyle,
-    ) -> Self {
-        Self {
-            headers: RefCell::new(headers),
-            headers_height,
-            rows,
-            widths,
-            shifted: Area::new(offset.horizontal.is_zero(), offset.vertical.is_zero()),
-            style,
-        }
+impl<'a, T: TableGenerator> BigTableWidget<'a, T> {
+    pub(crate) fn new(table: &'a T, style: TableStyle) -> Self {
+        Self { table, style }
     }
 }
 
-impl StatefulWidget for BigTableWidget<'_, '_, '_> {
-    type State = ScrollableWidgetState;
+impl<'a, T: TableGenerator> StatefulWidget for BigTableWidget<'a, T> {
+    type State = DoubleZoom;
 
-    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State)
+    fn render(self, area: Rect, buf: &mut Buffer, zoom: &mut Self::State)
     where
         Self: Sized,
     {
         let borders = BORDER_SIZE * 2;
-        let outter_area = Size::new(area.width, area.height);
-        let inner_area = Size::new(outter_area.width - borders, outter_area.height - borders);
+        let outter_dim = Size::new(area.width, area.height);
+        let inner_dim = Size::new(outter_dim.width - borders, outter_dim.height - borders);
+        let widths = self.table.widths();
         // Max column width hard-coded to half the line width.
-        let max_column_width = inner_area.width / 2;
-        let (_table_width, constraints, hoverflow) = width_constraints(
-            inner_area.width,
-            max_column_width,
-            self.widths,
+        let mut cc = ColumnConstraints::new(
+            inner_dim.width,
+            inner_dim.width / 2,
             self.style.column_spacing,
         );
-        let table_height = self.headers_height + self.rows.len() as u16;
-        state.overflow = Area::new(hoverflow, table_height > inner_area.height);
-        state.inner_height = inner_area.height;
-        let mut headers = Vec::with_capacity(self.headers.borrow().len());
-        headers.push(Cell::from(navigation_arrows(self.shifted, state.overflow)));
-        headers.extend(self.headers.into_inner().drain(..).skip(1));
-        let rows = self.style.apply(self.rows, self.widths.len());
-        let table = Table::new(rows, constraints)
+        let headers_size = self.table.headers_size();
+        let mut start = zoom.horizontal.position;
+        let mut index = 0;
+        let mut headers_width = 0;
+        while index < widths.len() {
+            if index == headers_size.horizontal {
+                headers_width = cc.table_width() + cc.column_spacing;
+                index += zoom.horizontal.position;
+                if index >= widths.len() {
+                    log::error!(
+                        "first column index {index} exceeds the number of columns {}",
+                        widths.len()
+                    );
+                    index = widths.len() - 1;
+                }
+                start = index;
+            }
+            match cc.add_column(widths[index]) {
+                ColumnStatus::Truncated | ColumnStatus::Rejected => break,
+                ColumnStatus::Accepted => index += 1,
+            }
+        }
+        zoom.horizontal.visible_length = index - start;
+        zoom.vertical.visible_length =
+            (inner_dim.height as usize).saturating_sub(headers_size.vertical);
+        zoom.vertical.reframe();
+        let headers = self.table.top_headers(&zoom.horizontal);
+        let rows = self.style.apply(self.table.rows(&zoom));
+
+        let table = Table::new(rows, cc.constraints)
             .block(Block::default().borders(Borders::ALL))
-            .header(Row::new(headers).height(self.headers_height))
+            .header(Row::new(headers).height(headers_size.vertical as u16))
             .column_spacing(self.style.column_spacing);
         Widget::render(table, area, buf);
+        if let Some(mut state) = zoom.horizontal.scrollbar_state() {
+            let x = area.x + BORDER_SIZE + headers_width;
+            let width = area.width.saturating_sub(x + BORDER_SIZE);
+            let area = Rect::new(x, area.y, width, area.height);
+            Scrollbar::new(ScrollbarOrientation::HorizontalTop)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .render(area, buf, &mut state);
+        }
+        if let Some(mut state) = zoom.vertical.scrollbar_state() {
+            let y = area.y + BORDER_SIZE + headers_size.vertical as u16;
+            let height = zoom.vertical.visible_length as u16;
+            if zoom.vertical.total_length > 0 {
+                let area = Rect::new(area.x, y, area.width, height);
+                Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(None)
+                    .end_symbol(None)
+                    .render(area, buf, &mut state);
+            }
+        }
+        zoom.vertical.visible_length = inner_dim.height as usize;
     }
 }
 
@@ -641,83 +703,136 @@ mod test {
     use rstest::*;
     use std::cmp;
 
-    use super::{width_constraints, GridPane, Pane, ReactiveWidget, SingleScrollablePane};
+    use super::{
+        ColumnConstraints, ColumnStatus, GridPane, Pane, ReactiveWidget, SingleScrollablePane,
+    };
+
+    /// Create a column constraints object and feed it.
+    ///
+    /// A columns are alike except the first column.
+    fn new_column_constraints(
+        screen_width: u16,
+        max_col_width: u16,
+        column_spacing: u16,
+        ncols: usize,
+        first_column_width: u16,
+        column_width: u16,
+    ) -> (ColumnConstraints, ColumnStatus) {
+        let mut cc = ColumnConstraints::new(screen_width, max_col_width, column_spacing);
+        for width in vec![first_column_width]
+            .iter()
+            .chain(vec![column_width; ncols - 1].iter())
+        {
+            match cc.add_column(*width) {
+                ColumnStatus::Accepted => (),
+                status => return (cc, status),
+            }
+        }
+        (cc, ColumnStatus::Accepted)
+    }
 
     #[test]
-    fn test_width_constraints_underflow() {
+    fn test_column_constraints_underflow() {
         // 0         1
         // 01234567890123456789
         // aaaaa bbbb bbbb
         const SCREEN_WIDTH: u16 = 20;
         const FIRST_COLUMN_WIDTH: u16 = 5;
         const COLUMN_WIDTH: u16 = 4;
-        let column_widths = vec![FIRST_COLUMN_WIDTH, COLUMN_WIDTH, COLUMN_WIDTH];
         const COLUMN_SPACING: u16 = 1;
         const NCOLS: usize = 3;
-        let (table_width, widths, hoverflow) =
-            width_constraints(SCREEN_WIDTH, SCREEN_WIDTH, &column_widths, COLUMN_SPACING);
+        let (cc, status) = new_column_constraints(
+            SCREEN_WIDTH,
+            SCREEN_WIDTH,
+            COLUMN_SPACING,
+            NCOLS,
+            FIRST_COLUMN_WIDTH,
+            COLUMN_WIDTH,
+        );
+        assert!(matches!(status, ColumnStatus::Accepted));
         const SPACED_COLUMN_WIDTH: u16 = COLUMN_WIDTH + COLUMN_SPACING;
         const EXPECTED_WIDTH: u16 = FIRST_COLUMN_WIDTH + (NCOLS as u16 - 1) * SPACED_COLUMN_WIDTH;
-        assert_eq!(EXPECTED_WIDTH, table_width);
-        assert_eq!(NCOLS, widths.len());
-        assert_eq!(Constraint::Length(FIRST_COLUMN_WIDTH), widths[0]);
-        assert_eq!(Constraint::Length(COLUMN_WIDTH), widths[1]);
-        assert!(!hoverflow);
+        assert_eq!(EXPECTED_WIDTH, cc.inner_width - cc.remaining_width);
+        assert_eq!(NCOLS, cc.constraints.len());
+        assert_eq!(Constraint::Length(FIRST_COLUMN_WIDTH), cc.constraints[0]);
+        assert_eq!(Constraint::Length(COLUMN_WIDTH), cc.constraints[1]);
     }
 
     #[test]
-    fn test_width_constraints_exact() {
+    fn test_column_constraints_exact() {
         // 0         1
         // 01234567890123456789
         // aaaaa bbbb bbbb bbbb
         const SCREEN_WIDTH: u16 = 20;
         const FIRST_COLUMN_WIDTH: u16 = 5;
         const COLUMN_WIDTH: u16 = 4;
-        let column_widths = vec![FIRST_COLUMN_WIDTH, COLUMN_WIDTH, COLUMN_WIDTH, COLUMN_WIDTH];
         const COLUMN_SPACING: u16 = 1;
-        let (table_width, widths, hoverflow) =
-            width_constraints(SCREEN_WIDTH, SCREEN_WIDTH, &column_widths, COLUMN_SPACING);
-        const SPACED_COLUMN_WIDTH: u16 = COLUMN_WIDTH + COLUMN_SPACING;
-        let expected_width: u16 =
-            FIRST_COLUMN_WIDTH + (column_widths.len() as u16 - 1) * SPACED_COLUMN_WIDTH;
-        const EXPECTED_NCOLS: usize = 4;
-        assert_eq!(expected_width, table_width);
-        assert_eq!(EXPECTED_NCOLS, widths.len());
-        assert_eq!(Constraint::Length(FIRST_COLUMN_WIDTH), widths[0]);
-        assert_eq!(Constraint::Length(COLUMN_WIDTH), widths[1]);
-        assert!(!hoverflow);
-    }
-
-    #[test]
-    fn test_width_constraints_overflow() {
-        // 0         1
-        // 01234567890123456789
-        // aaaaa bbb bbb bbb bbb bbb
-        const SCREEN_WIDTH: u16 = 20;
-        const FIRST_COLUMN_WIDTH: u16 = 5;
-        const COLUMN_WIDTH: u16 = 3;
-        let column_widths = vec![
+        const NCOLS: usize = 4;
+        let (cc, status) = new_column_constraints(
+            SCREEN_WIDTH,
+            SCREEN_WIDTH,
+            COLUMN_SPACING,
+            NCOLS,
             FIRST_COLUMN_WIDTH,
             COLUMN_WIDTH,
-            COLUMN_WIDTH,
-            COLUMN_WIDTH,
-            COLUMN_WIDTH,
-            COLUMN_WIDTH,
-        ];
+        );
+        assert!(matches!(status, ColumnStatus::Accepted));
+        const SPACED_COLUMN_WIDTH: u16 = COLUMN_WIDTH + COLUMN_SPACING;
+        let expected_width: u16 = FIRST_COLUMN_WIDTH + (NCOLS as u16 - 1) * SPACED_COLUMN_WIDTH;
+        const EXPECTED_NCOLS: usize = 4;
+        assert_eq!(expected_width, cc.inner_width);
+        assert_eq!(0, cc.remaining_width);
+        assert_eq!(EXPECTED_NCOLS, cc.constraints.len());
+        assert_eq!(Constraint::Length(FIRST_COLUMN_WIDTH), cc.constraints[0]);
+        assert_eq!(Constraint::Length(COLUMN_WIDTH), cc.constraints[1]);
+    }
+
+    #[rstest]
+    #[case(5, 5, 5, 2, true)]
+    #[case(6, 4, 5, 3, false)]
+    #[case(5, 7, 4, 3, false)]
+    fn test_column_constraints_overflow(
+        #[case] ncols: usize,
+        #[case] first_column_width: u16,
+        #[case] expected_ncols: usize,
+        #[case] expected_last_width: u16,
+        #[case] truncated: bool,
+    ) {
+        //    0         1
+        //    01234567890123456789
+        // #1 aaaaa bbb bbb bbb bbb
+        // #2 aaaa bbb bbb bbb bbb bbb
+        // #1 aaaaaaa bbb bbb bbb bbb
+        const SCREEN_WIDTH: u16 = 20;
+        const COLUMN_WIDTH: u16 = 3;
         const COLUMN_SPACING: u16 = 1;
-        let (table_width, widths, hoverflow) =
-            width_constraints(SCREEN_WIDTH, SCREEN_WIDTH, &column_widths, COLUMN_SPACING);
+        let (cc, status) = new_column_constraints(
+            SCREEN_WIDTH,
+            SCREEN_WIDTH,
+            COLUMN_SPACING,
+            ncols,
+            first_column_width,
+            COLUMN_WIDTH,
+        );
+        match status {
+            ColumnStatus::Truncated if truncated => (),
+            ColumnStatus::Rejected if !truncated => (),
+            status => panic!("invalid status {status:?}"),
+        }
         const EXPECTED_NCOLS: usize = 5;
-        assert_eq!(SCREEN_WIDTH, table_width);
-        assert_eq!(EXPECTED_NCOLS, widths.len());
-        assert_eq!(Constraint::Length(FIRST_COLUMN_WIDTH), widths[0]);
-        assert_eq!(Constraint::Length(COLUMN_WIDTH), widths[1]);
-        assert_eq!(Constraint::Length(2), widths[4]);
-        assert!(hoverflow);
+        assert_eq!(SCREEN_WIDTH, cc.inner_width);
+        assert_eq!(0, cc.remaining_width);
+        assert_eq!(expected_ncols, cc.constraints.len());
+        assert_eq!(Constraint::Length(first_column_width), cc.constraints[0]);
+        assert_eq!(Constraint::Length(COLUMN_WIDTH), cc.constraints[1]);
+        assert_eq!(
+            Constraint::Length(expected_last_width),
+            cc.constraints.last().unwrap().clone()
+        );
     }
 
     #[test]
-    fn test_width_constraints_max_col_width() {
+    fn test_column_constraints_max_col_width() {
         // 0         1
         // 01234567890123456789
         // aaaaaaa bbb bbb bbb
@@ -725,22 +840,28 @@ mod test {
         const MAX_COL_WIDTH: u16 = 7;
         const FIRST_COLUMN_WIDTH: u16 = 12;
         const COLUMN_WIDTH: u16 = 3;
-        let column_widths = vec![
+        const COLUMN_SPACING: u16 = 1;
+        const NCOLS: usize = 4;
+        let (cc, status) = new_column_constraints(
+            SCREEN_WIDTH,
+            MAX_COL_WIDTH,
+            COLUMN_SPACING,
+            NCOLS,
             FIRST_COLUMN_WIDTH,
             COLUMN_WIDTH,
-            COLUMN_WIDTH,
-            COLUMN_WIDTH,
-            COLUMN_WIDTH,
-        ];
-        const COLUMN_SPACING: u16 = 1;
-        let (table_width, widths, hoverflow) =
-            width_constraints(SCREEN_WIDTH, MAX_COL_WIDTH, &column_widths, COLUMN_SPACING);
+        );
+        assert!(
+            matches!(status, ColumnStatus::Accepted),
+            "invalid status {status:?}",
+        );
         const EXPECTED_NCOLS: usize = 4;
-        assert_eq!(SCREEN_WIDTH - COLUMN_SPACING, table_width);
-        assert_eq!(EXPECTED_NCOLS, widths.len());
-        assert_eq!(Constraint::Length(MAX_COL_WIDTH), widths[0]);
-        assert_eq!(Constraint::Length(COLUMN_WIDTH), widths[1]);
-        assert!(hoverflow);
+        assert_eq!(
+            SCREEN_WIDTH - COLUMN_SPACING,
+            cc.inner_width - cc.remaining_width
+        );
+        assert_eq!(EXPECTED_NCOLS, cc.constraints.len());
+        assert_eq!(Constraint::Length(MAX_COL_WIDTH), cc.constraints[0]);
+        assert_eq!(Constraint::Length(COLUMN_WIDTH), cc.constraints[1]);
     }
 
     #[derive(Debug)]

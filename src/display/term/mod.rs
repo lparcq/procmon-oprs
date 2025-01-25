@@ -26,7 +26,9 @@ use ratatui::{
     widgets::{Cell, Clear},
     Terminal,
 };
-use std::{cmp::Ordering, collections::BTreeSet, convert::TryFrom, fmt, io, time::Duration};
+use std::{
+    cmp::Ordering, collections::BTreeSet, convert::TryFrom, fmt, io, rc::Rc, time::Duration,
+};
 use termion::{
     raw::{IntoRawMode, RawTerminal},
     screen::{AlternateScreen, IntoAlternateScreen},
@@ -51,8 +53,8 @@ mod types;
 
 use input::{menu, Action, BookmarkAction, Bookmarks, KeyMap, MenuEntry, SearchEdit};
 use panes::{
-    BigTableWidget, FieldsWidget, GridPane, MarkdownWidget, OneLineWidget, OptionalRenderer, Pane,
-    ScrollableWidgetState, SingleScrollablePane, TableStyle,
+    BigTableWidget, DoubleZoom, FieldsWidget, GridPane, MarkdownWidget, OneLineWidget,
+    OptionalRenderer, Pane, SingleScrollablePane, TableGenerator, TableStyle, Zoom,
 };
 use types::{Area, MaxLength, UnboundedArea};
 
@@ -109,6 +111,7 @@ pub enum PidStatus {
 }
 
 /// Theme styles
+#[derive(Debug)]
 struct Styles {
     /// Even rows
     even_row: Style,
@@ -272,6 +275,174 @@ macro_rules! format_metric {
     };
 }
 
+/// Data used to generate the tree as a table.
+#[derive(Debug)]
+struct TreeData<'t> {
+    /// Column headers for metrics
+    metric_headers: Vec<Text<'t>>,
+    /// Display styles
+    styles: Styles,
+    /// Bookmarks for PIDs.
+    bookmarks: Bookmarks,
+    /// PID matched by a search.
+    occurrences: BTreeSet<pid_t>,
+}
+
+impl<'t> TreeData<'t> {
+    fn new(styles: Styles) -> Self {
+        Self {
+            metric_headers: Vec::new(),
+            styles,
+            bookmarks: Bookmarks::default(),
+            occurrences: BTreeSet::default(),
+        }
+    }
+
+    /// Status of a process.
+    fn pid_status(&self, pid: pid_t) -> PidStatus {
+        if self.bookmarks.is_selected(pid) {
+            PidStatus::Selected
+        } else if self.occurrences.contains(&pid) {
+            PidStatus::Matching
+        } else if self.bookmarks.is_marked(pid) {
+            PidStatus::Marked
+        } else {
+            PidStatus::Unknown
+        }
+    }
+}
+
+/// Table generator for a tree of processes.
+struct ProcessTreeTable<'a, 'b, 't> {
+    /// Sample collector.
+    collector: &'b Collector<'a>,
+    /// Tree data.
+    data: Rc<TreeData<'t>>,
+    /// Headers size.
+    headers_size: Area<usize>,
+    /// Column widths
+    widths: Vec<u16>,
+    /// Indentation
+    indents: Vec<usize>,
+}
+
+impl<'a, 'b, 't> ProcessTreeTable<'a, 'b, 't> {
+    const TITLE_PROCESS: &'static str = "Process";
+    const TITLE_PID: &'static str = "PID";
+    const TITLE_STATE: &'static str = "S";
+    const FIXED_HEADERS: [&'static str; 3] =
+        [Self::TITLE_PROCESS, Self::TITLE_PID, Self::TITLE_STATE];
+
+    fn new(collector: &'b Collector<'a>, data: Rc<TreeData<'t>>) -> Self {
+        let mut pids = PidStack::default();
+        let mut headers_height = 0;
+        let mut widths = Self::FIXED_HEADERS
+            .iter()
+            .map(|s| MaxLength::from(*s))
+            .chain(data.metric_headers.iter().map(|text| {
+                if headers_height < text.lines.len() {
+                    headers_height = text.lines.len();
+                }
+                MaxLength::from(text.iter().map(|line| line.width()).max().unwrap_or(0))
+            }))
+            .collect::<Vec<MaxLength>>();
+        let headers_size = Area::new(Self::FIXED_HEADERS.len(), headers_height);
+        let mut indents = Vec::with_capacity(collector.line_count());
+        collector.lines().for_each(|ps| {
+            pids.push(ps);
+            let indent = pids.len().saturating_sub(1);
+            indents.push(indent);
+            widths[0].set_min(indent + ps.name().len());
+            widths[1].set_min(ps.pid().to_string().len());
+            // widths[2].set_min(1);
+            ps.samples().enumerate().for_each(|(i, s)| {
+                widths[i + headers_size.horizontal]
+                    .set_min(s.strings().map(|s| s.len()).max().unwrap_or(0))
+            });
+        });
+        Self {
+            collector,
+            headers_size,
+            data,
+            widths: widths.iter().map(|ml| ml.len()).collect::<Vec<u16>>(),
+            indents,
+        }
+    }
+
+    /// Number of columns in the body.
+    fn body_column_count(&self) -> usize {
+        self.data.metric_headers.len()
+    }
+
+    /// Number of rows in the body.
+    fn body_row_count(&self) -> usize {
+        self.collector.line_count()
+    }
+}
+
+impl<'a, 'b, 't> TableGenerator for ProcessTreeTable<'a, 'b, 't> {
+    fn headers_size(&self) -> Area<usize> {
+        self.headers_size
+    }
+
+    fn top_headers(&self, zoom: &Zoom) -> Vec<Cell> {
+        Self::FIXED_HEADERS
+            .iter()
+            .map(|s| Cell::from(Text::from(*s)))
+            .chain(
+                self.data
+                    .metric_headers
+                    .iter()
+                    .skip(zoom.position)
+                    .take(zoom.visible_length)
+                    .map(|text| Cell::from(text.clone().alignment(Alignment::Center))),
+            )
+            .collect::<Vec<Cell>>()
+    }
+
+    fn rows(&self, zoom: &DoubleZoom) -> Vec<Vec<Cell>> {
+        self.collector
+            .lines()
+            .skip(zoom.vertical.position)
+            .take(zoom.vertical.visible_length)
+            .enumerate()
+            .map(|(n, ps)| {
+                let pid_status = self.data.pid_status(ps.pid());
+                let name = {
+                    let name = ps.name();
+                    format!("{:>width$}", name, width = self.indents[n] + name.len())
+                };
+                let name_style = self.data.styles.name_style(pid_status);
+                vec![
+                    Cell::from(name).style(name_style),
+                    rcell!(ps.pid().to_string()),
+                    rcell!(ps.state().to_string()),
+                ]
+                .drain(..)
+                .chain(
+                    ps.samples()
+                        .flat_map(|sample| {
+                            izip!(sample.strings(), sample.trends()).map(|(value, trend)| {
+                                Cell::from(
+                                    Text::from(value.as_str())
+                                        .style(self.data.styles.trend_style(trend))
+                                        .alignment(Alignment::Right),
+                                )
+                            })
+                        })
+                        .skip(zoom.horizontal.position)
+                        .take(zoom.horizontal.visible_length),
+                )
+                .collect::<Vec<Cell>>()
+            })
+            .collect::<Vec<Vec<Cell>>>()
+    }
+
+    fn widths(&self) -> &[u16] {
+        &self.widths
+    }
+}
+
 /// Print on standard output as a table
 pub struct TerminalDevice<'t> {
     /// Interval to update the screen
@@ -280,6 +451,8 @@ pub struct TerminalDevice<'t> {
     events: EventChannel,
     /// Terminal
     terminal: Terminal<TermionBackend<Box<AlternateScreen<RawTerminal<io::Stdout>>>>>,
+    /// Table tree data
+    tree_data: Rc<TreeData<'t>>,
     /// Horizontal and vertical offset
     table_offset: UnboundedArea,
     /// Pane offset (except for the table)
@@ -288,22 +461,12 @@ pub struct TerminalDevice<'t> {
     vertical_scroll: VerticalScroll,
     /// Horizontal and vertical overflow (whether the table is bigger than the screen)
     overflow: Area<bool>,
-    /// Column headers for metrics
-    metric_headers: Vec<Text<'t>>,
     /// Slots where limits are displayed under the metric (only for raw metrics).
     limit_slots: Vec<bool>,
     /// Mode to display limits.
     display_limits: LimitKind,
-    /// Display styles
-    styles: Styles,
-    /// Number of lines in the headers
-    headers_height: usize,
     /// Number of available lines to display the table
     body_height: usize,
-    /// Bookmarks for PIDs.
-    bookmarks: Bookmarks,
-    /// PID matched by a search.
-    occurrences: BTreeSet<pid_t>,
     /// Filter
     filter: ProcessFilter,
     /// Menu
@@ -324,18 +487,14 @@ impl TerminalDevice<'_> {
             every,
             events: EventChannel::new(),
             terminal,
+            tree_data: Rc::new(TreeData::new(Styles::new(theme))),
             table_offset: Default::default(),
             pane_offset: 0,
             vertical_scroll: VerticalScroll::Line(1),
             overflow: Area::default(),
-            metric_headers: Vec::new(),
             limit_slots: Vec::new(),
             display_limits: LimitKind::None,
-            styles: Styles::new(theme),
-            headers_height: 0,
             body_height: 0,
-            bookmarks: Bookmarks::default(),
-            occurrences: BTreeSet::default(),
             filter: ProcessFilter::default(),
             menu: menu(),
             pane_kind: PaneKind::Main,
@@ -359,8 +518,8 @@ impl TerminalDevice<'_> {
     fn status_bar(&self) -> String {
         let time_string = format!("{}", Local::now().format("%X"));
         let delay = human_duration(self.every);
-        let matches_count = self.occurrences.len();
-        let marks_count = self.bookmarks.marks().len();
+        let matches_count = self.tree_data.occurrences.len();
+        let marks_count = self.tree_data.bookmarks.marks().len();
         if matches_count > 0 {
             format!("{time_string} -- interval:{delay} -- matches:{matches_count}",)
         } else if marks_count > 0 {
@@ -374,73 +533,39 @@ impl TerminalDevice<'_> {
         }
     }
 
-    /// Draw the table of metrics and the menu.
-    ///
-    /// Return the table visible height.
-    fn draw_tree(
-        &mut self,
-        headers: Vec<Cell>,
-        rows: Vec<Vec<Cell>>,
-        col_widths: &[u16],
-    ) -> anyhow::Result<()> {
-        let column_spacing = self.styles.column_spacing;
-        let even_row_style = self.styles.even_row;
-        let odd_row_style = self.styles.odd_row;
-        let mut body_height = 0;
-        let headers_height = self.headers_height as u16;
-        let is_search = self.bookmarks.is_incremental_search();
-        let show_cursor = is_search;
-        let main = BigTableWidget::new(
-            headers,
-            headers_height,
-            rows,
-            col_widths,
-            self.table_offset,
-            TableStyle::new(column_spacing, even_row_style, odd_row_style),
-        );
-        let status_bar =
-            OneLineWidget::new(Text::from(self.status_bar()), self.styles.status, None);
-        let menu = if is_search {
-            OneLineWidget::new(
-                Text::from(format!(
-                    "Search: {}",
-                    self.bookmarks.search_pattern().unwrap()
-                )),
-                Style::default(),
-                None,
-            )
-        } else {
-            OneLineWidget::with_menu(self.menu.iter(), self.keymap)
-        };
+    /// Clear marks.
+    fn clear_bookmarks(&mut self) {
+        void!(Rc::get_mut(&mut self.tree_data).map(|data| data.bookmarks.clear_marks()))
+    }
 
-        let mut new_overflow = Area::default();
-        self.terminal.draw(|frame| {
-            let area = frame.area();
-            let mut rects = SingleScrollablePane::new(area, 3)
-                .with(&status_bar)
-                .with(&menu)
-                .build();
+    /// Clear search.
+    fn clear_search(&mut self) {
+        void!(Rc::get_mut(&mut self.tree_data).map(|data| data.bookmarks.clear_search()))
+    }
 
-            let mut state = ScrollableWidgetState::default();
-            let mut cursor = if show_cursor {
-                Some(Position::new(0, area.y + area.height - 1))
-            } else {
-                None
-            };
-            let mut r = OptionalRenderer::new(frame, &mut rects);
-            r.render_stateful_widget(main, &mut state);
-            r.render_widget(status_bar);
-            r.render_stateful_widget(menu, &mut cursor);
-            body_height = state.inner_height - headers_height;
-            new_overflow = state.overflow;
-            if let Some(cursor) = cursor {
-                frame.set_cursor_position(cursor);
+    /// Edit search.
+    fn edit_search(&mut self, edit: SearchEdit) {
+        Rc::get_mut(&mut self.tree_data).map(|data| data.bookmarks.edit_search(edit));
+    }
+
+    /// Set bookmark action.
+    fn set_bookmarks_action(&mut self, action: BookmarkAction) {
+        void!(Rc::get_mut(&mut self.tree_data).map(|data| data.bookmarks.set_action(action)))
+    }
+
+    /// Clear bookmarks and set bookmark action if the condition is true.
+    fn clear_and_set_bookmarks_action_if(&mut self, action: BookmarkAction, cond: bool) {
+        Rc::get_mut(&mut self.tree_data).map(|data| {
+            data.bookmarks.clear_marks();
+            if cond {
+                void!(data.bookmarks.set_action(action));
             }
-        })?;
-        self.overflow = new_overflow;
-        self.vertical_scroll = VerticalScroll::Line(body_height.div_ceil(2) as usize);
-        self.body_height = body_height as usize;
-        Ok(())
+        });
+    }
+
+    /// Clear bookmarks and set bookmark action.
+    fn clear_and_set_bookmarks_action(&mut self, action: BookmarkAction) {
+        self.clear_and_set_bookmarks_action_if(action, true);
     }
 
     /// Execute an interactive action.
@@ -505,55 +630,46 @@ impl TerminalDevice<'_> {
                 }
             }
             Action::ScrollPageUp => match self.pane_kind {
-                PaneKind::Main => {
-                    self.bookmarks.clear_search();
-                    void!(self.bookmarks.set_action(BookmarkAction::PreviousPage));
-                }
+                PaneKind::Main => self.clear_and_set_bookmarks_action(BookmarkAction::PreviousPage),
                 _ => {
                     self.pane_offset = self.pane_offset.saturating_sub(self.vertical_scroll.into());
                 }
             },
             Action::ScrollPageDown => match self.pane_kind {
-                PaneKind::Main => {
-                    self.bookmarks.clear_search();
-                    if self.overflow.vertical {
-                        void!(self.bookmarks.set_action(BookmarkAction::NextPage))
-                    }
-                }
+                PaneKind::Main => self.clear_and_set_bookmarks_action_if(
+                    BookmarkAction::NextPage,
+                    self.overflow.vertical,
+                ),
                 _ => {
                     self.pane_offset = self.pane_offset.saturating_add(self.vertical_scroll.into());
                 }
             },
             Action::ScrollLineUp => {
-                self.bookmarks.clear_search();
-                void!(self.bookmarks.set_action(BookmarkAction::PreviousLine));
+                self.clear_and_set_bookmarks_action(BookmarkAction::PreviousLine)
             }
-            Action::ScrollLineDown => {
-                self.bookmarks.clear_search();
-                void!(self.bookmarks.set_action(BookmarkAction::NextLine))
-            }
-            Action::GotoTableTop => void!(self.bookmarks.set_action(BookmarkAction::FirstLine)),
-            Action::GotoTableBottom => void!(self.bookmarks.set_action(BookmarkAction::LastLine)),
+            Action::ScrollLineDown => self.clear_and_set_bookmarks_action(BookmarkAction::NextLine),
+            Action::GotoTableTop => void!(self.set_bookmarks_action(BookmarkAction::FirstLine)),
+            Action::GotoTableBottom => void!(self.set_bookmarks_action(BookmarkAction::LastLine)),
             Action::GotoTableLeft => self.table_offset.horizontal_home(),
             Action::GotoTableRight => self.table_offset.horizontal_end(),
             Action::SearchEnter => {
                 self.set_keymap(KeyMap::IncrementalSearch);
-                self.bookmarks.incremental_search();
+                Rc::get_mut(&mut self.tree_data).map(|data| data.bookmarks.incremental_search());
             }
             Action::SearchExit => {
                 self.terminal.hide_cursor()?;
                 self.set_keymap(KeyMap::Main);
-                self.bookmarks.fixed_search()
+                Rc::get_mut(&mut self.tree_data).map(|data| data.bookmarks.fixed_search());
             }
-            Action::SearchPush(c) => self.bookmarks.edit_search(SearchEdit::Push(c)),
-            Action::SearchPop => self.bookmarks.edit_search(SearchEdit::Pop),
-            Action::SearchCancel => self.bookmarks.clear_search(),
+            Action::SearchPush(c) => self.edit_search(SearchEdit::Push(c)),
+            Action::SearchPop => self.edit_search(SearchEdit::Pop),
+            Action::SearchCancel => self.clear_search(),
             Action::SelectPrevious => {
-                void!(self.bookmarks.set_action(BookmarkAction::Previous))
+                void!(self.set_bookmarks_action(BookmarkAction::Previous))
             }
-            Action::SelectNext => void!(self.bookmarks.set_action(BookmarkAction::Next)),
-            Action::ClearMarks => self.bookmarks.clear_marks(),
-            Action::ToggleMarks => void!(self.bookmarks.set_action(BookmarkAction::ToggleMarks)),
+            Action::SelectNext => void!(self.set_bookmarks_action(BookmarkAction::Next)),
+            Action::ClearMarks => self.clear_bookmarks(),
+            Action::ToggleMarks => void!(self.set_bookmarks_action(BookmarkAction::ToggleMarks)),
         }
         Ok(action)
     }
@@ -561,168 +677,32 @@ impl TerminalDevice<'_> {
     /// Convert the action to a possible interaction.
     fn interaction(&mut self, action: Action) -> Interaction {
         Interaction::try_from(&action).ok().unwrap_or(match action {
-            Action::ChangeScope if !self.bookmarks.marks().is_empty() => {
+            Action::ChangeScope if !self.tree_data.bookmarks.marks().is_empty() => {
                 let pids = self
+                    .tree_data
                     .bookmarks
                     .marks()
                     .iter()
                     .copied()
                     .collect::<Vec<pid_t>>();
-                self.bookmarks.clear_marks();
+                self.clear_bookmarks();
                 Interaction::Narrow(pids)
             }
             Action::ChangeScope => Interaction::Wide,
             Action::FilterNone | Action::FilterUser | Action::FilterActive => {
                 Interaction::Filter(self.filter)
             }
-            Action::SelectRootPid => match self.bookmarks.selected() {
+            Action::SelectRootPid => match self.tree_data.bookmarks.selected() {
                 Some(selected) => Interaction::SelectRootPid(Some(selected.pid)),
                 None => Interaction::None,
             },
             Action::UnselectRootPid => Interaction::SelectRootPid(None),
-            Action::SwitchToProcess => match self.bookmarks.selected() {
+            Action::SwitchToProcess => match self.tree_data.bookmarks.selected() {
                 Some(selected) => Interaction::SelectPid(selected.pid),
                 None => Interaction::None,
             },
             _ => Interaction::None,
         })
-    }
-
-    /// Make the row of headers.
-    ///
-    /// The first column is the name. The second is the PID. The rest are the metrics.
-    fn make_header_row<'p>(
-        hoffset: usize,
-        cws: &mut [MaxLength],
-        metric_headers: Vec<Text<'p>>,
-    ) -> Vec<Cell<'p>> {
-        let column_count = cws.len();
-        let mut row = Vec::with_capacity(column_count);
-        row.push(Cell::from(""));
-
-        const PID_TITLE: &str = "PID";
-        row.push(Cell::from(
-            Text::from(PID_TITLE).alignment(Alignment::Center),
-        ));
-        let mut col_index = 1;
-        cws[col_index].check(PID_TITLE);
-        col_index += 1;
-
-        const STATE_TITLE: &str = "S";
-        row.push(Cell::from(Text::from(STATE_TITLE)));
-        cws[col_index].check(STATE_TITLE);
-        col_index += 1;
-
-        metric_headers
-            .iter()
-            .skip(hoffset)
-            .enumerate()
-            .for_each(|(index, text)| {
-                text.iter().for_each(|line| {
-                    let line_len = line.iter().map(|span| span.content.len()).sum();
-                    cws[col_index + index].set_min(line_len)
-                });
-                row.push(Cell::from(text.clone().alignment(Alignment::Center)));
-            });
-        row
-    }
-
-    /// Make a row of metrics.
-    ///
-    /// The first column is the name. The second is the PID. The rest are the metrics.
-    fn make_metrics_row<'p>(
-        name_status: PidStatus,
-        hoffset: usize,
-        indent: usize,
-        cws: &mut [MaxLength],
-        ps: &'p ProcessSamples,
-        styles: &Styles,
-    ) -> Vec<Cell<'p>> {
-        let column_count = cws.len();
-        let mut row = Vec::with_capacity(column_count);
-        let name_style = styles.name_style(name_status);
-        let name = {
-            let name = ps.name();
-            format!("{:>width$}", name, width = indent + name.len())
-        };
-        let mut col_index = 0;
-        cws[col_index].check(&name);
-        col_index += 1;
-        row.push(Cell::from(name).style(name_style));
-        let pid = format!("{}", ps.pid());
-        cws[col_index].check(&pid);
-        col_index += 1;
-        row.push(rcell!(pid));
-        col_index += 1;
-        row.push(rcell!(ps.state().to_string()));
-        ps.samples()
-            .flat_map(|sample| izip!(sample.strings(), sample.trends()))
-            .skip(hoffset)
-            .for_each(|(value, trend)| {
-                cws[col_index].check(value);
-                col_index += 1;
-                row.push(Cell::from(
-                    Text::from(value.as_str())
-                        .style(styles.trend_style(trend))
-                        .alignment(Alignment::Right),
-                ));
-            });
-        row
-    }
-
-    /// Make a row of limits.
-    ///
-    /// The first column is the name. The second is the PID. The rest are the metrics.
-    fn make_limits_row<'p>(
-        hoffset: usize,
-        cws: &mut [MaxLength],
-        ps: &'p ProcessSamples,
-        display_limits: LimitKind,
-        limit_slots: &[bool],
-    ) -> Vec<Cell<'p>> {
-        let column_count = cws.len();
-        let mut row = Vec::with_capacity(column_count);
-        let limits_title = match display_limits {
-            LimitKind::None => "no limit",
-            LimitKind::Soft => "soft limits",
-            LimitKind::Hard => "hard limits",
-        };
-        cws[0].check(limits_title);
-        row.push(rcell!(limits_title));
-        for _ in 0..2 {
-            row.push(Cell::new(""));
-        }
-        let mut col_index = 0;
-        const NOT_APPLICABLE: &str = "n/a";
-        ps.samples().for_each(|sample| {
-            let max_index = col_index + sample.string_count();
-            if col_index >= hoffset {
-                while col_index < max_index {
-                    if limit_slots[hoffset + col_index] {
-                        let text = sample.limit(display_limits.clone()).unwrap_or("--");
-                        cws[col_index].check(text);
-                        row.push(rcell!(text));
-                    } else {
-                        row.push(rcell!(NOT_APPLICABLE));
-                    }
-                    col_index += 1;
-                }
-            }
-        });
-        row
-    }
-
-    /// Status of a process.
-    fn pid_status(&self, pid: pid_t) -> PidStatus {
-        if self.bookmarks.is_selected(pid) {
-            PidStatus::Selected
-        } else if self.occurrences.contains(&pid) {
-            PidStatus::Matching
-        } else if self.bookmarks.is_marked(pid) {
-            PidStatus::Marked
-        } else {
-            PidStatus::Unknown
-        }
     }
 
     fn top(&self, line_count: usize) -> usize {
@@ -741,84 +721,103 @@ impl TerminalDevice<'_> {
 
     fn render_tree(&mut self, collector: &Collector) -> anyhow::Result<()> {
         self.pane_kind = PaneKind::Main;
+
+        let metric_headers_len = self.tree_data.metric_headers.len();
         let line_count = collector.line_count();
-        let ncols = self.metric_headers.len() + 3; // process name, PID, state, metric1, ...
-        let nrows = line_count + 2; // metric title, metric subtitle, process1, ...
         let top = self.top(line_count);
-        let voffset = self.bookmarks.execute(
-            &mut self.occurrences,
-            collector.lines().skip(1),
-            top,
-            self.body_height,
-        );
+        let voffset = Rc::get_mut(&mut self.tree_data)
+            .map(|data| {
+                data.bookmarks.execute(
+                    &mut data.occurrences,
+                    collector.lines(),
+                    top,
+                    self.body_height,
+                )
+            })
+            .unwrap_or(0);
         self.table_offset.set_vertical(voffset);
-        let (hoffset, voffset) = self
-            .table_offset
-            .set_bounds(ncols - 3, line_count.saturating_sub(self.body_height));
-        let nvisible_rows = nrows - voffset;
-        let nvisible_cols = ncols - hoffset;
-
-        let mut cws = Vec::with_capacity(nvisible_cols); // column widths
-        cws.resize(nvisible_cols, MaxLength::default());
-
-        let metric_headers = self.metric_headers.clone();
-        let headers = TerminalDevice::make_header_row(hoffset, &mut cws, metric_headers);
-
-        let mut pids = PidStack::default();
-        collector
-            .lines()
-            .skip(1)
-            .take(voffset)
-            .for_each(|sample| pids.push(sample));
-
-        let mut rows: Vec<Vec<Cell>> = Vec::with_capacity(nvisible_rows);
-        let system_row = TerminalDevice::make_metrics_row(
-            PidStatus::Unknown,
-            hoffset,
-            0,
-            &mut cws,
-            collector.lines().take(1).next().unwrap(),
-            &self.styles,
+        self.table_offset.set_bounds(
+            metric_headers_len.saturating_sub(1),
+            line_count.saturating_sub(self.body_height),
         );
-        rows.push(system_row);
-        let with_limits = matches!(self.display_limits, LimitKind::Soft | LimitKind::Hard);
-        let display_limits = self.display_limits.clone();
-        collector.lines().skip(voffset + 1).for_each(|samples| {
-            pids.push(samples);
-            let pid = samples.pid();
-            let pid_status = self.pid_status(pid);
+        let column_spacing = self.tree_data.styles.column_spacing;
+        let even_row_style = self.tree_data.styles.even_row;
+        let odd_row_style = self.tree_data.styles.odd_row;
+        let status_style = self.tree_data.styles.status;
+        let is_search = self.tree_data.bookmarks.is_incremental_search();
+        let mut body_height = 0;
+        let show_cursor = is_search;
+        let status_bar = OneLineWidget::new(Text::from(self.status_bar()), status_style, None);
+        let menu = if is_search {
+            OneLineWidget::new(
+                Text::from(format!(
+                    "Search: {}",
+                    self.tree_data.bookmarks.search_pattern().unwrap()
+                )),
+                Style::default(),
+                None,
+            )
+        } else {
+            OneLineWidget::with_menu(self.menu.iter(), self.keymap)
+        };
 
-            let row = TerminalDevice::make_metrics_row(
-                pid_status,
-                hoffset,
-                pids.len().saturating_sub(1), // indent
-                &mut cws,
-                samples,
-                &self.styles,
+        let table = ProcessTreeTable::new(collector, Rc::clone(&self.tree_data));
+        let main = BigTableWidget::new(
+            &table,
+            TableStyle::new(column_spacing, even_row_style, odd_row_style),
+        );
+
+        let mut new_overflow = Area::default();
+        self.terminal.draw(|frame| {
+            let area = frame.area();
+            let mut rects = SingleScrollablePane::new(area, 3)
+                .with(&status_bar)
+                .with(&menu)
+                .build();
+
+            let mut state = DoubleZoom::new(
+                Zoom::new(
+                    self.table_offset.horizontal.value_or_zero(),
+                    0,
+                    table.body_column_count(),
+                ),
+                Zoom::new(
+                    self.table_offset.vertical.value_or_zero(),
+                    0,
+                    table.body_row_count(),
+                ),
             );
-            rows.push(row);
-            if matches!(pid_status, PidStatus::Selected) && with_limits {
-                let row = TerminalDevice::make_limits_row(
-                    hoffset,
-                    &mut cws,
-                    samples,
-                    display_limits.clone(),
-                    &self.limit_slots,
-                );
-                rows.push(row);
+            let mut cursor = if show_cursor {
+                Some(Position::new(0, area.y + area.height - 1))
+            } else {
+                None
+            };
+            let mut r = OptionalRenderer::new(frame, &mut rects);
+            r.render_stateful_widget(main, &mut state);
+            r.render_widget(status_bar);
+            r.render_stateful_widget(menu, &mut cursor);
+            body_height = state.vertical.visible_length - table.headers_size.vertical;
+            new_overflow = Area::new(!state.horizontal.at_end(), !state.vertical.at_end());
+            log::debug!(
+                "state: {:?} -- overflow: {:?}",
+                state.horizontal,
+                new_overflow.horizontal
+            );
+            if let Some(cursor) = cursor {
+                frame.set_cursor_position(cursor);
             }
-        });
-
-        let col_widths = cws.iter().map(MaxLength::len).collect::<Vec<u16>>();
-        self.draw_tree(headers, rows, &col_widths)?;
+        })?;
+        self.overflow = new_overflow;
+        self.vertical_scroll = VerticalScroll::Line(body_height.div_ceil(2) as usize);
+        self.body_height = body_height as usize;
         Ok(())
     }
 
     fn render_scrollable_pane<W>(&mut self, widget: W) -> anyhow::Result<()>
     where
-        W: StatefulWidget<State = ScrollableWidgetState>,
+        W: StatefulWidget<State = Zoom>,
     {
-        let mut state = ScrollableWidgetState::with_offset(self.pane_offset);
+        let mut state = Zoom::with_position(self.pane_offset as usize);
         let menu = OneLineWidget::with_menu(self.menu.iter(), self.keymap);
 
         self.terminal.draw(|frame| {
@@ -829,8 +828,8 @@ impl TerminalDevice<'_> {
             let mut r = OptionalRenderer::new(frame, &mut rects);
             r.render_stateful_widget(widget, &mut state);
             r.render_widget(menu);
-            self.pane_offset = state.offset;
-            self.vertical_scroll = VerticalScroll::Line(state.inner_height.div_ceil(2) as usize);
+            self.pane_offset = state.position as u16;
+            self.vertical_scroll = VerticalScroll::Line(state.visible_length.div_ceil(2) as usize);
         })?;
         Ok(())
     }
@@ -945,7 +944,6 @@ impl DisplayDevice for TerminalDevice<'_> {
                 .split(":")
                 .map(str::to_string)
                 .collect::<Vec<String>>();
-            self.headers_height = std::cmp::max(self.headers_height, header.len());
             if last_id.is_none() || last_id.unwrap() != id {
                 last_id = Some(id);
                 self.limit_slots.push(true);
@@ -963,12 +961,14 @@ impl DisplayDevice for TerminalDevice<'_> {
                 header.push(name);
                 self.limit_slots.push(false);
             }
-            self.metric_headers.push(Text::from(
-                header
-                    .iter()
-                    .map(|s| Line::from(s.to_string()))
-                    .collect::<Vec<Line>>(),
-            ));
+            Rc::get_mut(&mut self.tree_data).map(|data| {
+                data.metric_headers.push(Text::from(
+                    header
+                        .iter()
+                        .map(|s| Line::from(s.to_string()))
+                        .collect::<Vec<Line>>(),
+                ))
+            });
         });
         self.terminal.hide_cursor()?;
         Ok(())
@@ -984,7 +984,7 @@ impl DisplayDevice for TerminalDevice<'_> {
     fn render(&mut self, kind: PaneKind, data: PaneData, _redraw: bool) -> anyhow::Result<()> {
         match (kind, data) {
             (PaneKind::Main, PaneData::Collector(collector)) => {
-                let is_incremental_search = self.bookmarks.is_incremental_search();
+                let is_incremental_search = self.tree_data.bookmarks.is_incremental_search();
                 match self.keymap {
                     KeyMap::IncrementalSearch if is_incremental_search => (),
                     KeyMap::Main if !is_incremental_search => (),

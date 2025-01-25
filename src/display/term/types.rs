@@ -34,12 +34,16 @@ pub(crate) enum Unbounded<T: Clone + Copy + Default> {
     Infinite,
 }
 
-impl<T: Clone + Copy + Default> Unbounded<T> {
+impl<T: Clone + Copy + Default + Zero + ConstZero> Unbounded<T> {
     pub fn value(&self) -> Option<&T> {
         match self {
             Self::Value(value) => Some(value),
             Self::Infinite => None,
         }
+    }
+
+    pub fn value_or_zero(&self) -> T {
+        self.value().copied().unwrap_or(T::ZERO)
     }
 }
 
@@ -178,23 +182,13 @@ impl UnboundedArea {
     }
 
     /// Replace infinite values by integer or keep the current ones if finite.
-    pub fn set_bounds(&mut self, horizontal: usize, vertical: usize) -> (usize, usize) {
-        (
-            match self.horizontal {
-                UnboundedSize::Infinite => {
-                    self.set_horizontal(horizontal);
-                    horizontal
-                }
-                UnboundedSize::Value(horizontal) => horizontal,
-            },
-            match self.vertical {
-                UnboundedSize::Infinite => {
-                    self.set_vertical(vertical);
-                    vertical
-                }
-                UnboundedSize::Value(vertical) => vertical,
-            },
-        )
+    pub fn set_bounds(&mut self, horizontal: usize, vertical: usize) {
+        if matches!(self.horizontal, Unbounded::Infinite) {
+            self.set_horizontal(horizontal)
+        }
+        if matches!(self.vertical, Unbounded::Infinite) {
+            self.set_vertical(vertical);
+        }
     }
 
     pub fn horizontal_home(&mut self) {
@@ -292,6 +286,18 @@ impl MaxLength {
         if l > self.0 {
             self.0 = l
         }
+    }
+}
+
+impl From<usize> for MaxLength {
+    fn from(value: usize) -> Self {
+        Self(value as u16)
+    }
+}
+
+impl From<&str> for MaxLength {
+    fn from(s: &str) -> Self {
+        Self::from(s.len())
     }
 }
 

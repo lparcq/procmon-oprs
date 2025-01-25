@@ -693,6 +693,9 @@ impl Bookmarks {
 
         for (lineno, pi) in lines.enumerate() {
             let pid = pi.pid();
+            if pid == 0 {
+                continue;
+            }
             if self.marks.contains(&pid) {
                 marks.push(LinePid::new(lineno, pid));
             }
