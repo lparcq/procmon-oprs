@@ -50,8 +50,8 @@ mod types;
 
 use input::{menu, Action, BookmarkAction, KeyMap, MenuEntry, SearchEdit};
 use panes::{
-    BigTableState, BigTableWidget, FieldsWidget, GridPane, MarkdownWidget, OneLineWidget,
-    OptionalRenderer, Pane, SingleScrollablePane, TableGenerator, TableStyle, Zoom,
+    BigTableState, BigTableStateGenerator, BigTableWidget, FieldsWidget, GridPane, MarkdownWidget,
+    OneLineWidget, OptionalRenderer, Pane, SingleScrollablePane, TableGenerator, TableStyle, Zoom,
 };
 use tables::{EnvironmentTable, LimitsTable, ProcessTreeTable, Styles, TreeData};
 use types::{Area, UnboundedArea};
@@ -595,9 +595,9 @@ impl TerminalDevice<'_> {
         Ok(())
     }
 
-    fn render_table<T>(&mut self, table: T, state: &mut BigTableState) -> anyhow::Result<()>
+    fn render_table<T>(&mut self, table: T) -> anyhow::Result<()>
     where
-        T: TableGenerator,
+        T: BigTableStateGenerator + TableGenerator,
     {
         let column_spacing = self.tree_data.styles.column_spacing;
         let even_row_style = self.tree_data.styles.even_row;
@@ -608,13 +608,18 @@ impl TerminalDevice<'_> {
             TableStyle::new(column_spacing, even_row_style, odd_row_style),
         );
 
+        let mut inner_height = 0;
         self.terminal.draw(|frame| {
             let area = frame.area();
             let mut rects = SingleScrollablePane::new(area, 2).with(&menu).build();
             let mut r = OptionalRenderer::new(frame, &mut rects);
-            r.render_stateful_widget(main, state);
+            let mut state = table.state();
+            state.zoom.vertical.position = self.pane_offset as usize;
+            r.render_stateful_widget(main, &mut state);
             r.render_widget(menu);
+            inner_height = state.zoom.vertical.visible_length;
         })?;
+        self.vertical_scroll = VerticalScroll::Line(inner_height.div_ceil(2));
         Ok(())
     }
 
@@ -636,19 +641,11 @@ impl TerminalDevice<'_> {
         self.pane_kind = PaneKind::Process(kind);
         match kind {
             DataKind::Limits => match process.limits() {
-                Ok(limits) => {
-                    let table = LimitsTable::new(limits);
-                    let mut state = table.state();
-                    self.render_table(table, &mut state)
-                }
+                Ok(limits) => self.render_table(LimitsTable::new(limits)),
                 Err(err) => self.render_error(err.to_string()),
             },
             DataKind::Environment => match process.environ() {
-                Ok(env) => {
-                    let table = EnvironmentTable::new(env);
-                    let mut state = table.state();
-                    self.render_table(table, &mut state)
-                }
+                Ok(env) => self.render_table(EnvironmentTable::new(env)),
                 Err(err) => self.render_error(err.to_string()),
             },
             _ => self.render_error("not implemented"),

@@ -369,6 +369,11 @@ pub(crate) trait TableGenerator {
     fn widths(&self) -> &[u16];
 }
 
+/// StateGenerator
+pub(crate) trait BigTableStateGenerator {
+    fn state(&self) -> BigTableState;
+}
+
 /// Table that can overflow horizontally and vertically.
 pub(crate) struct BigTableWidget<'a, T: TableGenerator> {
     table: &'a T,
@@ -379,33 +384,29 @@ impl<'a, T: TableGenerator> BigTableWidget<'a, T> {
     pub(crate) fn new(table: &'a T, style: TableStyle) -> Self {
         Self { table, style }
     }
-}
 
-impl<T: TableGenerator> StatefulWidget for BigTableWidget<'_, T> {
-    type State = BigTableState;
-
-    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State)
-    where
-        Self: Sized,
-    {
-        let borders = BORDER_SIZE * 2;
-        let outter_dim = Size::new(area.width, area.height);
-        let inner_dim = Size::new(outter_dim.width - borders, outter_dim.height - borders);
-        let widths = self.table.widths();
-        // Max column width hard-coded to half the line width.
-        let mut cc = ColumnConstraints::new(
-            inner_dim.width,
-            inner_dim.width / 2,
-            self.style.column_spacing,
-        );
+    /// Compute the column constraints.
+    ///
+    /// Also return the first column after the headers, the last visible
+    /// column and the width of the headers including the trailing column
+    /// separator.
+    fn column_constraints(
+        &self,
+        inner_width: u16,
+        widths: &[u16],
+        offset: usize,
+    ) -> (Vec<Constraint>, usize, usize, u16) {
         let headers_size = self.table.headers_size();
-        let mut start = state.zoom.horizontal.position;
+        // Max column width hard-coded to half the line width.
+        let mut cc =
+            ColumnConstraints::new(inner_width, inner_width / 2, self.style.column_spacing);
+        let mut start = offset;
         let mut index = 0;
         let mut headers_width = 0;
         while index < widths.len() {
             if index == headers_size.horizontal {
                 headers_width = cc.table_width() + cc.column_spacing;
-                index += state.zoom.horizontal.position;
+                index += offset;
                 if index >= widths.len() {
                     log::error!(
                         "first column index {index} exceeds the number of columns {}",
@@ -420,17 +421,41 @@ impl<T: TableGenerator> StatefulWidget for BigTableWidget<'_, T> {
                 ColumnStatus::Accepted => index += 1,
             }
         }
-        state.zoom.horizontal.visible_length = index - start;
+        (cc.constraints, start, index, headers_width)
+    }
+}
+
+impl<T: TableGenerator> StatefulWidget for BigTableWidget<'_, T> {
+    type State = BigTableState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State)
+    where
+        Self: Sized,
+    {
+        let borders = BORDER_SIZE * 2;
+        let outter_dim = Size::new(area.width, area.height);
+        let inner_dim = Size::new(outter_dim.width - borders, outter_dim.height - borders);
+        let widths = self.table.widths();
+        let headers_size = self.table.headers_size();
+        let (constraints, first, last, headers_width) =
+            self.column_constraints(inner_dim.width, widths, state.zoom.horizontal.position);
+        state.zoom.horizontal.visible_length = last - first;
         state.zoom.vertical.visible_length =
             (inner_dim.height as usize).saturating_sub(headers_size.vertical);
         state.zoom.vertical.reframe();
         let headers = self.table.top_headers(&state.zoom.horizontal);
         let rows = self.style.apply(self.table.rows(state));
 
-        let table = Table::new(rows, cc.constraints)
-            .block(Block::default().borders(Borders::ALL))
-            .header(Row::new(headers).height(headers_size.vertical as u16))
-            .column_spacing(self.style.column_spacing);
+        let table = {
+            let table = Table::new(rows, constraints)
+                .block(Block::default().borders(Borders::ALL))
+                .column_spacing(self.style.column_spacing);
+            if headers.is_empty() {
+                table
+            } else {
+                table.header(Row::new(headers).height(headers_size.vertical as u16))
+            }
+        };
         Widget::render(table, area, buf);
         if let Some(mut bar_state) = state.zoom.horizontal.scrollbar_state() {
             let x = area.x + BORDER_SIZE + headers_width;

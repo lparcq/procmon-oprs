@@ -33,7 +33,7 @@ use std::{
 
 use super::{
     input::Bookmarks,
-    panes::{BigTableState, TableGenerator, Zoom},
+    panes::{BigTableState, BigTableStateGenerator, TableGenerator, Zoom},
     types::{Area, MaxLength},
 };
 
@@ -468,8 +468,10 @@ impl LimitsTable {
             widths,
         }
     }
+}
 
-    pub(crate) fn state(&self) -> BigTableState {
+impl BigTableStateGenerator for LimitsTable {
+    fn state(&self) -> BigTableState {
         let hlen = self.widths.len() - 1;
         let vlen = self.limits.len();
         BigTableState::new(Zoom::new(0, 0, hlen), Zoom::new(0, 0, vlen))
@@ -543,13 +545,15 @@ impl EnvironmentTable {
         Self { env, widths }
     }
 
-    pub(crate) fn state(&self) -> BigTableState {
-        let vlen = self.env.len();
-        BigTableState::new(Zoom::new(0, 0, 2), Zoom::new(0, 0, vlen))
-    }
-
     fn into_string(os: OsString) -> String {
         os.into_string().unwrap_or_else(|os| format!("{os:?}"))
+    }
+}
+
+impl BigTableStateGenerator for EnvironmentTable {
+    fn state(&self) -> BigTableState {
+        let vlen = self.env.len();
+        BigTableState::new(Zoom::new(0, 0, 2), Zoom::new(0, 0, vlen))
     }
 }
 
