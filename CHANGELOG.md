@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.34.0] - 2025-01-26
+
+### 🚀 Features
+
+- Add a scrollbar in the help
+- Add scrollbars to the main table.
+- Remove the limits in the process tree
+- Display the limits in the process details.
+- Display process environment
+
+### 🐛 Bug Fixes
+
+- Fix the help message in interactive mode and the README
+- Scrolling in process environment
+
+### 🚜 Refactor
+
+- Add support for different pane for a single process.
+
+### ⚙️ Miscellaneous Tasks
+
+- Fix clippy warnings
+
 ## [0.33.0] - 2025-01-12
 
 ### 🚀 Features
@@ -12,6 +35,10 @@ All notable changes to this project will be documented in this file.
 
 - Scroll the details by blocks
 - Scroll down one block at a time in details
+
+### ⚙️ Miscellaneous Tasks
+
+- Release procmon-oprs version 0.33.0
 
 ## [0.32.0] - 2025-01-11
 
