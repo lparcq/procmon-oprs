@@ -58,9 +58,3 @@ to the full tree with 'R'. The command can be started at a given root with optio
 - (W) Waking
 - (P) Parked
 - (I) Idle
-
-## Miscellaneous
-
-The soft or hard limits are displayed by hitting 'l' but only for the selected process.
-
-By default, only userland processes are displayed. Use 'f' to see kernel processes.
