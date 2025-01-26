@@ -35,7 +35,7 @@ pub enum PauseStatus {
 #[derive(Debug, Clone, Copy)]
 pub enum DataKind {
     Details,
-    _Environment,
+    Environment,
     _Files,
     Limits,
     _Maps,

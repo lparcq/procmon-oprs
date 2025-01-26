@@ -24,7 +24,12 @@ use ratatui::{
     text::Text,
     widgets::Cell,
 };
-use std::{cmp::Ordering, collections::BTreeSet, rc::Rc};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeSet, HashMap},
+    ffi::OsString,
+    rc::Rc,
+};
 
 use super::{
     input::Bookmarks,
@@ -385,6 +390,8 @@ impl TableGenerator for ProcessTreeTable<'_, '_, '_> {
     }
 }
 
+/// A soft and hard limit with a name.
+#[derive(Debug)]
 struct NamedLimit {
     name: &'static str,
     soft: String,
@@ -507,6 +514,63 @@ impl TableGenerator for LimitsTable {
                 .drain(..)
                 .skip(state.zoom.horizontal.position)
                 .collect::<Vec<Cell>>()
+            })
+            .collect::<Vec<Vec<Cell>>>()
+    }
+
+    fn widths(&self) -> &[u16] {
+        &self.widths
+    }
+}
+
+/// Table generator for process environment.
+pub(crate) struct EnvironmentTable {
+    env: Vec<(String, String)>,
+    widths: Vec<u16>,
+}
+
+impl EnvironmentTable {
+    pub(crate) fn new(mut env: HashMap<OsString, OsString>) -> Self {
+        let mut env = env
+            .drain()
+            .map(|(k, v)| (Self::into_string(k), Self::into_string(v)))
+            .collect::<Vec<(String, String)>>();
+        env.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
+        let widths = vec![
+            MaxLength::with_lines(env.iter().map(|(k, _)| k.as_str())).len(),
+            MaxLength::with_lines(env.iter().map(|(_, v)| v.as_str())).len(),
+        ];
+        Self { env, widths }
+    }
+
+    pub(crate) fn state(&self) -> BigTableState {
+        let vlen = self.env.len();
+        BigTableState::new(Zoom::new(0, 0, 2), Zoom::new(0, 0, vlen))
+    }
+
+    fn into_string(os: OsString) -> String {
+        os.into_string().unwrap_or_else(|os| format!("{os:?}"))
+    }
+}
+
+impl TableGenerator for EnvironmentTable {
+    fn headers_size(&self) -> Area<usize> {
+        Area::new(0, 1)
+    }
+
+    fn top_headers(&self, _zoom: &Zoom) -> Vec<Cell> {
+        Vec::new()
+    }
+
+    fn rows(&self, state: &BigTableState) -> Vec<Vec<Cell>> {
+        self.env
+            .iter()
+            .skip(state.zoom.vertical.position)
+            .map(|(k, v)| {
+                vec![lcell!(k.to_string()), lcell!(v.to_string())]
+                    .drain(..)
+                    .skip(state.zoom.horizontal.position)
+                    .collect::<Vec<Cell>>()
             })
             .collect::<Vec<Vec<Cell>>>()
     }

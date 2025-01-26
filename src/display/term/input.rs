@@ -29,6 +29,7 @@ use super::types::BoundedFifo;
 
 /// Standard keys
 const KEY_ENTER: Key = Key::Char('\n');
+const KEY_ENV: Key = Key::Char('e');
 const KEY_ESCAPE: Key = Key::Esc;
 const KEY_FASTER: Key = Key::Char(KEY_FASTER_CHAR);
 const KEY_FASTER_CHAR: char = '+';
@@ -85,6 +86,7 @@ pub enum Action {
     SwitchBack,
     SwitchToDetails,
     SwitchToLimits,
+    SwitchToEnvironment,
     ClearMarks,
     ToggleMarks,
     MultiplyTimeout(u16),
@@ -146,6 +148,7 @@ impl KeyMap {
                 Event::Key(KEY_QUIT) | Event::Key(KEY_ESCAPE) => Action::SwitchBack,
                 Event::Key(KEY_SELECT_PARENT) => Action::SelectParent,
                 Event::Key(KEY_LIMITS) => Action::SwitchToLimits,
+                Event::Key(KEY_ENV) => Action::SwitchToEnvironment,
                 Event::Key(Key::PageDown) => Action::ScrollPageDown,
                 Event::Key(Key::PageUp) => Action::ScrollPageUp,
                 _ => Action::None,
@@ -270,6 +273,7 @@ pub fn menu() -> Vec<MenuEntry> {
         ),
         MenuEntry::with_key(KEY_SEARCH, "Search", KeyMapSet::OnlyIn(KeyMap::Main)),
         MenuEntry::with_key(KEY_LIMITS, "Limits", KeyMapSet::OnlyIn(KeyMap::Details)),
+        MenuEntry::with_key(KEY_ENV, "Environment", KeyMapSet::OnlyIn(KeyMap::Details)),
         MenuEntry::with_key(KEY_FILTERS, "Filters", KeyMapSet::OnlyIn(KeyMap::Main)),
         MenuEntry::with_key(
             KEY_SELECT_PARENT,

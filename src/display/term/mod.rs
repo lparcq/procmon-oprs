@@ -53,7 +53,7 @@ use panes::{
     BigTableState, BigTableWidget, FieldsWidget, GridPane, MarkdownWidget, OneLineWidget,
     OptionalRenderer, Pane, SingleScrollablePane, TableGenerator, TableStyle, Zoom,
 };
-use tables::{LimitsTable, ProcessTreeTable, Styles, TreeData};
+use tables::{EnvironmentTable, LimitsTable, ProcessTreeTable, Styles, TreeData};
 use types::{Area, UnboundedArea};
 
 const HELP: &str = include_str!("help_en.md");
@@ -250,6 +250,7 @@ impl TerminalDevice<'_> {
             | Action::SwitchToHelp
             | Action::SwitchToDetails
             | Action::SwitchToLimits
+            | Action::SwitchToEnvironment
             | Action::UnselectRootPid
             | Action::Quit => (),
             Action::SwitchBack => {
@@ -370,6 +371,7 @@ impl TerminalDevice<'_> {
                 None => Interaction::None,
             },
             Action::SwitchToLimits => Interaction::SwitchTo(DataKind::Limits),
+            Action::SwitchToEnvironment => Interaction::SwitchTo(DataKind::Environment),
             _ => Interaction::None,
         })
     }
@@ -636,6 +638,14 @@ impl TerminalDevice<'_> {
             DataKind::Limits => match process.limits() {
                 Ok(limits) => {
                     let table = LimitsTable::new(limits);
+                    let mut state = table.state();
+                    self.render_table(table, &mut state)
+                }
+                Err(err) => self.render_error(err.to_string()),
+            },
+            DataKind::Environment => match process.environ() {
+                Ok(env) => {
+                    let table = EnvironmentTable::new(env);
                     let mut state = table.state();
                     self.render_table(table, &mut state)
                 }

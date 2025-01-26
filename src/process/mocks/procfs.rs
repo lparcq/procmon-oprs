@@ -34,7 +34,7 @@ pub(crate) mod process {
 
     use libc::pid_t;
     use procfs::process::{FDInfo, Io, Limits, MemoryMaps, StatM};
-    use std::{cell::RefCell, io, path::PathBuf, rc::Rc};
+    use std::{cell::RefCell, collections::HashMap, ffi::OsString, io, path::PathBuf, rc::Rc};
 
     pub(crate) use procfs::process::Stat;
 
@@ -156,6 +156,10 @@ pub(crate) mod process {
 
         pub(crate) fn io(&self) -> ProcResult<Io> {
             Err(new_error("Process::io not implemented"))
+        }
+
+        pub(crate) fn environ(&self) -> ProcResult<HashMap<OsString, OsString>> {
+            Err(new_error("Process::environ not implemented"))
         }
 
         pub(crate) fn limits(&self) -> ProcResult<Limits> {
