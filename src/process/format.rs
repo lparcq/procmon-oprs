@@ -161,6 +161,22 @@ pub fn ratio(value: u64) -> String {
     format!("{:.1}%", (value as f32) / 10.0)
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum Unit {
+    Number,
+    Seconds,
+    Size,
+}
+
+/// Format according to the unit.
+pub fn human_format(value: u64, unit: Unit) -> String {
+    match unit {
+        Unit::Number => value.to_string(),
+        Unit::Seconds => format!("{} s", seconds(value)),
+        Unit::Size => size(value),
+    }
+}
+
 #[cfg(test)]
 mod tests {
 

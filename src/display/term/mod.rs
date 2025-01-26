@@ -50,10 +50,10 @@ mod types;
 
 use input::{menu, Action, BookmarkAction, KeyMap, MenuEntry, SearchEdit};
 use panes::{
-    BigTableWidget, DoubleZoom, FieldsWidget, GridPane, MarkdownWidget, OneLineWidget,
-    OptionalRenderer, Pane, SingleScrollablePane, TableStyle, Zoom,
+    BigTableState, BigTableWidget, FieldsWidget, GridPane, MarkdownWidget, OneLineWidget,
+    OptionalRenderer, Pane, SingleScrollablePane, TableGenerator, TableStyle, Zoom,
 };
-use tables::{ProcessTreeTable, Styles, TreeData};
+use tables::{LimitsTable, ProcessTreeTable, Styles, TreeData};
 use types::{Area, UnboundedArea};
 
 const HELP: &str = include_str!("help_en.md");
@@ -436,7 +436,7 @@ impl TerminalDevice<'_> {
                 .with(&menu)
                 .build();
 
-            let mut state = DoubleZoom::new(
+            let mut state = BigTableState::new(
                 Zoom::new(
                     self.table_offset.horizontal.value_or_zero(),
                     0,
@@ -457,13 +457,9 @@ impl TerminalDevice<'_> {
             r.render_stateful_widget(main, &mut state);
             r.render_widget(status_bar);
             r.render_stateful_widget(menu, &mut cursor);
-            body_height = state.vertical.visible_length - table.headers_size().vertical;
-            new_overflow = Area::new(!state.horizontal.at_end(), !state.vertical.at_end());
-            log::debug!(
-                "state: {:?} -- overflow: {:?}",
-                state.horizontal,
-                new_overflow.horizontal
-            );
+            let zoom = state.zoom;
+            body_height = zoom.vertical.visible_length - table.headers_size().vertical;
+            new_overflow = Area::new(!zoom.horizontal.at_end(), !zoom.vertical.at_end());
             if let Some(cursor) = cursor {
                 frame.set_cursor_position(cursor);
             }
@@ -589,9 +585,56 @@ impl TerminalDevice<'_> {
         Ok(())
     }
 
-    fn render_process(&mut self, kind: DataKind, _process: &Process) -> anyhow::Result<()> {
+    fn render_table<T>(&mut self, table: T, state: &mut BigTableState) -> anyhow::Result<()>
+    where
+        T: TableGenerator,
+    {
+        let column_spacing = self.tree_data.styles.column_spacing;
+        let even_row_style = self.tree_data.styles.even_row;
+        let odd_row_style = self.tree_data.styles.odd_row;
+        let menu = OneLineWidget::with_menu(self.menu.iter(), self.keymap);
+        let main = BigTableWidget::new(
+            &table,
+            TableStyle::new(column_spacing, even_row_style, odd_row_style),
+        );
+
+        self.terminal.draw(|frame| {
+            let area = frame.area();
+            let mut rects = SingleScrollablePane::new(area, 2).with(&menu).build();
+            let mut r = OptionalRenderer::new(frame, &mut rects);
+            r.render_stateful_widget(main, state);
+            r.render_widget(menu);
+        })?;
+        Ok(())
+    }
+
+    fn render_error<S: AsRef<str>>(&mut self, err: S) -> anyhow::Result<()> {
+        let msg = OneLineWidget::new(Text::from(err.as_ref()), Style::default(), None);
+        let menu = OneLineWidget::with_menu(self.menu.iter(), self.keymap);
+
+        self.terminal.draw(|frame| {
+            let area = frame.area();
+            let mut rects = SingleScrollablePane::new(area, 2).with(&menu).build();
+            let mut r = OptionalRenderer::new(frame, &mut rects);
+            r.render_widget(msg);
+            r.render_widget(menu);
+        })?;
+        Ok(())
+    }
+
+    fn render_process(&mut self, kind: DataKind, process: &Process) -> anyhow::Result<()> {
         self.pane_kind = PaneKind::Process(kind);
-        panic!("not implemented");
+        match kind {
+            DataKind::Limits => match process.limits() {
+                Ok(limits) => {
+                    let table = LimitsTable::new(limits);
+                    let mut state = table.state();
+                    self.render_table(table, &mut state)
+                }
+                Err(err) => self.render_error(err.to_string()),
+            },
+            _ => self.render_error("not implemented".to_string()),
+        }
     }
 }
 

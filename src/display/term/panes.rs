@@ -200,9 +200,6 @@ impl Zoom {
     }
 }
 
-/// Zoom in two directions.
-pub type DoubleZoom = Area<Zoom>;
-
 /// Widget that adapt it's layout to the available space.
 pub trait ReactiveWidget: fmt::Debug + Widget {
     /// Minimum height in area.
@@ -337,8 +334,22 @@ impl StatefulWidget for MarkdownWidget<'_> {
     }
 }
 
+/// State for the `BigTableWidget`.
+#[derive(Debug)]
+pub(crate) struct BigTableState {
+    pub(crate) zoom: Area<Zoom>,
+}
+
+impl BigTableState {
+    pub(crate) fn new(hzoom: Zoom, vzoom: Zoom) -> Self {
+        Self {
+            zoom: Area::new(hzoom, vzoom),
+        }
+    }
+}
+
 /// Table generator
-pub trait TableGenerator {
+pub(crate) trait TableGenerator {
     /// The number of fixed columns on the left and fixed rows on the top.
     ///
     /// If the width is not zero, it's a crosstab.
@@ -352,7 +363,7 @@ pub trait TableGenerator {
     /// The visible rows.
     ///
     /// The fixed columns must always be included.
-    fn rows(&self, zoom: &DoubleZoom) -> Vec<Vec<Cell>>;
+    fn rows(&self, zoom: &BigTableState) -> Vec<Vec<Cell>>;
 
     /// The width of each column.
     fn widths(&self) -> &[u16];
@@ -371,9 +382,9 @@ impl<'a, T: TableGenerator> BigTableWidget<'a, T> {
 }
 
 impl<'a, T: TableGenerator> StatefulWidget for BigTableWidget<'a, T> {
-    type State = DoubleZoom;
+    type State = BigTableState;
 
-    fn render(self, area: Rect, buf: &mut Buffer, zoom: &mut Self::State)
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State)
     where
         Self: Sized,
     {
@@ -388,13 +399,13 @@ impl<'a, T: TableGenerator> StatefulWidget for BigTableWidget<'a, T> {
             self.style.column_spacing,
         );
         let headers_size = self.table.headers_size();
-        let mut start = zoom.horizontal.position;
+        let mut start = state.zoom.horizontal.position;
         let mut index = 0;
         let mut headers_width = 0;
         while index < widths.len() {
             if index == headers_size.horizontal {
                 headers_width = cc.table_width() + cc.column_spacing;
-                index += zoom.horizontal.position;
+                index += state.zoom.horizontal.position;
                 if index >= widths.len() {
                     log::error!(
                         "first column index {index} exceeds the number of columns {}",
@@ -409,39 +420,39 @@ impl<'a, T: TableGenerator> StatefulWidget for BigTableWidget<'a, T> {
                 ColumnStatus::Accepted => index += 1,
             }
         }
-        zoom.horizontal.visible_length = index - start;
-        zoom.vertical.visible_length =
+        state.zoom.horizontal.visible_length = index - start;
+        state.zoom.vertical.visible_length =
             (inner_dim.height as usize).saturating_sub(headers_size.vertical);
-        zoom.vertical.reframe();
-        let headers = self.table.top_headers(&zoom.horizontal);
-        let rows = self.style.apply(self.table.rows(&zoom));
+        state.zoom.vertical.reframe();
+        let headers = self.table.top_headers(&state.zoom.horizontal);
+        let rows = self.style.apply(self.table.rows(state));
 
         let table = Table::new(rows, cc.constraints)
             .block(Block::default().borders(Borders::ALL))
             .header(Row::new(headers).height(headers_size.vertical as u16))
             .column_spacing(self.style.column_spacing);
         Widget::render(table, area, buf);
-        if let Some(mut state) = zoom.horizontal.scrollbar_state() {
+        if let Some(mut bar_state) = state.zoom.horizontal.scrollbar_state() {
             let x = area.x + BORDER_SIZE + headers_width;
             let width = area.width.saturating_sub(x + BORDER_SIZE);
             let area = Rect::new(x, area.y, width, area.height);
             Scrollbar::new(ScrollbarOrientation::HorizontalTop)
                 .begin_symbol(None)
                 .end_symbol(None)
-                .render(area, buf, &mut state);
+                .render(area, buf, &mut bar_state);
         }
-        if let Some(mut state) = zoom.vertical.scrollbar_state() {
+        if let Some(mut bar_state) = state.zoom.vertical.scrollbar_state() {
             let y = area.y + BORDER_SIZE + headers_size.vertical as u16;
-            let height = zoom.vertical.visible_length as u16;
-            if zoom.vertical.total_length > 0 {
+            let height = state.zoom.vertical.visible_length as u16;
+            if state.zoom.vertical.total_length > 0 {
                 let area = Rect::new(area.x, y, area.width, height);
                 Scrollbar::new(ScrollbarOrientation::VerticalRight)
                     .begin_symbol(None)
                     .end_symbol(None)
-                    .render(area, buf, &mut state);
+                    .render(area, buf, &mut bar_state);
             }
         }
-        zoom.vertical.visible_length = inner_dim.height as usize;
+        state.zoom.vertical.visible_length = inner_dim.height as usize;
     }
 }
 

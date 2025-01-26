@@ -17,9 +17,10 @@
 use getset::Getters;
 use itertools::izip;
 use libc::pid_t;
+use procfs::process::{Limit, LimitValue, Limits};
 use ratatui::{
     layout::Alignment,
-    style::{Color, Modifier, Style},
+    style::{Color, Modifier, Style, Stylize},
     text::Text,
     widgets::Cell,
 };
@@ -27,19 +28,36 @@ use std::{cmp::Ordering, collections::BTreeSet, rc::Rc};
 
 use super::{
     input::Bookmarks,
-    panes::{DoubleZoom, TableGenerator, Zoom},
+    panes::{BigTableState, TableGenerator, Zoom},
     types::{Area, MaxLength},
 };
 
 use crate::{
     console::BuiltinTheme,
-    process::{Collector, ProcessIdentity, ProcessSamples},
+    process::{
+        format::{human_format, Unit},
+        Collector, ProcessIdentity, ProcessSamples,
+    },
 };
+
+/// Aligned cell.
+macro_rules! aligned_cell {
+    ($s:expr, $align:expr) => {
+        Cell::from(Text::from($s).alignment($align))
+    };
+}
+
+/// Left aligned cell.
+macro_rules! lcell {
+    ($s:expr) => {
+        aligned_cell!($s, Alignment::Left)
+    };
+}
 
 /// Right aligned cell.
 macro_rules! rcell {
     ($s:expr) => {
-        Cell::from(Text::from($s).alignment(Alignment::Right))
+        aligned_cell!($s, Alignment::Right)
     };
 }
 
@@ -312,7 +330,7 @@ impl<'a, 'b, 't> TableGenerator for ProcessTreeTable<'a, 'b, 't> {
     fn top_headers(&self, zoom: &Zoom) -> Vec<Cell> {
         Self::FIXED_HEADERS
             .iter()
-            .map(|s| Cell::from(Text::from(*s)))
+            .map(|s| lcell!(*s))
             .chain(
                 self.data
                     .metric_headers
@@ -324,11 +342,11 @@ impl<'a, 'b, 't> TableGenerator for ProcessTreeTable<'a, 'b, 't> {
             .collect::<Vec<Cell>>()
     }
 
-    fn rows(&self, zoom: &DoubleZoom) -> Vec<Vec<Cell>> {
+    fn rows(&self, state: &BigTableState) -> Vec<Vec<Cell>> {
         self.collector
             .lines()
-            .skip(zoom.vertical.position)
-            .take(zoom.vertical.visible_length)
+            .skip(state.zoom.vertical.position)
+            .take(state.zoom.vertical.visible_length)
             .enumerate()
             .map(|(n, ps)| {
                 let pid_status = self.data.pid_status(ps.pid());
@@ -354,9 +372,140 @@ impl<'a, 'b, 't> TableGenerator for ProcessTreeTable<'a, 'b, 't> {
                                 )
                             })
                         })
-                        .skip(zoom.horizontal.position)
-                        .take(zoom.horizontal.visible_length),
+                        .skip(state.zoom.horizontal.position)
+                        .take(state.zoom.horizontal.visible_length),
                 )
+                .collect::<Vec<Cell>>()
+            })
+            .collect::<Vec<Vec<Cell>>>()
+    }
+
+    fn widths(&self) -> &[u16] {
+        &self.widths
+    }
+}
+
+struct NamedLimit {
+    name: &'static str,
+    soft: String,
+    hard: String,
+}
+
+impl NamedLimit {
+    fn new(name: &'static str, limit: Limit, unit: Unit) -> Self {
+        let soft = NamedLimit::format_limit(limit.soft_limit, unit);
+        let hard = NamedLimit::format_limit(limit.hard_limit, unit);
+        Self { name, soft, hard }
+    }
+
+    fn format_limit(limit: LimitValue, unit: Unit) -> String {
+        const INFINITY: &str = "∞";
+        match limit {
+            LimitValue::Unlimited => INFINITY.to_string(),
+            LimitValue::Value(value) => human_format(value, unit),
+        }
+    }
+}
+
+/// Table generator for process limits.
+pub(crate) struct LimitsTable {
+    headers: Vec<&'static str>,
+    limits: Vec<NamedLimit>,
+    widths: Vec<u16>,
+}
+
+impl LimitsTable {
+    pub(crate) fn new(limits: Limits) -> Self {
+        let headers = vec!["Limit", "Soft", "Hard"];
+        let limits = vec![
+            NamedLimit::new("CPU Time", limits.max_cpu_time, Unit::Seconds),
+            NamedLimit::new("File Size", limits.max_file_size, Unit::Size),
+            NamedLimit::new("Data Size", limits.max_data_size, Unit::Size),
+            NamedLimit::new("Stack Size", limits.max_stack_size, Unit::Size),
+            NamedLimit::new("Core File Size", limits.max_core_file_size, Unit::Size),
+            NamedLimit::new("Resident Set", limits.max_resident_set, Unit::Size),
+            NamedLimit::new("Processes", limits.max_processes, Unit::Number),
+            NamedLimit::new("Open Files", limits.max_open_files, Unit::Number),
+            NamedLimit::new("Locked Memory", limits.max_locked_memory, Unit::Size),
+            NamedLimit::new("Address Space", limits.max_address_space, Unit::Size),
+            NamedLimit::new("File Locks", limits.max_file_locks, Unit::Number),
+            NamedLimit::new("Pending Signals", limits.max_pending_signals, Unit::Number),
+            NamedLimit::new("Msgqueue Size", limits.max_msgqueue_size, Unit::Size),
+            NamedLimit::new("Nice Priority", limits.max_nice_priority, Unit::Number),
+            NamedLimit::new(
+                "Realtime Priority",
+                limits.max_realtime_priority,
+                Unit::Number,
+            ),
+            NamedLimit::new(
+                "Realtime Timeout",
+                limits.max_realtime_timeout,
+                Unit::Number,
+            ),
+        ];
+        let limit_width = MaxLength::with_lines(
+            limits
+                .iter()
+                .map(|l| l.soft.as_str())
+                .chain(limits.iter().map(|l| l.hard.as_str())),
+        )
+        .len();
+        let widths = vec![
+            MaxLength::with_lines(limits.iter().map(|l| l.name)).len(),
+            limit_width,
+            limit_width,
+        ];
+        Self {
+            headers,
+            limits,
+            widths,
+        }
+    }
+
+    pub(crate) fn state(&self) -> BigTableState {
+        let hlen = self.widths.len() - 1;
+        let vlen = self.limits.len();
+        BigTableState::new(Zoom::new(0, 0, hlen), Zoom::new(0, 0, vlen))
+    }
+}
+
+impl TableGenerator for LimitsTable {
+    fn headers_size(&self) -> Area<usize> {
+        Area::new(1, 1)
+    }
+
+    fn top_headers(&self, zoom: &Zoom) -> Vec<Cell> {
+        let bold = Style::default().bold();
+        self.headers
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                Cell::from(
+                    Text::styled(*s, bold)
+                        .alignment(if i == 0 {
+                            Alignment::Left
+                        } else {
+                            Alignment::Right
+                        })
+                        .bold(),
+                )
+            })
+            .skip(zoom.position)
+            .collect::<Vec<Cell>>()
+    }
+
+    fn rows(&self, state: &BigTableState) -> Vec<Vec<Cell>> {
+        self.limits
+            .iter()
+            .skip(state.zoom.vertical.position)
+            .map(|limit| {
+                vec![
+                    lcell!(limit.name),
+                    rcell!(limit.soft.to_string()),
+                    rcell!(limit.hard.to_string()),
+                ]
+                .drain(..)
+                .skip(state.zoom.horizontal.position)
                 .collect::<Vec<Cell>>()
             })
             .collect::<Vec<Vec<Cell>>>()
