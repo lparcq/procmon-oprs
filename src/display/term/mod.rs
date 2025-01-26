@@ -211,22 +211,26 @@ impl TerminalDevice<'_> {
 
     /// Edit search.
     fn edit_search(&mut self, edit: SearchEdit) {
-        Rc::get_mut(&mut self.tree_data).map(|data| data.bookmarks.edit_search(edit));
+        if let Some(data) = Rc::get_mut(&mut self.tree_data) {
+            data.bookmarks.edit_search(edit);
+        }
     }
 
     /// Set bookmark action.
     fn set_bookmarks_action(&mut self, action: BookmarkAction) {
-        void!(Rc::get_mut(&mut self.tree_data).map(|data| data.bookmarks.set_action(action)))
+        if let Some(data) = Rc::get_mut(&mut self.tree_data) {
+            data.bookmarks.set_action(action);
+        }
     }
 
     /// Clear bookmarks and set bookmark action if the condition is true.
     fn clear_and_set_bookmarks_action_if(&mut self, action: BookmarkAction, cond: bool) {
-        Rc::get_mut(&mut self.tree_data).map(|data| {
+        if let Some(data) = Rc::get_mut(&mut self.tree_data) {
             data.bookmarks.clear_marks();
             if cond {
-                void!(data.bookmarks.set_action(action));
+                data.bookmarks.set_action(action);
             }
-        });
+        }
     }
 
     /// Clear bookmarks and set bookmark action.
@@ -314,12 +318,16 @@ impl TerminalDevice<'_> {
             Action::GotoTableRight => self.table_offset.horizontal_end(),
             Action::SearchEnter => {
                 self.set_keymap(KeyMap::IncrementalSearch);
-                Rc::get_mut(&mut self.tree_data).map(|data| data.bookmarks.incremental_search());
+                if let Some(data) = Rc::get_mut(&mut self.tree_data) {
+                    data.bookmarks.incremental_search();
+                }
             }
             Action::SearchExit => {
                 self.terminal.hide_cursor()?;
                 self.set_keymap(KeyMap::Main);
-                Rc::get_mut(&mut self.tree_data).map(|data| data.bookmarks.fixed_search());
+                if let Some(data) = Rc::get_mut(&mut self.tree_data) {
+                    data.bookmarks.fixed_search();
+                }
             }
             Action::SearchPush(c) => self.edit_search(SearchEdit::Push(c)),
             Action::SearchPop => self.edit_search(SearchEdit::Pop),
@@ -465,8 +473,8 @@ impl TerminalDevice<'_> {
             }
         })?;
         self.overflow = new_overflow;
-        self.vertical_scroll = VerticalScroll::Line(body_height.div_ceil(2) as usize);
-        self.body_height = body_height as usize;
+        self.vertical_scroll = VerticalScroll::Line(body_height.div_ceil(2));
+        self.body_height = body_height;
         Ok(())
     }
 
@@ -486,7 +494,7 @@ impl TerminalDevice<'_> {
             r.render_stateful_widget(widget, &mut state);
             r.render_widget(menu);
             self.pane_offset = state.position as u16;
-            self.vertical_scroll = VerticalScroll::Line(state.visible_length.div_ceil(2) as usize);
+            self.vertical_scroll = VerticalScroll::Line(state.visible_length.div_ceil(2));
         })?;
         Ok(())
     }
@@ -633,7 +641,7 @@ impl TerminalDevice<'_> {
                 }
                 Err(err) => self.render_error(err.to_string()),
             },
-            _ => self.render_error("not implemented".to_string()),
+            _ => self.render_error("not implemented"),
         }
     }
 }
@@ -665,14 +673,14 @@ impl DisplayDevice for TerminalDevice<'_> {
                 header.push(name);
                 self.limit_slots.push(false);
             }
-            Rc::get_mut(&mut self.tree_data).map(|data| {
+            if let Some(data) = Rc::get_mut(&mut self.tree_data) {
                 data.metric_headers.push(Text::from(
                     header
                         .iter()
                         .map(|s| Line::from(s.to_string()))
                         .collect::<Vec<Line>>(),
-                ))
-            });
+                ));
+            }
         });
         self.terminal.hide_cursor()?;
         Ok(())

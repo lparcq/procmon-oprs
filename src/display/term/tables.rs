@@ -228,7 +228,7 @@ pub(crate) struct TreeData<'t> {
     pub(crate) occurrences: BTreeSet<pid_t>,
 }
 
-impl<'t> TreeData<'t> {
+impl TreeData<'_> {
     pub(crate) fn new(styles: Styles) -> Self {
         Self {
             metric_headers: Vec::new(),
@@ -322,7 +322,7 @@ impl<'a, 'b, 't> ProcessTreeTable<'a, 'b, 't> {
     }
 }
 
-impl<'a, 'b, 't> TableGenerator for ProcessTreeTable<'a, 'b, 't> {
+impl TableGenerator for ProcessTreeTable<'_, '_, '_> {
     fn headers_size(&self) -> Area<usize> {
         self.headers_size
     }

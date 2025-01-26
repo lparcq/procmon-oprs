@@ -315,7 +315,7 @@ impl StatefulWidget for MarkdownWidget<'_> {
         let max_offset = self.text.len().saturating_sub(inner_height as usize / 2);
         state.position = cmp::min(state.position, max_offset);
         state.visible_length = inner_height as usize;
-        let mut scroll_state = ScrollbarState::new(max_offset as usize).position(state.position);
+        let mut scroll_state = ScrollbarState::new(max_offset).position(state.position);
         Paragraph::new(Text::from(self.text))
             .block(
                 Block::new()
@@ -381,7 +381,7 @@ impl<'a, T: TableGenerator> BigTableWidget<'a, T> {
     }
 }
 
-impl<'a, T: TableGenerator> StatefulWidget for BigTableWidget<'a, T> {
+impl<T: TableGenerator> StatefulWidget for BigTableWidget<'_, T> {
     type State = BigTableState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State)
@@ -730,7 +730,7 @@ mod test {
         column_width: u16,
     ) -> (ColumnConstraints, ColumnStatus) {
         let mut cc = ColumnConstraints::new(screen_width, max_col_width, column_spacing);
-        for width in vec![first_column_width]
+        for width in [first_column_width]
             .iter()
             .chain(vec![column_width; ncols - 1].iter())
         {

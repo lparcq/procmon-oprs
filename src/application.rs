@@ -270,10 +270,11 @@ impl<'s> Application<'s> {
                             (_, _) => pane_kind = PaneKind::Main,
                         },
                         Interaction::SwitchToHelp => pane_kind = PaneKind::Help,
-                        Interaction::SwitchTo(kind) => match pane_kind {
-                            PaneKind::Process(_) => pane_kind = PaneKind::Process(kind),
-                            _ => (),
-                        },
+                        Interaction::SwitchTo(kind) => {
+                            if matches!(pane_kind, PaneKind::Process(_)) {
+                                pane_kind = PaneKind::Process(kind);
+                            }
+                        }
                         Interaction::SelectPid(pid) => {
                             details = self.get_details(pid, sysconf);
                             if details.is_some() {
