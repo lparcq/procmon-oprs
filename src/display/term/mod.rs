@@ -24,7 +24,7 @@ use ratatui::{
     widgets::Clear,
     Terminal,
 };
-use std::{convert::TryFrom, fmt, io, rc::Rc, time::Duration};
+use std::{cell::RefCell, convert::TryFrom, fmt, io, rc::Rc, time::Duration};
 use termion::{
     raw::{IntoRawMode, RawTerminal},
     screen::{AlternateScreen, IntoAlternateScreen},
@@ -120,7 +120,7 @@ pub struct TerminalDevice<'t> {
     /// Channel for input events
     events: EventChannel,
     /// Terminal
-    terminal: Terminal<TermionBackend<Box<AlternateScreen<RawTerminal<io::Stdout>>>>>,
+    terminal: RefCell<Terminal<TermionBackend<Box<AlternateScreen<RawTerminal<io::Stdout>>>>>>,
     /// Table tree data
     tree_data: Rc<TreeData<'t>>,
     /// Horizontal and vertical offset
@@ -149,7 +149,7 @@ impl TerminalDevice<'_> {
     pub fn new(every: Duration, theme: Option<BuiltinTheme>) -> anyhow::Result<Self> {
         let screen = io::stdout().into_raw_mode()?.into_alternate_screen()?;
         let backend = TermionBackend::new(Box::new(screen));
-        let terminal = Terminal::new(backend)?;
+        let terminal = RefCell::new(Terminal::new(backend)?);
 
         Ok(TerminalDevice {
             every,
@@ -324,7 +324,7 @@ impl TerminalDevice<'_> {
                 }
             }
             Action::SearchExit => {
-                self.terminal.hide_cursor()?;
+                self.terminal.borrow_mut().hide_cursor()?;
                 self.set_keymap(KeyMap::Main);
                 if let Some(data) = Rc::get_mut(&mut self.tree_data) {
                     data.bookmarks.fixed_search();
@@ -398,6 +398,10 @@ impl TerminalDevice<'_> {
         )
     }
 
+    fn default_menu(&self) -> OneLineWidget<'_> {
+        OneLineWidget::with_menu(self.menu.iter(), self.keymap)
+    }
+
     fn render_tree(&mut self, collector: &Collector) -> anyhow::Result<()> {
         self.pane_kind = PaneKind::Main;
 
@@ -427,10 +431,7 @@ impl TerminalDevice<'_> {
         let status_bar = OneLineWidget::new(Text::from(self.status_bar()), status_style, None);
         let (menu, show_cursor) = match self.tree_data.incremental_search_pattern() {
             Some(pattern) => (Self::search_menu(pattern), true),
-            None => (
-                OneLineWidget::with_menu(self.menu.iter(), self.keymap),
-                false,
-            ),
+            None => (self.default_menu(), false),
         };
 
         let table = ProcessTreeTable::new(collector, Rc::clone(&self.tree_data));
@@ -440,7 +441,7 @@ impl TerminalDevice<'_> {
         );
 
         let mut new_overflow = Area::default();
-        self.terminal.draw(|frame| {
+        self.terminal.borrow_mut().draw(|frame| {
             let area = frame.area();
             let mut rects = SingleScrollablePane::new(area, 3)
                 .with(&status_bar)
@@ -486,9 +487,9 @@ impl TerminalDevice<'_> {
         W: StatefulWidget<State = Zoom>,
     {
         let mut state = Zoom::with_position(self.pane_offset as usize);
-        let menu = OneLineWidget::with_menu(self.menu.iter(), self.keymap);
+        let menu = self.default_menu();
 
-        self.terminal.draw(|frame| {
+        self.terminal.borrow_mut().draw(|frame| {
             let mut rects = SingleScrollablePane::new(frame.area(), 2)
                 .with(&menu)
                 .build();
@@ -496,9 +497,9 @@ impl TerminalDevice<'_> {
             let mut r = OptionalRenderer::new(frame, &mut rects);
             r.render_stateful_widget(widget, &mut state);
             r.render_widget(menu);
-            self.pane_offset = state.position as u16;
-            self.vertical_scroll = VerticalScroll::Line(state.visible_length.div_ceil(2));
         })?;
+        self.pane_offset = state.position as u16;
+        self.vertical_scroll = VerticalScroll::Line(state.visible_length.div_ceil(2));
         Ok(())
     }
 
@@ -560,9 +561,9 @@ impl TerminalDevice<'_> {
         let mem_widget = FieldsWidget::new("Memory", &mem_fields);
         block_count += 1;
 
-        let menu = OneLineWidget::with_menu(self.menu.iter(), self.keymap);
+        let menu = self.default_menu();
 
-        self.terminal.draw(|frame| {
+        self.terminal.borrow_mut().draw(|frame| {
             let with_cmdline = offset < 1;
             let with_cwd = offset < 2;
             let with_proc_file = offset < 3;
@@ -603,14 +604,14 @@ impl TerminalDevice<'_> {
         let column_spacing = self.tree_data.styles.column_spacing;
         let even_row_style = self.tree_data.styles.even_row;
         let odd_row_style = self.tree_data.styles.odd_row;
-        let menu = OneLineWidget::with_menu(self.menu.iter(), self.keymap);
+        let menu = self.default_menu();
         let main = BigTableWidget::new(
             &table,
             TableStyle::new(column_spacing, even_row_style, odd_row_style),
         );
 
         let mut inner_height = 0;
-        self.terminal.draw(|frame| {
+        self.terminal.borrow_mut().draw(|frame| {
             let area = frame.area();
             let mut rects = SingleScrollablePane::new(area, 2).with(&menu).build();
             let mut r = OptionalRenderer::new(frame, &mut rects);
@@ -626,9 +627,9 @@ impl TerminalDevice<'_> {
 
     fn render_error<S: AsRef<str>>(&mut self, err: S) -> anyhow::Result<()> {
         let msg = OneLineWidget::new(Text::from(err.as_ref()), Style::default(), None);
-        let menu = OneLineWidget::with_menu(self.menu.iter(), self.keymap);
+        let menu = self.default_menu();
 
-        self.terminal.draw(|frame| {
+        self.terminal.borrow_mut().draw(|frame| {
             let area = frame.area();
             let mut rects = SingleScrollablePane::new(area, 2).with(&menu).build();
             let mut r = OptionalRenderer::new(frame, &mut rects);
@@ -690,13 +691,13 @@ impl DisplayDevice for TerminalDevice<'_> {
                 ));
             }
         });
-        self.terminal.hide_cursor()?;
+        self.terminal.borrow_mut().hide_cursor()?;
         Ok(())
     }
 
     /// Show the cursor on exit.
     fn close(&mut self) -> anyhow::Result<()> {
-        self.terminal.show_cursor()?;
+        self.terminal.borrow_mut().show_cursor()?;
         Ok(())
     }
 
