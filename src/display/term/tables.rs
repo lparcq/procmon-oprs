@@ -243,6 +243,15 @@ impl TreeData<'_> {
         }
     }
 
+    /// Incremental search pattern.
+    pub(crate) fn incremental_search_pattern(&self) -> Option<String> {
+        if self.bookmarks.is_incremental_search() {
+            Some(self.bookmarks.search_pattern().unwrap())
+        } else {
+            None
+        }
+    }
+
     /// Status of a process.
     fn pid_status(&self, pid: pid_t) -> PidStatus {
         if self.bookmarks.is_selected(pid) {
@@ -559,7 +568,7 @@ impl BigTableStateGenerator for EnvironmentTable {
 
 impl TableGenerator for EnvironmentTable {
     fn headers_size(&self) -> Area<usize> {
-        Area::new(0, 1)
+        Area::new(1, 1)
     }
 
     fn top_headers(&self, _zoom: &Zoom) -> Vec<Cell> {

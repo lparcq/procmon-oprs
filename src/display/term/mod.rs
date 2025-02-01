@@ -390,6 +390,14 @@ impl TerminalDevice<'_> {
         }
     }
 
+    fn search_menu<'t>(pattern: String) -> OneLineWidget<'t> {
+        OneLineWidget::new(
+            Text::from(format!("Search: {pattern}")),
+            Style::default(),
+            None,
+        )
+    }
+
     fn render_tree(&mut self, collector: &Collector) -> anyhow::Result<()> {
         self.pane_kind = PaneKind::Main;
 
@@ -415,21 +423,14 @@ impl TerminalDevice<'_> {
         let even_row_style = self.tree_data.styles.even_row;
         let odd_row_style = self.tree_data.styles.odd_row;
         let status_style = self.tree_data.styles.status;
-        let is_search = self.tree_data.bookmarks.is_incremental_search();
         let mut body_height = 0;
-        let show_cursor = is_search;
         let status_bar = OneLineWidget::new(Text::from(self.status_bar()), status_style, None);
-        let menu = if is_search {
-            OneLineWidget::new(
-                Text::from(format!(
-                    "Search: {}",
-                    self.tree_data.bookmarks.search_pattern().unwrap()
-                )),
-                Style::default(),
-                None,
-            )
-        } else {
-            OneLineWidget::with_menu(self.menu.iter(), self.keymap)
+        let (menu, show_cursor) = match self.tree_data.incremental_search_pattern() {
+            Some(pattern) => (Self::search_menu(pattern), true),
+            None => (
+                OneLineWidget::with_menu(self.menu.iter(), self.keymap),
+                false,
+            ),
         };
 
         let table = ProcessTreeTable::new(collector, Rc::clone(&self.tree_data));
