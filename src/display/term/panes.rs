@@ -77,9 +77,9 @@ struct ColumnConstraints {
 }
 
 impl ColumnConstraints {
-    fn new(inner_width: u16, max_column_width: u16, column_spacing: u16) -> Self {
+    fn new(inner_width: u16, ncols: usize, max_column_width: u16, column_spacing: u16) -> Self {
         Self {
-            constraints: Vec::new(),
+            constraints: Vec::with_capacity(ncols),
             inner_width,
             max_column_width,
             column_spacing,
@@ -101,7 +101,11 @@ impl ColumnConstraints {
         } else {
             self.column_spacing
         };
-        let mut actual_width = cmp::min(self.max_column_width, width);
+        let mut actual_width = if self.constraints.len() + 1 < self.constraints.capacity() {
+            cmp::min(self.max_column_width, width)
+        } else {
+            width
+        };
         let required_width = column_spacing + actual_width;
         if required_width <= self.remaining_width {
             self.constraints.push(Constraint::Length(actual_width));
@@ -200,8 +204,8 @@ impl Zoom {
     }
 }
 
-/// Widget that adapt it's layout to the available space.
-pub trait ReactiveWidget: fmt::Debug + Widget {
+/// Widget that have a minimum height when displayed in rows.
+pub trait StackableWidget: fmt::Debug + Widget {
     /// Minimum height in area.
     fn min_height(&self, area: Rect) -> u16;
 }
@@ -246,7 +250,7 @@ impl<'t> OneLineWidget<'t> {
     }
 }
 
-impl ReactiveWidget for OneLineWidget<'_> {
+impl StackableWidget for OneLineWidget<'_> {
     fn min_height(&self, area: Rect) -> u16 {
         let borders = if self.title.is_some() {
             2 * BORDER_SIZE
@@ -398,8 +402,12 @@ impl<'a, T: TableGenerator> BigTableWidget<'a, T> {
     ) -> (Vec<Constraint>, usize, usize, u16) {
         let headers_size = self.table.headers_size();
         // Max column width hard-coded to half the line width.
-        let mut cc =
-            ColumnConstraints::new(inner_width, inner_width / 2, self.style.column_spacing);
+        let mut cc = ColumnConstraints::new(
+            inner_width,
+            widths.len(),
+            inner_width / 2,
+            self.style.column_spacing,
+        );
         let mut start = offset;
         let mut index = 0;
         let mut headers_width = 0;
@@ -494,7 +502,7 @@ impl<'l> FieldsWidget<'l> {
     }
 }
 
-impl ReactiveWidget for FieldsWidget<'_> {
+impl StackableWidget for FieldsWidget<'_> {
     fn min_height(&self, area: Rect) -> u16 {
         cmp::min(self.lines.len() as u16 + BORDER_SIZE * 2, area.height)
     }
@@ -544,7 +552,7 @@ impl SingleScrollablePane {
     }
 
     /// Push a fixed height widget at the bottom.
-    pub(crate) fn with<W: ReactiveWidget>(mut self, widget: &W) -> Self {
+    pub(crate) fn with<W: StackableWidget>(mut self, widget: &W) -> Self {
         let height = widget.min_height(self.area);
         let main_rect = self.rects.first_mut().expect("must have a first rectangle");
         main_rect.height = main_rect.height.saturating_sub(height);
@@ -600,7 +608,7 @@ impl GridPane {
         Self { area, lines }
     }
 
-    pub(crate) fn with_row<W: ReactiveWidget>(mut self, row: &[&W]) -> Self {
+    pub(crate) fn with_row<W: StackableWidget>(mut self, row: &[&W]) -> Self {
         let area = self.area;
         let height = row.iter().map(|w| w.min_height(area)).max().unwrap_or(0);
         if matches!(
@@ -613,7 +621,7 @@ impl GridPane {
         self
     }
 
-    pub(crate) fn with_row_if<W: ReactiveWidget>(self, row: &[&W], cond: bool) -> Self {
+    pub(crate) fn with_row_if<W: StackableWidget>(self, row: &[&W], cond: bool) -> Self {
         if cond {
             self.with_row(row)
         } else {
@@ -621,7 +629,7 @@ impl GridPane {
         }
     }
 
-    pub(crate) fn with_line<W: ReactiveWidget>(mut self, widget: &W) -> Self {
+    pub(crate) fn with_line<W: StackableWidget>(mut self, widget: &W) -> Self {
         if matches!(self.lines.last(), Some(GridLine::Row(_, _))) {
             self.lines.push(GridLine::Fill);
         }
@@ -740,7 +748,7 @@ mod test {
     use std::cmp;
 
     use super::{
-        ColumnConstraints, ColumnStatus, GridPane, Pane, ReactiveWidget, SingleScrollablePane,
+        ColumnConstraints, ColumnStatus, GridPane, Pane, SingleScrollablePane, StackableWidget,
     };
 
     /// Create a column constraints object and feed it.
@@ -902,7 +910,7 @@ mod test {
     #[derive(Debug)]
     struct MockWidget(u16);
 
-    impl ReactiveWidget for MockWidget {
+    impl StackableWidget for MockWidget {
         fn min_height(&self, area: Rect) -> u16 {
             let Self(height) = self;
             cmp::min(*height, area.height)
