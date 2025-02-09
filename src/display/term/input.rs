@@ -548,7 +548,6 @@ impl Bookmarks {
         }
 
         self.marks = BTreeSet::from_iter(marks.iter().map(|lp| lp.pid)); // Keep only marks on existing PIDs.
-        if matches!(self.action, BookmarkAction::ToggleMarks) {}
         let ring = match pattern {
             Some(_) => &matches,
             None => &marks,

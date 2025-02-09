@@ -246,36 +246,3 @@ impl Motion {
         self.scroll = Scroll::NextPage;
     }
 }
-
-#[cfg(test)]
-mod test {
-
-    use super::{BoundedFifo, UnboundedSize};
-
-    #[test]
-    fn test_add() {
-        assert_eq!(UnboundedSize::Value(7), UnboundedSize::Value(4).add(3));
-        assert_eq!(UnboundedSize::Infinite, UnboundedSize::Infinite.add(3));
-    }
-
-    #[test]
-    fn test_sub() {
-        assert_eq!(UnboundedSize::Value(4), UnboundedSize::Value(7).sub(3));
-        assert_eq!(UnboundedSize::Value(0), UnboundedSize::Value(3).sub(7));
-        assert_eq!(UnboundedSize::Infinite, UnboundedSize::Infinite.sub(7));
-    }
-
-    #[test]
-    fn test_fifo() {
-        let mut v = BoundedFifo::new(2);
-        v.push(1usize);
-        assert_eq!(1, v.len());
-        assert_eq!(1, *v.front().unwrap());
-        v.push(2usize);
-        assert_eq!(2, v.len());
-        assert_eq!(1, *v.front().unwrap());
-        v.push(3usize);
-        assert_eq!(2, v.len());
-        assert_eq!(2, *v.front().unwrap());
-    }
-}

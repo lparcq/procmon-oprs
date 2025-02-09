@@ -432,12 +432,12 @@ impl<'a, 'b> TableClip<'a, 'b> {
         s.get(offset..).unwrap_or("").to_owned()
     }
 
-    fn truncate_centered<'t>(
-        value: Cow<'t, str>,
+    fn truncate_centered(
+        value: Cow<'_, str>,
         truncation: usize,
         width: usize,
         alignement: Alignment,
-    ) -> Text<'t> {
+    ) -> Text<'_> {
         let len = width - truncation;
         Text::from_iter(value.lines().map(|l| {
             let llen = l.len();
@@ -603,7 +603,7 @@ impl<T: TableGenerator> StatefulWidget for BigTableWidget<'_, T> {
         );
         state.selected_lineno = selected_lineno;
         state.zoom.vertical = vzoom;
-        let clip = TableClip::new(&state, &widths, nheadcols, column_spacing);
+        let clip = TableClip::new(state, widths, nheadcols, column_spacing);
 
         let constraints = clip.constraints();
         let headers = self.table.top_headers();
@@ -910,18 +910,20 @@ mod test {
 
     use crate::display::term::types::{Area, MaxLength};
 
-    use super::{GridPane, Pane, SingleScrollablePane, StackableWidget, TableClip, Zoom};
+    use super::{
+        BigTableState, GridPane, Pane, SingleScrollablePane, StackableWidget, TableClip, Zoom,
+    };
 
     const COLUMN_SPACING: u16 = 1;
 
-    /// Zoom and widths from a rows of strings.
-    fn new_zoom_and_widths(
+    /// State and widths from a rows of strings.
+    fn new_state_and_widths(
         rows: &[&[&'static str]],
         position: usize,
         screen_width: usize,
         nheadcols: usize,
         column_spacing: u16,
-    ) -> (Area<Zoom>, Vec<u16>) {
+    ) -> (BigTableState, Vec<u16>) {
         let column_spacing = column_spacing as usize;
         let mut mw = (0..rows[0].len())
             .map(|_| MaxLength::from(0))
@@ -935,11 +937,17 @@ mod test {
         let visible_width = screen_width
             - widths.iter().take(nheadcols).sum::<u16>() as usize
             - nheadcols * column_spacing;
-        let clip = Area::new(
+        let zoom = Area::new(
             Zoom::new(position, visible_width, total_width),
             Zoom::default(),
         );
-        (clip, widths)
+        let state = BigTableState {
+            motion: Area::default(),
+            selected_lineno: None,
+            min_lineno: 0,
+            zoom,
+        };
+        (state, widths)
     }
 
     fn new_constraints(widths: &[u16]) -> Vec<Constraint> {
@@ -954,13 +962,13 @@ mod test {
     /// 01234567890123456789
     /// abcde  fgh ijkl
     /// ABC   DEFG   HI
-    const ROWS_5_4_4: &[&[&'static str]] = &[&["abcde", "fgh", "ijkl"], &["ABC", "DEFG", "HI"]];
+    const ROWS_5_4_4: &[&[&str]] = &[&["abcde", "fgh", "ijkl"], &["ABC", "DEFG", "HI"]];
 
     /// 0         1
     /// 01234567890123456789
     /// abcde  fgh ijkl  mno
     /// ABC   DEFG   HI JKLM
-    const ROWS_5_4_4_4: &[&[&'static str]] = &[
+    const ROWS_5_4_4_4: &[&[&str]] = &[
         &["abcde", "fgh", "ijkl", "mno"],
         &["ABC", "DEFG", "HI", "JKLM"],
     ];
@@ -974,8 +982,8 @@ mod test {
     ) {
         const SCREEN_WIDTH: usize = 20;
         const NHEADCOLS: usize = 0;
-        let (zoom, widths) = new_zoom_and_widths(rows, 0, SCREEN_WIDTH, NHEADCOLS, COLUMN_SPACING);
-        let tc = TableClip::new(&zoom, &widths, None, NHEADCOLS, COLUMN_SPACING);
+        let (zoom, widths) = new_state_and_widths(rows, 0, SCREEN_WIDTH, NHEADCOLS, COLUMN_SPACING);
+        let tc = TableClip::new(&zoom, &widths, NHEADCOLS, COLUMN_SPACING);
         let expected_constraints = new_constraints(expected_constraints);
         let constraints = tc.constraints();
         assert_eq!(expected_constraints, constraints);
@@ -998,7 +1006,7 @@ mod test {
     /// 01234567890123456789     01234567890123456789     01234567890123456789
     /// abcde  fgh ijkl mnopqr   abcde fgh  ijkl mnopqr   abcde  fgh ijkl mnopqr   
     /// ABC   DEFG   HI   JKLM   ABC   DEFG HI   JKLM      ABC  DEFG  HI   JKLM
-    const ROWS_5_4_4_5: &[&[&'static str]] = &[
+    const ROWS_5_4_4_5: &[&[&str]] = &[
         &["abcde", "fgh", "ijkl", "mnopqr"],
         &["ABC", "DEFG", "HI", "JKLM"],
     ];
@@ -1007,7 +1015,7 @@ mod test {
     /// 01234567890123456789
     /// abcde  fgh ij klmnopqrs
     /// ABC   DEFG HI   JKLMN
-    const ROWS_5_4_2_9: &[&[&'static str]] = &[
+    const ROWS_5_4_2_9: &[&[&str]] = &[
         &["abcde", "fgh", "ij", "klmnopqrs"],
         &["ABC", "DEFG", "HI", "JKLMN"],
     ];
@@ -1026,8 +1034,9 @@ mod test {
     ) {
         const SCREEN_WIDTH: usize = 20;
         const NHEADCOLS: usize = 1;
-        let (zoom, widths) = new_zoom_and_widths(rows, 0, SCREEN_WIDTH, NHEADCOLS, COLUMN_SPACING);
-        let tc = TableClip::new(&zoom, &widths, None, NHEADCOLS, COLUMN_SPACING);
+        let (state, widths) =
+            new_state_and_widths(rows, 0, SCREEN_WIDTH, NHEADCOLS, COLUMN_SPACING);
+        let tc = TableClip::new(&state, &widths, NHEADCOLS, COLUMN_SPACING);
         let expected_constraints = new_constraints(expected_constraints);
         let constraints = tc.constraints();
         assert_eq!(expected_constraints, constraints);
@@ -1048,7 +1057,7 @@ mod test {
     /// 01234567890123456789     01234567890123456789     01234567890123456789
     /// abcde h  ijklm nopqrst   abcde gh ijklm nopqrst   abcde h  ijkl mnopqrst   
     /// ABC   FG HI    JKLM        ABC FG  HI      JKLM   ABC   FG  HI    JKLM
-    const ROWS_5_4_5_7: &[&[&'static str]] = &[
+    const ROWS_5_4_5_7: &[&[&str]] = &[
         &["abcde", "fgh", "ijklm", "nopqrst"],
         &["ABC", "DEFG", "HI", "JKLM"],
     ];
@@ -1067,9 +1076,9 @@ mod test {
     ) {
         const SCREEN_WIDTH: usize = 20;
         const NHEADCOLS: usize = 1;
-        let (zoom, widths) =
-            new_zoom_and_widths(rows, position, SCREEN_WIDTH, NHEADCOLS, COLUMN_SPACING);
-        let tc = TableClip::new(&zoom, &widths, None, NHEADCOLS, COLUMN_SPACING);
+        let (state, widths) =
+            new_state_and_widths(rows, position, SCREEN_WIDTH, NHEADCOLS, COLUMN_SPACING);
+        let tc = TableClip::new(&state, &widths, NHEADCOLS, COLUMN_SPACING);
         let expected_constraints = new_constraints(expected_constraints);
         let constraints = tc.constraints();
         assert_eq!(expected_constraints, constraints);

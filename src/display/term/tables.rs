@@ -588,7 +588,7 @@ impl TableGenerator for EnvironmentTable {
     }
 
     fn body_row_count(&self) -> usize {
-        self.env.iter().count()
+        self.env.len()
     }
 
     fn widths(&self) -> &[u16] {

@@ -95,6 +95,9 @@ macro_rules! format_metric {
     };
 }
 
+type Screen = AlternateScreen<RawTerminal<io::Stdout>>;
+type TermionTerminal = Terminal<TermionBackend<Box<Screen>>>;
+
 /// Print on standard output as a table
 pub struct TerminalDevice<'t> {
     /// Interval to update the screen
@@ -102,7 +105,7 @@ pub struct TerminalDevice<'t> {
     /// Channel for input events
     events: EventChannel,
     /// Terminal
-    terminal: RefCell<Terminal<TermionBackend<Box<AlternateScreen<RawTerminal<io::Stdout>>>>>>,
+    terminal: RefCell<TermionTerminal>,
     /// Table tree data
     tree_data: Rc<TreeData<'t>>,
     /// Position in the panes. Last position for the currently visible pane.
@@ -516,9 +519,11 @@ impl TerminalDevice<'_> {
             r.render_stateful_widget(widget, &mut state);
             r.render_widget(menu);
         })?;
-        self.motions
-            .last_mut()
-            .map(|p| p.vertical.position = state.position);
+        if let Some(motion) = self.motions.last_mut() {
+            motion.vertical.position = state.position;
+        } else {
+            log::error!("cannot update motion");
+        }
         Ok(())
     }
 
@@ -608,9 +613,9 @@ impl TerminalDevice<'_> {
             r.render_widget(menu);
         })?;
         if offset >= block_count {
-            self.motions
-                .last_mut()
-                .map(|p| p.horizontal.position = block_count.saturating_sub(1));
+            if let Some(motion) = self.motions.last_mut() {
+                motion.horizontal.position = block_count.saturating_sub(1);
+            }
         }
         Ok(())
     }
