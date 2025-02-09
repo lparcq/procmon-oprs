@@ -25,7 +25,7 @@ use crate::{
     process::ProcessIdentity,
 };
 
-use super::types::BoundedFifo;
+use super::types::Scroll;
 
 /// Standard keys
 const KEY_ENTER: Key = Key::Char('\n');
@@ -58,15 +58,6 @@ const KEY_SELECT_ROOT_PID: Key = Key::Char('r');
 const KEY_UNSELECT_ROOT_PID: Key = Key::Char('R');
 const KEY_SLOWER: Key = Key::Char(KEY_SLOWER_CHAR);
 const KEY_SLOWER_CHAR: char = '-';
-
-macro_rules! try_return {
-    ($option:expr) => {
-        match $option {
-            Some(value) => return value,
-            None => (),
-        }
-    };
-}
 
 /// User action
 #[derive(Clone, Debug)]
@@ -319,24 +310,9 @@ impl fmt::Display for SearchState {
 pub enum BookmarkAction {
     #[default]
     None,
-    /// Select first line
-    FirstLine,
-    /// Select last line
-    LastLine,
-    /// Select previous line
-    PreviousLine,
-    /// Select next line
-    NextLine,
-    /// Select previous page
-    PreviousPage,
-    /// Select next page
-    NextPage,
-    /// Select previous search occurrence or mark.
     Previous,
     /// Select next search occurrence or mark.
     Next,
-    /// Current selected line if it still matched, else the next matching.
-    ClosestMatch,
     /// Invert the marks of the matched lines or the current selection.
     ToggleMarks,
 }
@@ -409,14 +385,6 @@ impl LinePid {
         Self { lineno, pid }
     }
 
-    fn distance(a: usize, b: usize) -> usize {
-        if a < b {
-            b - a
-        } else {
-            a - b
-        }
-    }
-
     fn pid_index_in(&self, v: &[LinePid]) -> Option<usize> {
         v.iter().enumerate().find_map(|(index, lp)| {
             if lp.pid == self.pid {
@@ -450,30 +418,6 @@ impl LinePid {
             None => None,
         }
     }
-
-    /// Return the item with this PID or the closest from this line.
-    fn closest_in<'a>(&self, v: &'a [LinePid]) -> Option<&'a LinePid> {
-        v.iter().find(|lp| lp.pid == self.pid).or_else(|| {
-            let mut distance = 0;
-            let mut candidate = None;
-            for lp in v {
-                match candidate {
-                    Some(_) => {
-                        let new_distance = LinePid::distance(lp.lineno, self.lineno);
-                        if new_distance < distance {
-                            distance = new_distance;
-                            candidate = Some(lp);
-                        }
-                    }
-                    None => {
-                        distance = LinePid::distance(lp.lineno, self.lineno);
-                        candidate = Some(lp);
-                    }
-                }
-            }
-            candidate
-        })
-    }
 }
 
 /// Search bar
@@ -481,7 +425,7 @@ impl LinePid {
 pub struct Bookmarks {
     /// PID at the line under the cursor.
     #[getset(get = "pub")]
-    selected: Option<LinePid>,
+    selected_pid: Option<pid_t>,
     /// Optional search pattern.
     #[getset(get = "pub")]
     search: Option<SearchBar>,
@@ -494,28 +438,6 @@ pub struct Bookmarks {
 }
 
 impl Bookmarks {
-    /// Recenter vertically on a given position.
-    ///
-    /// # Arguments
-    ///
-    /// * `center` - The position to recenter to.
-    /// * `top` - The first visible line.
-    /// * `height` - The height of the visible area.
-    /// * `force` - Recenter even if the position is already visible.
-    fn recenter(center: usize, top: usize, height: usize, force: bool) -> usize {
-        let bottom = top + height;
-        if force || center < top || center >= bottom {
-            center.saturating_sub(std::cmp::max(1, height / 2))
-        } else {
-            top
-        }
-    }
-
-    /// Check if PID is selected.
-    pub fn is_selected(&self, pid: pid_t) -> bool {
-        self.selected.map(|s| s.pid == pid).unwrap_or(false)
-    }
-
     /// Check if PID is marked.
     pub fn is_marked(&self, pid: pid_t) -> bool {
         self.marks.contains(&pid)
@@ -571,126 +493,30 @@ impl Bookmarks {
         }
     }
 
-    /// Set the selection and recenter it.
-    fn select(
-        &mut self,
-        lineno: usize,
-        pid: pid_t,
-        top: usize,
-        height: usize,
-        force: bool,
-    ) -> usize {
-        self.selected = Some(LinePid::new(lineno, pid));
-        Bookmarks::recenter(lineno, top, height, force)
+    /// Select this PID.
+    pub(crate) fn select_pid(&mut self, pid: pid_t) {
+        self.selected_pid = Some(pid);
     }
 
-    /// Apply a function on the selection.
-    fn change_selection_in_ring<F>(&mut self, ring: &[LinePid], f: F) -> usize
-    where
-        F: Fn(&LinePid, &[LinePid]) -> Option<LinePid>,
-    {
-        self.selected = match self.selected.as_ref() {
-            Some(lp) => f(lp, ring).or(Some(*lp)),
-            None => ring.first().copied(),
-        };
-        self.selected.map(|lp| lp.lineno).unwrap_or(0)
-    }
-
-    /// Select the previous PID if the current PID is the current selection.
+    /// Transform the motion on the bookmarks to a motion on lines.
     ///
-    /// The offset is based on the `previous_pids` FIFO size. It's one
-    /// for previous line or the page size.
-    fn select_previous(
-        &mut self,
-        previous_pids: &BoundedFifo<pid_t>,
-        current_lineno: usize,
-        current_pid: pid_t,
-        top: usize,
-        height: usize,
-    ) -> Option<usize> {
-        let force = previous_pids.capacity() > 1; // Moving by pages.
-        match self.selected {
-            Some(selected) if current_pid == selected.pid => {
-                // If current PID is the selected PID, the front of previous
-                // PIDs is the one to select. If there is no previous PID,
-                // just stay on the selection.
-                let lineno = match previous_pids.front() {
-                    Some(prev_pid) => {
-                        let lineno = current_lineno - previous_pids.len();
-                        self.selected = Some(LinePid::new(lineno, *prev_pid));
-                        lineno
-                    }
-                    None => selected.lineno,
-                };
-                Some(Bookmarks::recenter(lineno, top, height, force))
-            }
-            Some(_) => None, // Current is not the one we are looking for.
-            None => {
-                // No selection, select this one (should be the first line).
-                Some(self.select(current_lineno, current_pid, top, height, force))
-            }
-        }
-    }
-
-    /// Select the current PID is the next after the current selection.
-    ///
-    /// The offset is based on the `previous_pids` FIFO size. It's one
-    /// for next line or the page size.
-    fn select_next(
-        &mut self,
-        previous_pids: &BoundedFifo<pid_t>,
-        current_lineno: usize,
-        current_pid: pid_t,
-        top: usize,
-        height: usize,
-    ) -> Option<usize> {
-        let force = previous_pids.len() > 1; // Moving by pages.
-        match (self.selected.map(|s| s.pid), previous_pids.front()) {
-            (Some(selected_pid), Some(prev_pid)) if *prev_pid == selected_pid => {
-                Some(self.select(current_lineno, current_pid, top, height, force))
-            }
-            (None, _) => Some(self.select(current_lineno, current_pid, top, height, force)),
-            _ => None,
-        }
-    }
-
-    /// Toggle the mark for the given PID.
-    fn toggle_mark(&mut self, pid: pid_t) {
-        if !self.marks.remove(&pid) {
-            self.marks.insert(pid);
-        }
-    }
-
-    /// Execute the action and return the vertical offset.
-    ///
+    /// * `scroll` - The requested scroll.
     /// * `occurrences` - The set of matching pid in case of search.
     /// * `lines` - The lines of process identities.
-    /// * `top` - The first visible line (current vertical offset).
-    /// * `height` - The height of the visible area.
-    pub fn execute<I, P>(
+    pub(crate) fn selected_line<I, P>(
         &mut self,
+        scroll: Scroll,
         occurrences: &mut BTreeSet<pid_t>,
         lines: I,
-        top: usize,
-        height: usize,
-    ) -> usize
+    ) -> Option<usize>
     where
         I: Iterator<Item = P>,
         P: ProcessIdentity,
     {
-        let action = self.action;
-        self.action = match self.search {
-            Some(_) => BookmarkAction::ClosestMatch,
-            None => BookmarkAction::None,
-        };
         occurrences.clear();
-        let page_size = match action {
-            BookmarkAction::PreviousPage | BookmarkAction::NextPage => std::cmp::max(1, height / 2),
-            _ => 1,
-        };
-        let mut pid_at_line = None;
-        let mut last_lineno = None;
-        let mut previous_pids = BoundedFifo::new(page_size);
+        let mut selected_linepid = None;
+        let mut first_linepid = None;
+        let mut last_linepid = None;
         let mut matches = Vec::new();
         let mut marks = Vec::new();
         let pattern = self.search_pattern();
@@ -700,105 +526,102 @@ impl Bookmarks {
             if pid == 0 {
                 continue;
             }
+            let this_linepid = LinePid::new(lineno, pi.pid());
+            if first_linepid.is_none() {
+                first_linepid = last_linepid;
+            }
             if self.marks.contains(&pid) {
-                marks.push(LinePid::new(lineno, pid));
+                marks.push(this_linepid);
             }
-            if let Some(ref mut selected) = self.selected {
-                if selected.pid == pid {
-                    selected.lineno = lineno;
-                }
-                if selected.lineno == lineno {
-                    pid_at_line = Some(pid);
+            if let Some(selected_pid) = self.selected_pid {
+                if selected_pid == pid {
+                    selected_linepid = Some(this_linepid);
                 }
             }
-            match action {
-                BookmarkAction::None => match self.selected {
-                    Some(ref mut selected) if pid == selected.pid => {
-                        selected.lineno = lineno;
-                        return Bookmarks::recenter(lineno, top, height, false);
-                    }
-                    Some(_) => (),
-                    None => return Bookmarks::recenter(0, top, height, false),
-                },
-                BookmarkAction::FirstLine => return self.select(lineno, pid, top, height, true),
-                BookmarkAction::LastLine => last_lineno = Some(lineno),
-                BookmarkAction::PreviousLine | BookmarkAction::PreviousPage => {
-                    try_return!(self.select_previous(&previous_pids, lineno, pid, top, height))
-                }
-                BookmarkAction::NextLine | BookmarkAction::NextPage => {
-                    try_return!(self.select_next(&previous_pids, lineno, pid, top, height))
-                }
-                BookmarkAction::Previous
-                | BookmarkAction::Next
-                | BookmarkAction::ClosestMatch
-                | BookmarkAction::ToggleMarks => {
-                    if self.search_pattern().is_none()
-                        && self.marks.is_empty()
-                        && !matches!(action, BookmarkAction::ToggleMarks)
-                    {
-                        return self.select(lineno, pid, top, height, true);
-                    }
-                    if let Some(pattern) = pattern.as_ref() {
-                        if pi.name().contains(pattern) {
-                            matches.push(LinePid::new(lineno, pid));
-                            occurrences.insert(pid);
-                        }
-                    }
+            if let Some(pattern) = pattern.as_ref() {
+                if pi.name().contains(pattern) {
+                    matches.push(this_linepid);
+                    occurrences.insert(pid);
                 }
             }
-            previous_pids.push(pid);
+            last_linepid = Some(this_linepid);
         }
 
         self.marks = BTreeSet::from_iter(marks.iter().map(|lp| lp.pid)); // Keep only marks on existing PIDs.
-        let match_count = matches.len();
+        if matches!(self.action, BookmarkAction::ToggleMarks) {}
         let ring = match pattern {
             Some(_) => &matches,
             None => &marks,
         };
-        let new_top = match action {
-            BookmarkAction::None => top,
-            BookmarkAction::FirstLine => 0,
-            BookmarkAction::LastLine => {
-                let lineno = last_lineno.expect("internal error: last line must be set");
-                self.selected = previous_pids.back().map(|pid| LinePid::new(lineno, *pid));
-                lineno
-            }
-            BookmarkAction::PreviousLine
-            | BookmarkAction::PreviousPage
-            | BookmarkAction::NextLine
-            | BookmarkAction::NextPage => match (self.selected, pid_at_line) {
-                (Some(selected), Some(pid)) => {
-                    let lineno = selected.lineno;
-                    self.selected = Some(LinePid::new(lineno, pid));
-                    lineno
+        if selected_linepid.is_none() {
+            self.selected_pid = None;
+        }
+        let action = self.action;
+        self.action = BookmarkAction::None;
+        let selected_linepid = match action {
+            BookmarkAction::None | BookmarkAction::ToggleMarks => {
+                if matches!(action, BookmarkAction::ToggleMarks) {
+                    self.toggle_marks(occurrences);
                 }
-                _ => {
-                    self.selected = None;
-                    0
-                }
-            },
-            BookmarkAction::Previous => {
-                self.change_selection_in_ring(ring, |s, ring| s.previous_in(ring).copied())
+                self.apply_scroll(scroll, selected_linepid, first_linepid, last_linepid)
             }
-            BookmarkAction::Next => {
-                self.change_selection_in_ring(ring, |s, ring| s.next_in(ring).copied())
-            }
-            BookmarkAction::ClosestMatch => {
-                self.change_selection_in_ring(&matches, |s, ring| s.closest_in(ring).copied())
-            }
-            BookmarkAction::ToggleMarks => {
-                if occurrences.is_empty() {
-                    if let Some(selected) = self.selected {
-                        self.toggle_mark(selected.pid);
-                    }
-                } else {
-                    occurrences.iter().for_each(|pid| self.toggle_mark(*pid));
-                    self.clear_search();
-                    occurrences.clear();
-                }
-                self.selected.map(|s| s.lineno).unwrap_or(0)
-            }
+            BookmarkAction::Previous => self
+                .move_to_pid_in_ring(ring, selected_linepid, LinePid::previous_in)
+                .or_else(|| ring.last().copied()),
+            BookmarkAction::Next => self
+                .move_to_pid_in_ring(ring, selected_linepid, LinePid::next_in)
+                .or_else(|| ring.first().copied()),
         };
-        Bookmarks::recenter(new_top, top, height, match_count > 0)
+        self.selected_pid = selected_linepid.map(|lp| lp.pid);
+        selected_linepid.map(|lp| lp.lineno)
+    }
+
+    /// Apply the scroll.
+    fn apply_scroll(
+        &mut self,
+        scroll: Scroll,
+        selected_linepid: Option<LinePid>,
+        first_linepid: Option<LinePid>,
+        last_linepid: Option<LinePid>,
+    ) -> Option<LinePid> {
+        match scroll {
+            Scroll::FirstPosition => first_linepid,
+            Scroll::LastPosition => last_linepid,
+            _ => selected_linepid,
+        }
+    }
+
+    /// Move to closest PID in the ring if possible.
+    fn move_to_pid_in_ring<F>(
+        &mut self,
+        ring: &[LinePid],
+        lp: Option<LinePid>,
+        f: F,
+    ) -> Option<LinePid>
+    where
+        F: for<'a> Fn(&LinePid, &'a [LinePid]) -> Option<&'a LinePid>,
+    {
+        lp.as_ref()
+            .and_then(|lp| f(lp, ring).map(LinePid::to_owned))
+    }
+
+    /// Toggle marks in the given occurrences.
+    fn toggle_marks(&mut self, occurrences: &mut BTreeSet<pid_t>) {
+        if occurrences.is_empty() {
+            if let Some(selected_pid) = self.selected_pid {
+                self.toggle_mark(selected_pid);
+            }
+        } else {
+            occurrences.iter().for_each(|pid| self.toggle_mark(*pid));
+            self.clear_search();
+            occurrences.clear();
+        }
+    }
+
+    /// Toggle the mark for the given PID.
+    fn toggle_mark(&mut self, pid: pid_t) {
+        if !self.marks.remove(&pid) {
+            self.marks.insert(pid);
+        }
     }
 }

@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use getset::CopyGetters;
 use ratatui::{
     layout::{Alignment, Constraint, Layout},
     prelude::*,
@@ -25,14 +26,14 @@ use ratatui::{
     },
     Frame,
 };
-use std::{cmp, fmt};
+use std::{borrow::Cow, cmp, fmt, ops::Range};
 
 use super::{
-    types::{Area, MaxLength},
+    types::{Area, MaxLength, Motion, Scroll},
     KeyMap, MenuEntry,
 };
 
-pub const BORDER_SIZE: u16 = 1;
+pub(crate) const BORDER_SIZE: u16 = 1;
 
 /// Format a text by applying header style.
 ///
@@ -56,72 +57,6 @@ fn format_text<'l>(help: &'static str) -> Vec<Line<'l>> {
             }
         })
         .collect()
-}
-
-/// Column constraint status
-#[derive(Debug)]
-enum ColumnStatus {
-    Accepted,
-    Truncated,
-    Rejected,
-}
-
-/// Calculate widths constraints to avoid an overflow
-#[derive(Debug)]
-struct ColumnConstraints {
-    constraints: Vec<Constraint>,
-    inner_width: u16,
-    max_column_width: u16,
-    column_spacing: u16,
-    remaining_width: u16,
-}
-
-impl ColumnConstraints {
-    fn new(inner_width: u16, ncols: usize, max_column_width: u16, column_spacing: u16) -> Self {
-        Self {
-            constraints: Vec::with_capacity(ncols),
-            inner_width,
-            max_column_width,
-            column_spacing,
-            remaining_width: inner_width,
-        }
-    }
-
-    /// Table width (the columns plus the gaps).
-    fn table_width(&self) -> u16 {
-        self.inner_width - self.remaining_width
-    }
-
-    /// Add a column in the constraints.
-    ///
-    /// Return true if it has been added and not truncated.
-    fn add_column(&mut self, width: u16) -> ColumnStatus {
-        let column_spacing = if self.constraints.is_empty() {
-            0
-        } else {
-            self.column_spacing
-        };
-        let mut actual_width = if self.constraints.len() + 1 < self.constraints.capacity() {
-            cmp::min(self.max_column_width, width)
-        } else {
-            width
-        };
-        let required_width = column_spacing + actual_width;
-        if required_width <= self.remaining_width {
-            self.constraints.push(Constraint::Length(actual_width));
-            self.remaining_width -= required_width;
-            ColumnStatus::Accepted
-        } else if self.remaining_width > column_spacing {
-            // Partial last column
-            actual_width = self.remaining_width - column_spacing;
-            self.constraints.push(Constraint::Length(actual_width));
-            self.remaining_width = 0;
-            ColumnStatus::Truncated
-        } else {
-            self.remaining_width = 0;
-            ColumnStatus::Rejected
-        }
-    }
 }
 
 /// Table style
@@ -167,6 +102,7 @@ pub struct Zoom {
 
 impl Zoom {
     pub fn new(position: usize, visible_length: usize, total_length: usize) -> Self {
+        let position = cmp::min(position, total_length);
         Self {
             position,
             visible_length,
@@ -176,18 +112,6 @@ impl Zoom {
 
     pub fn with_position(position: usize) -> Self {
         Self::new(position, 0, 0)
-    }
-
-    /// Check if at end.
-    pub fn at_end(&self) -> bool {
-        self.position + self.visible_length >= self.total_length
-    }
-
-    /// Reframe the zoom to avoid empty space at the end.
-    pub fn reframe(&mut self) {
-        if self.position + self.visible_length > self.total_length {
-            self.position = self.total_length.saturating_sub(self.visible_length);
-        }
     }
 
     /// Create a scrollbar state if content is bigger than visible size.
@@ -339,16 +263,193 @@ impl StatefulWidget for MarkdownWidget<'_> {
 }
 
 /// State for the `BigTableWidget`.
-#[derive(Debug)]
+#[derive(Debug, CopyGetters)]
 pub(crate) struct BigTableState {
-    pub(crate) zoom: Area<Zoom>,
+    #[getset(get_copy = "pub")]
+    motion: Area<Motion>,
+    selected_lineno: Option<usize>,
+    min_lineno: usize,
+    zoom: Area<Zoom>,
 }
 
 impl BigTableState {
-    pub(crate) fn new(hzoom: Zoom, vzoom: Zoom) -> Self {
+    pub(crate) fn new(
+        motion: &Area<Motion>,
+        selected_lineno: Option<usize>,
+        min_lineno: usize,
+    ) -> Self {
         Self {
-            zoom: Area::new(hzoom, vzoom),
+            motion: *motion,
+            selected_lineno,
+            min_lineno,
+            zoom: Area::default(),
         }
+    }
+
+    pub(crate) fn with_motion(motion: &Area<Motion>) -> Self {
+        Self::new(motion, None, 0)
+    }
+}
+
+/// Manage the visible part of the big table.
+#[derive(Debug)]
+pub(crate) struct TableClip<'a, 'b> {
+    /// Table state.
+    state: &'a BigTableState,
+    /// Widths of columns.
+    widths: &'b [u16],
+    /// Number of header columns.
+    nheadcols: usize,
+    /// Range of body columns
+    ranges: Vec<Range<usize>>,
+}
+
+impl<'a, 'b> TableClip<'a, 'b> {
+    fn new(
+        state: &'a BigTableState,
+        widths: &'b [u16],
+        nheadcols: usize,
+        column_spacing: u16,
+    ) -> Self {
+        let column_spacing = column_spacing as usize;
+        let body_widths = &widths[nheadcols..];
+        let mut ranges = Vec::with_capacity(body_widths.len());
+        let mut start = 0;
+        for width in body_widths {
+            let end = start + *width as usize;
+            ranges.push(start..end);
+            start = end + column_spacing;
+        }
+        Self {
+            state,
+            widths,
+            nheadcols,
+            ranges,
+        }
+    }
+
+    pub(crate) fn zoom(&self) -> &Area<Zoom> {
+        &self.state.zoom
+    }
+
+    pub(crate) fn selected_lineno(&self) -> Option<usize> {
+        self.state.selected_lineno
+    }
+
+    /// Constraints for visible columns.
+    fn constraints(&self) -> Vec<Constraint> {
+        let header_widths = &self.widths[0..self.nheadcols];
+        let mut constraints = Vec::with_capacity(self.widths.len());
+        header_widths
+            .iter()
+            .for_each(|w| constraints.push(Constraint::Length(*w)));
+        let hclip = self.zoom().horizontal;
+        let start = hclip.position;
+        let end = hclip.position + hclip.visible_length;
+        constraints.extend(
+            self.ranges
+                .iter()
+                .skip_while(|r| r.end <= start)
+                .take_while(|r| r.start < end)
+                .map(|r| {
+                    let len = cmp::min(end, r.end) - cmp::max(start, r.start);
+                    Constraint::Length(len as u16)
+                }),
+        );
+        constraints
+    }
+
+    /// Create a text with only the visible part of a cell.
+    ///
+    /// * `colnum`: the body column number (starting on the first column after the header)
+    /// * `value`: the string to display
+    /// * `alignment`: the alignment in the cell.
+    pub(crate) fn clip_cell<'t>(
+        &self,
+        colnum: usize,
+        value: Cow<'t, str>,
+        mut alignment: Alignment,
+    ) -> Option<Text<'t>> {
+        let widths = &self.widths[self.nheadcols..];
+        let range = &self.ranges[colnum];
+        let hclip = self.zoom().horizontal;
+        let start = hclip.position;
+        let end = hclip.position + hclip.visible_length;
+        if range.end <= start || range.start >= end {
+            None
+        } else if range.start < start {
+            let truncation = start - range.start;
+            match alignment {
+                Alignment::Left => Some(Text::from_iter(
+                    value.lines().map(|l| Self::suffix(l, truncation)),
+                )),
+                Alignment::Right => {
+                    let width = widths[colnum] as usize;
+                    Some(Text::from_iter(value.lines().map(|l| {
+                        let offset = (truncation + l.len()).saturating_sub(width);
+                        Self::suffix(l, offset)
+                    })))
+                }
+                Alignment::Center => {
+                    alignment = Alignment::Left;
+                    let width = widths[colnum] as usize;
+                    Some(Self::truncate_centered(value, truncation, width, alignment))
+                }
+            }
+        } else if range.end > end {
+            let truncation = range.end - end;
+            match alignment {
+                Alignment::Left => {
+                    let len = widths[colnum] as usize - truncation;
+                    Some(Text::from_iter(value.lines().map(|l| Self::prefix(l, len))))
+                }
+                Alignment::Right => {
+                    let len = value.len().saturating_sub(truncation);
+                    Some(Text::from(value.get(..len).unwrap_or("").to_owned()))
+                }
+                Alignment::Center => {
+                    alignment = Alignment::Right;
+                    let width = widths[colnum] as usize;
+                    Some(Self::truncate_centered(value, truncation, width, alignment))
+                }
+            }
+        } else {
+            Some(Text::from(value.into_owned()))
+        }
+        .map(|t| t.alignment(alignment))
+    }
+
+    fn prefix(s: &str, len: usize) -> String {
+        if s.len() <= len {
+            s
+        } else {
+            s.get(..len).unwrap_or("")
+        }
+        .to_owned()
+    }
+
+    fn suffix(s: &str, offset: usize) -> String {
+        s.get(offset..).unwrap_or("").to_owned()
+    }
+
+    fn truncate_centered<'t>(
+        value: Cow<'t, str>,
+        truncation: usize,
+        width: usize,
+        alignement: Alignment,
+    ) -> Text<'t> {
+        let len = width - truncation;
+        Text::from_iter(value.lines().map(|l| {
+            let llen = l.len();
+            let indent = (width - llen) / 2;
+            let llen = llen + indent;
+            let s = match alignement {
+                Alignment::Left => format!("{l: <w$}", w = llen),
+                Alignment::Right => format!("{l: >w$}", w = llen),
+                _ => panic!("must be called with left or right alignment"),
+            };
+            Self::prefix(&s, len)
+        }))
     }
 }
 
@@ -359,23 +460,36 @@ pub(crate) trait TableGenerator {
     /// If the width is not zero, it's a crosstab.
     fn headers_size(&self) -> Area<usize>;
 
-    /// The visible headers.
-    ///
-    /// The fixed columns must always be included.
-    fn top_headers(&self, zoom: &Zoom) -> Vec<Cell>;
+    /// The headers on top.
+    fn top_headers(&self) -> Vec<Cell>;
 
     /// The visible rows.
     ///
-    /// The fixed columns must always be included.
-    fn rows(&self, zoom: &BigTableState) -> Vec<Vec<Cell>>;
+    /// * `zoom` - the visibles rows start index and size.
+    fn rows(&self, clip: &TableClip<'_, '_>) -> Vec<Vec<Cell>>;
+
+    /// Number of rows in the body.
+    fn body_row_count(&self) -> usize;
 
     /// The width of each column.
     fn widths(&self) -> &[u16];
-}
 
-/// StateGenerator
-pub(crate) trait BigTableStateGenerator {
-    fn state(&self) -> BigTableState;
+    /// Number of columns in the body.
+    fn body_column_count(&self) -> usize {
+        self.widths().len() - self.headers_size().horizontal
+    }
+
+    /// Calculate the width of a range of columns including the space between them.
+    fn range_widths(&self, range: std::ops::Range<usize>, column_spacing: u16) -> u16 {
+        let count = range.end - range.start;
+        self.widths()
+            .iter()
+            .skip(range.start)
+            .take(count)
+            .copied()
+            .sum::<u16>()
+            + count.saturating_sub(1) as u16 * column_spacing
+    }
 }
 
 /// Table that can overflow horizontally and vertically.
@@ -389,47 +503,64 @@ impl<'a, T: TableGenerator> BigTableWidget<'a, T> {
         Self { table, style }
     }
 
-    /// Compute the column constraints.
-    ///
-    /// Also return the first column after the headers, the last visible
-    /// column and the width of the headers including the trailing column
-    /// separator.
-    fn column_constraints(
-        &self,
-        inner_width: u16,
-        widths: &[u16],
-        offset: usize,
-    ) -> (Vec<Constraint>, usize, usize, u16) {
-        let headers_size = self.table.headers_size();
-        // Max column width hard-coded to half the line width.
-        let mut cc = ColumnConstraints::new(
-            inner_width,
-            widths.len(),
-            inner_width / 2,
-            self.style.column_spacing,
-        );
-        let mut start = offset;
-        let mut index = 0;
-        let mut headers_width = 0;
-        while index < widths.len() {
-            if index == headers_size.horizontal {
-                headers_width = cc.table_width() + cc.column_spacing;
-                index += offset;
-                if index >= widths.len() {
-                    log::error!(
-                        "first column index {index} exceeds the number of columns {}",
-                        widths.len()
-                    );
-                    index = widths.len() - 1;
-                }
-                start = index;
-            }
-            match cc.add_column(widths[index]) {
-                ColumnStatus::Truncated | ColumnStatus::Rejected => break,
-                ColumnStatus::Accepted => index += 1,
-            }
+    fn move_position(
+        position: usize,
+        last_position: usize,
+        page_length: usize,
+        scroll: Scroll,
+    ) -> usize {
+        match scroll {
+            Scroll::CurrentPosition => position,
+            Scroll::FirstPosition => 0,
+            Scroll::LastPosition => last_position,
+            Scroll::PreviousPosition => position.saturating_sub(1),
+            Scroll::NextPosition => cmp::min(last_position, position + 1),
+            Scroll::PreviousPage => position.saturating_sub(page_length),
+            Scroll::NextPage => cmp::min(last_position, position + page_length),
         }
-        (cc.constraints, start, index, headers_width)
+    }
+
+    fn new_zoom(
+        position: Option<usize>,
+        min_position: usize,
+        motion: &Motion,
+        visible_length: u16,
+        total_length: u16,
+    ) -> (Option<usize>, Zoom) {
+        let visible_length = visible_length as usize;
+        let total_length = total_length as usize;
+        let page_length = visible_length.div_ceil(2);
+        let (position, top) = match position {
+            Some(position) => {
+                let last_position = total_length.saturating_sub(1);
+                let position =
+                    Self::move_position(position, last_position, page_length, motion.scroll);
+                let top =
+                    if position < motion.position || position >= motion.position + visible_length {
+                        position.saturating_sub(page_length)
+                    } else {
+                        motion.position
+                    };
+                (Some(position), top)
+            }
+            None => {
+                let top = motion.position;
+                match motion.scroll {
+                    Scroll::PreviousPosition => (Some(top + visible_length.saturating_sub(1)), top),
+                    Scroll::NextPosition => (Some(cmp::max(top, min_position)), top),
+                    _ => {
+                        let last_position = total_length.saturating_sub(visible_length);
+                        let top =
+                            Self::move_position(top, last_position, page_length, motion.scroll);
+                        (None, top)
+                    }
+                }
+            }
+        };
+        (
+            position.map(|p| cmp::max(p, min_position)),
+            Zoom::new(top, visible_length, total_length),
+        )
     }
 }
 
@@ -441,18 +572,42 @@ impl<T: TableGenerator> StatefulWidget for BigTableWidget<'_, T> {
         Self: Sized,
     {
         let borders = BORDER_SIZE * 2;
-        let outter_dim = Size::new(area.width, area.height);
-        let inner_dim = Size::new(outter_dim.width - borders, outter_dim.height - borders);
         let widths = self.table.widths();
-        let headers_size = self.table.headers_size();
-        let (constraints, first, last, headers_width) =
-            self.column_constraints(inner_dim.width, widths, state.zoom.horizontal.position);
-        state.zoom.horizontal.visible_length = last - first;
-        state.zoom.vertical.visible_length =
-            (inner_dim.height as usize).saturating_sub(headers_size.vertical);
-        state.zoom.vertical.reframe();
-        let headers = self.table.top_headers(&state.zoom.horizontal);
-        let rows = self.style.apply(self.table.rows(state));
+        let column_spacing = self.style.column_spacing;
+        let Area {
+            horizontal: nheadcols,
+            vertical: nheadrows,
+        } = self.table.headers_size();
+        let headers_width = self.table.range_widths(0..nheadcols, column_spacing) + column_spacing;
+        let body_width = self
+            .table
+            .range_widths(nheadcols..widths.len(), column_spacing);
+        let visible_width = area
+            .width
+            .saturating_sub(borders)
+            .saturating_sub(headers_width);
+        let body_height = self.table.body_row_count() as u16;
+        let visible_height = area
+            .height
+            .saturating_sub(borders)
+            .saturating_sub(nheadrows as u16);
+        let (_, hzoom) =
+            Self::new_zoom(None, 0, &state.motion.horizontal, visible_width, body_width);
+        state.zoom.horizontal = hzoom;
+        let (selected_lineno, vzoom) = Self::new_zoom(
+            state.selected_lineno,
+            state.min_lineno,
+            &state.motion.vertical,
+            visible_height,
+            body_height,
+        );
+        state.selected_lineno = selected_lineno;
+        state.zoom.vertical = vzoom;
+        let clip = TableClip::new(&state, &widths, nheadcols, column_spacing);
+
+        let constraints = clip.constraints();
+        let headers = self.table.top_headers();
+        let rows = self.style.apply(self.table.rows(&clip));
 
         let table = {
             let table = Table::new(rows, constraints)
@@ -461,7 +616,7 @@ impl<T: TableGenerator> StatefulWidget for BigTableWidget<'_, T> {
             if headers.is_empty() {
                 table
             } else {
-                table.header(Row::new(headers).height(headers_size.vertical as u16))
+                table.header(Row::new(headers).height(nheadrows as u16))
             }
         };
         Widget::render(table, area, buf);
@@ -475,7 +630,7 @@ impl<T: TableGenerator> StatefulWidget for BigTableWidget<'_, T> {
                 .render(area, buf, &mut bar_state);
         }
         if let Some(mut bar_state) = state.zoom.vertical.scrollbar_state() {
-            let y = area.y + BORDER_SIZE + headers_size.vertical as u16;
+            let y = area.y + BORDER_SIZE + nheadrows as u16;
             let height = state.zoom.vertical.visible_length as u16;
             if state.zoom.vertical.total_length > 0 {
                 let area = Rect::new(area.x, y, area.width, height);
@@ -485,7 +640,8 @@ impl<T: TableGenerator> StatefulWidget for BigTableWidget<'_, T> {
                     .render(area, buf, &mut bar_state);
             }
         }
-        state.zoom.vertical.visible_length = inner_dim.height as usize;
+        state.motion.horizontal.current();
+        state.motion.vertical.current();
     }
 }
 
@@ -743,168 +899,202 @@ impl<'a, 'f, 'v> OptionalRenderer<'a, 'f, 'v> {
 #[cfg(test)]
 mod test {
 
-    use ratatui::{buffer::Buffer, layout::Constraint, layout::Rect, widgets::Widget};
-    use rstest::*;
-    use std::cmp;
-
-    use super::{
-        ColumnConstraints, ColumnStatus, GridPane, Pane, SingleScrollablePane, StackableWidget,
+    use ratatui::{
+        buffer::Buffer,
+        layout::{Alignment, Constraint, Rect},
+        text::Text,
+        widgets::Widget,
     };
+    use rstest::*;
+    use std::{borrow::Cow, cmp};
 
-    /// Create a column constraints object and feed it.
-    ///
-    /// A columns are alike except the first column.
-    fn new_column_constraints(
-        screen_width: u16,
-        max_col_width: u16,
+    use crate::display::term::types::{Area, MaxLength};
+
+    use super::{GridPane, Pane, SingleScrollablePane, StackableWidget, TableClip, Zoom};
+
+    const COLUMN_SPACING: u16 = 1;
+
+    /// Zoom and widths from a rows of strings.
+    fn new_zoom_and_widths(
+        rows: &[&[&'static str]],
+        position: usize,
+        screen_width: usize,
+        nheadcols: usize,
         column_spacing: u16,
-        ncols: usize,
-        first_column_width: u16,
-        column_width: u16,
-    ) -> (ColumnConstraints, ColumnStatus) {
-        let mut cc = ColumnConstraints::new(screen_width, max_col_width, column_spacing);
-        for width in [first_column_width]
+    ) -> (Area<Zoom>, Vec<u16>) {
+        let column_spacing = column_spacing as usize;
+        let mut mw = (0..rows[0].len())
+            .map(|_| MaxLength::from(0))
+            .collect::<Vec<_>>();
+        rows.iter()
+            .for_each(|row| row.iter().enumerate().for_each(|(i, s)| mw[i].check(s)));
+        let widths = mw.iter().map(MaxLength::len).collect::<Vec<_>>();
+        let body_widths = &widths[nheadcols..];
+        let total_width = body_widths.iter().sum::<u16>() as usize
+            + body_widths.len().saturating_sub(1) * column_spacing;
+        let visible_width = screen_width
+            - widths.iter().take(nheadcols).sum::<u16>() as usize
+            - nheadcols * column_spacing;
+        let clip = Area::new(
+            Zoom::new(position, visible_width, total_width),
+            Zoom::default(),
+        );
+        (clip, widths)
+    }
+
+    fn new_constraints(widths: &[u16]) -> Vec<Constraint> {
+        widths
             .iter()
-            .chain(vec![column_width; ncols - 1].iter())
-        {
-            match cc.add_column(*width) {
-                ColumnStatus::Accepted => (),
-                status => return (cc, status),
-            }
-        }
-        (cc, ColumnStatus::Accepted)
+            .copied()
+            .map(Constraint::Length)
+            .collect::<Vec<_>>()
     }
 
-    #[test]
-    fn test_column_constraints_underflow() {
-        // 0         1
-        // 01234567890123456789
-        // aaaaa bbbb bbbb
-        const SCREEN_WIDTH: u16 = 20;
-        const FIRST_COLUMN_WIDTH: u16 = 5;
-        const COLUMN_WIDTH: u16 = 4;
-        const COLUMN_SPACING: u16 = 1;
-        const NCOLS: usize = 3;
-        let (cc, status) = new_column_constraints(
-            SCREEN_WIDTH,
-            SCREEN_WIDTH,
-            COLUMN_SPACING,
-            NCOLS,
-            FIRST_COLUMN_WIDTH,
-            COLUMN_WIDTH,
-        );
-        assert!(matches!(status, ColumnStatus::Accepted));
-        const SPACED_COLUMN_WIDTH: u16 = COLUMN_WIDTH + COLUMN_SPACING;
-        const EXPECTED_WIDTH: u16 = FIRST_COLUMN_WIDTH + (NCOLS as u16 - 1) * SPACED_COLUMN_WIDTH;
-        assert_eq!(EXPECTED_WIDTH, cc.inner_width - cc.remaining_width);
-        assert_eq!(NCOLS, cc.constraints.len());
-        assert_eq!(Constraint::Length(FIRST_COLUMN_WIDTH), cc.constraints[0]);
-        assert_eq!(Constraint::Length(COLUMN_WIDTH), cc.constraints[1]);
-    }
+    /// 0         1
+    /// 01234567890123456789
+    /// abcde  fgh ijkl
+    /// ABC   DEFG   HI
+    const ROWS_5_4_4: &[&[&'static str]] = &[&["abcde", "fgh", "ijkl"], &["ABC", "DEFG", "HI"]];
 
-    #[test]
-    fn test_column_constraints_exact() {
-        // 0         1
-        // 01234567890123456789
-        // aaaaa bbbb bbbb bbbb
-        const SCREEN_WIDTH: u16 = 20;
-        const FIRST_COLUMN_WIDTH: u16 = 5;
-        const COLUMN_WIDTH: u16 = 4;
-        const COLUMN_SPACING: u16 = 1;
-        const NCOLS: usize = 4;
-        let (cc, status) = new_column_constraints(
-            SCREEN_WIDTH,
-            SCREEN_WIDTH,
-            COLUMN_SPACING,
-            NCOLS,
-            FIRST_COLUMN_WIDTH,
-            COLUMN_WIDTH,
-        );
-        assert!(matches!(status, ColumnStatus::Accepted));
-        const SPACED_COLUMN_WIDTH: u16 = COLUMN_WIDTH + COLUMN_SPACING;
-        let expected_width: u16 = FIRST_COLUMN_WIDTH + (NCOLS as u16 - 1) * SPACED_COLUMN_WIDTH;
-        const EXPECTED_NCOLS: usize = 4;
-        assert_eq!(expected_width, cc.inner_width);
-        assert_eq!(0, cc.remaining_width);
-        assert_eq!(EXPECTED_NCOLS, cc.constraints.len());
-        assert_eq!(Constraint::Length(FIRST_COLUMN_WIDTH), cc.constraints[0]);
-        assert_eq!(Constraint::Length(COLUMN_WIDTH), cc.constraints[1]);
-    }
+    /// 0         1
+    /// 01234567890123456789
+    /// abcde  fgh ijkl  mno
+    /// ABC   DEFG   HI JKLM
+    const ROWS_5_4_4_4: &[&[&'static str]] = &[
+        &["abcde", "fgh", "ijkl", "mno"],
+        &["ABC", "DEFG", "HI", "JKLM"],
+    ];
 
     #[rstest]
-    #[case(5, 5, 5, 2, true)]
-    #[case(6, 4, 5, 3, false)]
-    #[case(5, 7, 4, 3, false)]
-    fn test_column_constraints_overflow(
-        #[case] ncols: usize,
-        #[case] first_column_width: u16,
-        #[case] expected_ncols: usize,
-        #[case] expected_last_width: u16,
-        #[case] truncated: bool,
+    #[case(ROWS_5_4_4, &[5, 4, 4])]
+    #[case(ROWS_5_4_4_4, &[5, 4, 4, 4])]
+    fn test_constraints_without_headers_and_clip(
+        #[case] rows: &[&[&'static str]],
+        #[case] expected_constraints: &[u16],
     ) {
-        //    0         1
-        //    01234567890123456789
-        // #1 aaaaa bbb bbb bbb bbb
-        // #2 aaaa bbb bbb bbb bbb bbb
-        // #1 aaaaaaa bbb bbb bbb bbb
-        const SCREEN_WIDTH: u16 = 20;
-        const COLUMN_WIDTH: u16 = 3;
-        const COLUMN_SPACING: u16 = 1;
-        let (cc, status) = new_column_constraints(
-            SCREEN_WIDTH,
-            SCREEN_WIDTH,
-            COLUMN_SPACING,
-            ncols,
-            first_column_width,
-            COLUMN_WIDTH,
-        );
-        match status {
-            ColumnStatus::Truncated if truncated => (),
-            ColumnStatus::Rejected if !truncated => (),
-            status => panic!("invalid status {status:?}"),
+        const SCREEN_WIDTH: usize = 20;
+        const NHEADCOLS: usize = 0;
+        let (zoom, widths) = new_zoom_and_widths(rows, 0, SCREEN_WIDTH, NHEADCOLS, COLUMN_SPACING);
+        let tc = TableClip::new(&zoom, &widths, None, NHEADCOLS, COLUMN_SPACING);
+        let expected_constraints = new_constraints(expected_constraints);
+        let constraints = tc.constraints();
+        assert_eq!(expected_constraints, constraints);
+        for row in rows {
+            for (colnum, cell) in row.iter().enumerate() {
+                let (alignment, expected) = if colnum == 0 {
+                    (Alignment::Left, Text::from(*cell).left_aligned())
+                } else {
+                    (Alignment::Right, Text::from(*cell).right_aligned())
+                };
+                let value = tc
+                    .clip_cell(colnum, Cow::Borrowed(cell), alignment)
+                    .expect("not empty cell");
+                assert_eq!(expected, value);
+            }
         }
-        assert_eq!(SCREEN_WIDTH, cc.inner_width);
-        assert_eq!(0, cc.remaining_width);
-        assert_eq!(expected_ncols, cc.constraints.len());
-        assert_eq!(Constraint::Length(first_column_width), cc.constraints[0]);
-        assert_eq!(Constraint::Length(COLUMN_WIDTH), cc.constraints[1]);
-        assert_eq!(
-            Constraint::Length(expected_last_width),
-            cc.constraints.last().unwrap().clone()
-        );
     }
 
-    #[test]
-    fn test_column_constraints_max_col_width() {
-        // 0         1
-        // 01234567890123456789
-        // aaaaaaa bbb bbb bbb
-        const SCREEN_WIDTH: u16 = 20;
-        const MAX_COL_WIDTH: u16 = 7;
-        const FIRST_COLUMN_WIDTH: u16 = 12;
-        const COLUMN_WIDTH: u16 = 3;
-        const COLUMN_SPACING: u16 = 1;
-        const NCOLS: usize = 4;
-        let (cc, status) = new_column_constraints(
-            SCREEN_WIDTH,
-            MAX_COL_WIDTH,
-            COLUMN_SPACING,
-            NCOLS,
-            FIRST_COLUMN_WIDTH,
-            COLUMN_WIDTH,
-        );
-        assert!(
-            matches!(status, ColumnStatus::Accepted),
-            "invalid status {status:?}",
-        );
-        const EXPECTED_NCOLS: usize = 4;
-        assert_eq!(
-            SCREEN_WIDTH - COLUMN_SPACING,
-            cc.inner_width - cc.remaining_width
-        );
-        assert_eq!(EXPECTED_NCOLS, cc.constraints.len());
-        assert_eq!(Constraint::Length(MAX_COL_WIDTH), cc.constraints[0]);
-        assert_eq!(Constraint::Length(COLUMN_WIDTH), cc.constraints[1]);
+    /// 0         1              0         1              0         1
+    /// 01234567890123456789     01234567890123456789     01234567890123456789
+    /// abcde  fgh ijkl mnopqr   abcde fgh  ijkl mnopqr   abcde  fgh ijkl mnopqr   
+    /// ABC   DEFG   HI   JKLM   ABC   DEFG HI   JKLM      ABC  DEFG  HI   JKLM
+    const ROWS_5_4_4_5: &[&[&'static str]] = &[
+        &["abcde", "fgh", "ijkl", "mnopqr"],
+        &["ABC", "DEFG", "HI", "JKLM"],
+    ];
+
+    /// 0         1
+    /// 01234567890123456789
+    /// abcde  fgh ij klmnopqrs
+    /// ABC   DEFG HI   JKLMN
+    const ROWS_5_4_2_9: &[&[&'static str]] = &[
+        &["abcde", "fgh", "ij", "klmnopqrs"],
+        &["ABC", "DEFG", "HI", "JKLMN"],
+    ];
+
+    /// Columns truncated on the right.
+    #[rstest]
+    #[case(ROWS_5_4_4_5, &[5, 4, 4, 4], &["mnop", "JK"], Alignment::Right, None)]
+    #[case(ROWS_5_4_4_5, &[5, 4, 4, 4], &["mnop", "JKLM"], Alignment::Left, None)]
+    #[case(ROWS_5_4_2_9, &[5, 4, 2, 6], &["klmnop", "  JKLM"], Alignment::Center, Some(Alignment::Right))]
+    fn test_constraints_right_truncated_without_clip(
+        #[case] rows: &[&[&'static str]],
+        #[case] expected_constraints: &[u16],
+        #[case] expected_last_cells: &[&'static str],
+        #[case] last_cell_alignment: Alignment,
+        #[case] expected_cell_alignment: Option<Alignment>,
+    ) {
+        const SCREEN_WIDTH: usize = 20;
+        const NHEADCOLS: usize = 1;
+        let (zoom, widths) = new_zoom_and_widths(rows, 0, SCREEN_WIDTH, NHEADCOLS, COLUMN_SPACING);
+        let tc = TableClip::new(&zoom, &widths, None, NHEADCOLS, COLUMN_SPACING);
+        let expected_constraints = new_constraints(expected_constraints);
+        let constraints = tc.constraints();
+        assert_eq!(expected_constraints, constraints);
+        let expected_alignment = expected_cell_alignment.unwrap_or(last_cell_alignment);
+        for (row, expected_last_cell) in rows.iter().zip(expected_last_cells) {
+            let colnum = row.len() - 1;
+            let cell = row[colnum];
+            let colnum = colnum - NHEADCOLS;
+            let expected = Text::from(*expected_last_cell).alignment(expected_alignment);
+            let value = tc
+                .clip_cell(colnum, Cow::Borrowed(cell), last_cell_alignment)
+                .expect("not empty cell");
+            assert_eq!(expected, value);
+        }
+    }
+
+    /// 0         1              0         1              0         1
+    /// 01234567890123456789     01234567890123456789     01234567890123456789
+    /// abcde h  ijklm nopqrst   abcde gh ijklm nopqrst   abcde h  ijkl mnopqrst   
+    /// ABC   FG HI    JKLM        ABC FG  HI      JKLM   ABC   FG  HI    JKLM
+    const ROWS_5_4_5_7: &[&[&'static str]] = &[
+        &["abcde", "fgh", "ijklm", "nopqrst"],
+        &["ABC", "DEFG", "HI", "JKLM"],
+    ];
+
+    /// Columns truncated on the left.
+    #[rstest]
+    #[case(ROWS_5_4_5_7, 2, Alignment::Left, &[5, 2, 5, 5], (&["h", "FG"], Alignment::Left), (&["nopqr", "JKLM"], Alignment::Left))]
+    #[case(ROWS_5_4_5_7, 2, Alignment::Right, &[5, 2, 5, 5], (&["gh", "FG"], Alignment::Right), (&["nopqr", "JK"], Alignment::Right))]
+    fn test_constraints_with_clip(
+        #[case] rows: &[&[&'static str]],
+        #[case] position: usize,
+        #[case] cell_alignment: Alignment,
+        #[case] expected_constraints: &[u16],
+        #[case] expected_first_cells: (&[&'static str; 2], Alignment),
+        #[case] expected_last_cells: (&[&'static str; 2], Alignment),
+    ) {
+        const SCREEN_WIDTH: usize = 20;
+        const NHEADCOLS: usize = 1;
+        let (zoom, widths) =
+            new_zoom_and_widths(rows, position, SCREEN_WIDTH, NHEADCOLS, COLUMN_SPACING);
+        let tc = TableClip::new(&zoom, &widths, None, NHEADCOLS, COLUMN_SPACING);
+        let expected_constraints = new_constraints(expected_constraints);
+        let constraints = tc.constraints();
+        assert_eq!(expected_constraints, constraints);
+        let (expected_first_cells, expected_first_alignment) = expected_first_cells;
+        for (row, expected_first_cell) in rows.iter().zip(expected_first_cells) {
+            let colnum = 1;
+            let cell = row[colnum];
+            let colnum = colnum - NHEADCOLS;
+            let expected = Text::from(*expected_first_cell).alignment(expected_first_alignment);
+            let value = tc
+                .clip_cell(colnum, Cow::Borrowed(cell), cell_alignment)
+                .expect("not empty cell");
+            assert_eq!(expected, value);
+        }
+        let (expected_last_cells, expected_last_alignment) = expected_last_cells;
+        for (row, expected_last_cell) in rows.iter().zip(expected_last_cells) {
+            let colnum = row.len() - 1;
+            let cell = row[colnum];
+            let colnum = colnum - NHEADCOLS;
+            let expected = Text::from(*expected_last_cell).alignment(expected_last_alignment);
+            let value = tc
+                .clip_cell(colnum, Cow::Borrowed(cell), cell_alignment)
+                .expect("not empty cell");
+            assert_eq!(expected, value);
+        }
     }
 
     #[derive(Debug)]

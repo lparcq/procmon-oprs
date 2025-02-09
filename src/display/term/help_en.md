@@ -20,6 +20,8 @@
 
 ## Marking
 
+The cursor appears when hitting the up or down arrows.
+
 The space bar toggles the mark on:
 1. the matched lines if there is a search,
 2. the line under the cursor otherwise.

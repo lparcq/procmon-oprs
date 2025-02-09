@@ -50,11 +50,11 @@ mod types;
 
 use input::{menu, Action, BookmarkAction, KeyMap, MenuEntry, SearchEdit};
 use panes::{
-    BigTableState, BigTableStateGenerator, BigTableWidget, FieldsWidget, GridPane, MarkdownWidget,
-    OneLineWidget, OptionalRenderer, Pane, SingleScrollablePane, TableGenerator, TableStyle, Zoom,
+    BigTableState, BigTableWidget, FieldsWidget, GridPane, MarkdownWidget, OneLineWidget,
+    OptionalRenderer, Pane, SingleScrollablePane, TableGenerator, TableStyle, Zoom,
 };
 use tables::{EnvironmentTable, LimitsTable, ProcessTreeTable, Styles, TreeData};
-use types::{Area, UnboundedArea};
+use types::{Area, Motion};
 
 const HELP: &str = include_str!("help_en.md");
 
@@ -89,24 +89,6 @@ impl TryFrom<&Action> for Interaction {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-enum VerticalScroll {
-    Line(usize),
-    Block,
-}
-
-impl Into<u16> for VerticalScroll {
-    // From<u16> cannot be implemented since there is no way to tell if it's a
-    // line or a block.
-    #![allow(clippy::from_over_into)]
-    fn into(self) -> u16 {
-        match self {
-            Self::Line(value) => value as u16,
-            Self::Block => 1u16,
-        }
-    }
-}
-
 macro_rules! format_metric {
     ($metrics:expr, $field:ident) => {
         TerminalDevice::format_option($metrics.as_ref().and_then(|m| m.$field.strings().next()))
@@ -123,18 +105,8 @@ pub struct TerminalDevice<'t> {
     terminal: RefCell<Terminal<TermionBackend<Box<AlternateScreen<RawTerminal<io::Stdout>>>>>>,
     /// Table tree data
     tree_data: Rc<TreeData<'t>>,
-    /// Horizontal and vertical offset
-    table_offset: UnboundedArea,
-    /// Pane offset (except for the table)
-    pane_offset: u16,
-    /// Number of lines to scroll vertically up and down
-    vertical_scroll: VerticalScroll,
-    /// Horizontal and vertical overflow (whether the table is bigger than the screen)
-    overflow: Area<bool>,
-    /// Slots where limits are displayed under the metric (only for raw metrics).
-    limit_slots: Vec<bool>,
-    /// Number of available lines to display the table
-    body_height: usize,
+    /// Position in the panes. Last position for the currently visible pane.
+    motions: Vec<Area<Motion>>,
     /// Filter
     filter: ProcessFilter,
     /// Menu
@@ -156,12 +128,7 @@ impl TerminalDevice<'_> {
             events: EventChannel::new(),
             terminal,
             tree_data: Rc::new(TreeData::new(Styles::new(theme))),
-            table_offset: Default::default(),
-            pane_offset: 0,
-            vertical_scroll: VerticalScroll::Line(1),
-            overflow: Area::default(),
-            limit_slots: Vec::new(),
-            body_height: 0,
+            motions: vec![Area::default()],
             filter: ProcessFilter::default(),
             menu: menu(),
             pane_kind: PaneKind::Main,
@@ -223,19 +190,56 @@ impl TerminalDevice<'_> {
         }
     }
 
-    /// Clear bookmarks and set bookmark action if the condition is true.
-    fn clear_and_set_bookmarks_action_if(&mut self, action: BookmarkAction, cond: bool) {
-        if let Some(data) = Rc::get_mut(&mut self.tree_data) {
-            data.bookmarks.clear_marks();
-            if cond {
-                data.bookmarks.set_action(action);
-            }
-        }
+    fn last_motions(&mut self) -> &mut Area<Motion> {
+        self.motions.last_mut().unwrap()
     }
 
-    /// Clear bookmarks and set bookmark action.
-    fn clear_and_set_bookmarks_action(&mut self, action: BookmarkAction) {
-        self.clear_and_set_bookmarks_action_if(action, true);
+    fn goto_top(&mut self) {
+        self.last_motions().vertical.first();
+    }
+
+    fn goto_bottom(&mut self) {
+        self.last_motions().vertical.last();
+    }
+
+    fn goto_left(&mut self) {
+        self.last_motions().horizontal.first();
+    }
+
+    fn goto_right(&mut self) {
+        self.last_motions().horizontal.last();
+    }
+
+    fn scroll_left(&mut self) {
+        self.last_motions().horizontal.previous();
+    }
+
+    fn scroll_right(&mut self) {
+        self.last_motions().horizontal.next();
+    }
+
+    fn scroll_up(&mut self) {
+        self.last_motions().vertical.previous();
+    }
+
+    fn scroll_down(&mut self) {
+        self.last_motions().vertical.next();
+    }
+
+    fn _scroll_page_left(&mut self) {
+        self.last_motions().horizontal.previous_page();
+    }
+
+    fn _scroll_page_right(&mut self) {
+        self.last_motions().horizontal.next_page();
+    }
+
+    fn scroll_page_up(&mut self) {
+        self.last_motions().vertical.previous_page();
+    }
+
+    fn scroll_page_down(&mut self) {
+        self.last_motions().vertical.next_page();
     }
 
     /// Execute an interactive action.
@@ -247,16 +251,13 @@ impl TerminalDevice<'_> {
             | Action::ChangeScope
             | Action::SelectParent
             | Action::SelectRootPid
+            | Action::SwitchBack
             | Action::SwitchToHelp
             | Action::SwitchToDetails
             | Action::SwitchToLimits
             | Action::SwitchToEnvironment
             | Action::UnselectRootPid
             | Action::Quit => (),
-            Action::SwitchBack => {
-                self.set_keymap(KeyMap::Main);
-                self.pane_offset = 0;
-            }
             Action::Filters => self.set_keymap(KeyMap::Filters),
             Action::FilterNone => {
                 self.filter = ProcessFilter::None;
@@ -288,44 +289,23 @@ impl TerminalDevice<'_> {
                     }
                 }
             }
-            Action::ScrollLeft => self.table_offset.scroll_left(1),
-            Action::ScrollRight => {
-                if self.overflow.horizontal {
-                    self.table_offset.scroll_right(1);
-                }
-            }
-            Action::ScrollPageUp => match self.pane_kind {
-                PaneKind::Main => self.clear_and_set_bookmarks_action(BookmarkAction::PreviousPage),
-                _ => {
-                    self.pane_offset = self.pane_offset.saturating_sub(self.vertical_scroll.into());
-                }
-            },
-            Action::ScrollPageDown => match self.pane_kind {
-                PaneKind::Main => self.clear_and_set_bookmarks_action_if(
-                    BookmarkAction::NextPage,
-                    self.overflow.vertical,
-                ),
-                _ => {
-                    self.pane_offset = self.pane_offset.saturating_add(self.vertical_scroll.into());
-                }
-            },
-            Action::ScrollLineUp => {
-                self.clear_and_set_bookmarks_action(BookmarkAction::PreviousLine)
-            }
-            Action::ScrollLineDown => self.clear_and_set_bookmarks_action(BookmarkAction::NextLine),
-            Action::GotoTableTop => void!(self.set_bookmarks_action(BookmarkAction::FirstLine)),
-            Action::GotoTableBottom => void!(self.set_bookmarks_action(BookmarkAction::LastLine)),
-            Action::GotoTableLeft => self.table_offset.horizontal_home(),
-            Action::GotoTableRight => self.table_offset.horizontal_end(),
+            Action::ScrollLeft => self.scroll_left(),
+            Action::ScrollRight => self.scroll_right(),
+            Action::ScrollPageUp => self.scroll_page_up(),
+            Action::ScrollPageDown => self.scroll_page_down(),
+            Action::ScrollLineUp => self.scroll_up(),
+            Action::ScrollLineDown => self.scroll_down(),
+            Action::GotoTableTop => self.goto_top(),
+            Action::GotoTableBottom => self.goto_bottom(),
+            Action::GotoTableLeft => self.goto_left(),
+            Action::GotoTableRight => self.goto_right(),
             Action::SearchEnter => {
-                self.set_keymap(KeyMap::IncrementalSearch);
                 if let Some(data) = Rc::get_mut(&mut self.tree_data) {
                     data.bookmarks.incremental_search();
                 }
             }
             Action::SearchExit => {
                 self.terminal.borrow_mut().hide_cursor()?;
-                self.set_keymap(KeyMap::Main);
                 if let Some(data) = Rc::get_mut(&mut self.tree_data) {
                     data.bookmarks.fixed_search();
                 }
@@ -361,33 +341,19 @@ impl TerminalDevice<'_> {
             Action::FilterNone | Action::FilterUser | Action::FilterActive => {
                 Interaction::Filter(self.filter)
             }
-            Action::SelectRootPid => match self.tree_data.bookmarks.selected() {
-                Some(selected) => Interaction::SelectRootPid(Some(selected.pid)),
+            Action::SelectRootPid => match self.tree_data.bookmarks.selected_pid() {
+                Some(selected) => Interaction::SelectRootPid(Some(*selected)),
                 None => Interaction::None,
             },
             Action::UnselectRootPid => Interaction::SelectRootPid(None),
-            Action::SwitchToDetails => match self.tree_data.bookmarks.selected() {
-                Some(selected) => Interaction::SelectPid(selected.pid),
+            Action::SwitchToDetails => match self.tree_data.bookmarks.selected_pid() {
+                Some(selected) => Interaction::SelectPid(*selected),
                 None => Interaction::None,
             },
             Action::SwitchToLimits => Interaction::SwitchTo(DataKind::Limits),
             Action::SwitchToEnvironment => Interaction::SwitchTo(DataKind::Environment),
             _ => Interaction::None,
         })
-    }
-
-    fn top(&self, line_count: usize) -> usize {
-        let top = self
-            .table_offset
-            .vertical
-            .value()
-            .copied()
-            .unwrap_or(line_count);
-        if top >= line_count {
-            line_count.saturating_sub(self.body_height)
-        } else {
-            top
-        }
     }
 
     fn search_menu<'t>(pattern: String) -> OneLineWidget<'t> {
@@ -402,83 +368,135 @@ impl TerminalDevice<'_> {
         OneLineWidget::with_menu(self.menu.iter(), self.keymap)
     }
 
-    fn render_tree(&mut self, collector: &Collector) -> anyhow::Result<()> {
-        self.pane_kind = PaneKind::Main;
+    /// Check if the keymap for the main pane is correct.
+    fn fix_main_keymap(&self) -> Option<KeyMap> {
+        let is_incremental_search = self.tree_data.bookmarks.is_incremental_search();
+        match self.keymap {
+            KeyMap::IncrementalSearch if is_incremental_search => None,
+            KeyMap::Main if !is_incremental_search => None,
+            KeyMap::Filters => None,
+            _ if is_incremental_search => {
+                log::error!("{}: wrong keymap for incremental search", self.keymap);
+                Some(KeyMap::IncrementalSearch)
+            }
+            _ => {
+                log::error!("{}: wrong keymap", self.keymap);
+                Some(KeyMap::Main)
+            }
+        }
+    }
 
-        let metric_headers_len = self.tree_data.metric_headers.len();
-        let line_count = collector.line_count();
-        let top = self.top(line_count);
-        let voffset = Rc::get_mut(&mut self.tree_data)
-            .map(|data| {
-                data.bookmarks.execute(
-                    &mut data.occurrences,
-                    collector.lines(),
-                    top,
-                    self.body_height,
-                )
-            })
-            .unwrap_or(0);
-        self.table_offset.set_vertical(voffset);
-        self.table_offset.set_bounds(
-            metric_headers_len.saturating_sub(1),
-            line_count.saturating_sub(self.body_height),
-        );
+    /// Transition between panes.
+    ///
+    /// Change the keymap and push or pop the position if necessary.
+    fn transition(&mut self, kind: PaneKind) {
+        enum Update {
+            None,
+            Push,
+            Pop,
+        }
+        fn mismatch(current: PaneKind, new: PaneKind) -> (Option<KeyMap>, Update) {
+            log::error!("cannot move from {:?} to {:?}", current, new);
+            (None, Update::None)
+        }
+        let (keymap, direction) = match self.pane_kind {
+            PaneKind::Main => match kind {
+                PaneKind::Main => (self.fix_main_keymap(), Update::None),
+                PaneKind::Help => (Some(KeyMap::Help), Update::Push),
+                PaneKind::Process(DataKind::Details) => (Some(KeyMap::Details), Update::Push),
+                _ => mismatch(self.pane_kind, kind),
+            },
+            PaneKind::Help => match kind {
+                PaneKind::Help => (None, Update::None),
+                PaneKind::Main => (Some(KeyMap::Main), Update::Pop),
+                _ => mismatch(self.pane_kind, kind),
+            },
+            PaneKind::Process(DataKind::Details) => match kind {
+                PaneKind::Process(DataKind::Details) => (None, Update::None),
+                PaneKind::Process(DataKind::Environment) => (Some(KeyMap::Process), Update::Push),
+                PaneKind::Main => (Some(KeyMap::Main), Update::Pop),
+                _ => mismatch(self.pane_kind, kind),
+            },
+            PaneKind::Process(DataKind::Environment) => match kind {
+                PaneKind::Process(DataKind::Environment) => (None, Update::None),
+                PaneKind::Process(DataKind::Details) => (Some(KeyMap::Details), Update::Pop),
+                _ => mismatch(self.pane_kind, kind),
+            },
+            PaneKind::Process(DataKind::Limits) => match kind {
+                PaneKind::Process(DataKind::Limits) => (None, Update::None),
+                PaneKind::Process(DataKind::Details) => (Some(KeyMap::Details), Update::Pop),
+                _ => mismatch(self.pane_kind, kind),
+            },
+            PaneKind::Process(_) => todo!("not implemented"),
+        };
+        if let Some(keymap) = keymap {
+            self.set_keymap(keymap);
+        }
+        match direction {
+            Update::None => (),
+            Update::Push => self.motions.push(Area::default()),
+            Update::Pop => void!(self.motions.pop()),
+        }
+        self.pane_kind = kind;
+    }
+
+    fn render_tree(&mut self, collector: &Collector) -> anyhow::Result<()> {
         let column_spacing = self.tree_data.styles.column_spacing;
         let even_row_style = self.tree_data.styles.even_row;
         let odd_row_style = self.tree_data.styles.odd_row;
         let status_style = self.tree_data.styles.status;
-        let mut body_height = 0;
         let status_bar = OneLineWidget::new(Text::from(self.status_bar()), status_style, None);
+        let mut motion = self.motions.pop().expect("motions for process tree");
+        let selected_lineno = Rc::get_mut(&mut self.tree_data).and_then(|data| {
+            data.bookmarks.selected_line(
+                motion.vertical.scroll,
+                &mut data.occurrences,
+                collector.lines(),
+            )
+        });
         let (menu, show_cursor) = match self.tree_data.incremental_search_pattern() {
             Some(pattern) => (Self::search_menu(pattern), true),
             None => (self.default_menu(), false),
         };
 
-        let table = ProcessTreeTable::new(collector, Rc::clone(&self.tree_data));
-        let main = BigTableWidget::new(
-            &table,
-            TableStyle::new(column_spacing, even_row_style, odd_row_style),
-        );
-
-        let mut new_overflow = Area::default();
-        self.terminal.borrow_mut().draw(|frame| {
-            let area = frame.area();
-            let mut rects = SingleScrollablePane::new(area, 3)
-                .with(&status_bar)
-                .with(&menu)
-                .build();
-
-            let mut state = BigTableState::new(
-                Zoom::new(
-                    self.table_offset.horizontal.value_or_zero(),
-                    0,
-                    table.body_column_count(),
-                ),
-                Zoom::new(
-                    self.table_offset.vertical.value_or_zero(),
-                    0,
-                    table.body_row_count(),
-                ),
+        let mut selected_pid = None;
+        {
+            let table = ProcessTreeTable::new(collector, Rc::clone(&self.tree_data));
+            let main = BigTableWidget::new(
+                &table,
+                TableStyle::new(column_spacing, even_row_style, odd_row_style),
             );
-            let mut cursor = if show_cursor {
-                Some(Position::new(0, area.y + area.height - 1))
-            } else {
-                None
-            };
-            let mut r = OptionalRenderer::new(frame, &mut rects);
-            r.render_stateful_widget(main, &mut state);
-            r.render_widget(status_bar);
-            r.render_stateful_widget(menu, &mut cursor);
-            let zoom = state.zoom;
-            body_height = zoom.vertical.visible_length - table.headers_size().vertical;
-            new_overflow = Area::new(!zoom.horizontal.at_end(), !zoom.vertical.at_end());
-            if let Some(cursor) = cursor {
-                frame.set_cursor_position(cursor);
+            self.terminal.borrow_mut().draw(|frame| {
+                let area = frame.area();
+                let mut rects = SingleScrollablePane::new(area, 3)
+                    .with(&status_bar)
+                    .with(&menu)
+                    .build();
+
+                let mut state = BigTableState::new(&motion, selected_lineno, 1);
+                let mut cursor = if show_cursor {
+                    Some(Position::new(0, area.y + area.height - 1))
+                } else {
+                    None
+                };
+                let mut r = OptionalRenderer::new(frame, &mut rects);
+                r.render_stateful_widget(main, &mut state);
+                r.render_widget(status_bar);
+                r.render_stateful_widget(menu, &mut cursor);
+                if let Some(cursor) = cursor {
+                    frame.set_cursor_position(cursor);
+                }
+                motion = state.motion();
+                selected_pid = *table.selected_pid().borrow();
+            })?;
+        }
+        self.motions.push(motion);
+        if let Some(selected_pid) = selected_pid {
+            match Rc::get_mut(&mut self.tree_data) {
+                Some(data) => data.bookmarks.select_pid(selected_pid),
+                None => log::error!("cannot record selected PID {selected_pid}"),
             }
-        })?;
-        self.overflow = new_overflow;
-        self.vertical_scroll = VerticalScroll::Line(body_height.div_ceil(2));
-        self.body_height = body_height;
+        }
         Ok(())
     }
 
@@ -486,7 +504,7 @@ impl TerminalDevice<'_> {
     where
         W: StatefulWidget<State = Zoom>,
     {
-        let mut state = Zoom::with_position(self.pane_offset as usize);
+        let mut state = Zoom::with_position(self.motions.last().unwrap().vertical.position);
         let menu = self.default_menu();
 
         self.terminal.borrow_mut().draw(|frame| {
@@ -498,13 +516,13 @@ impl TerminalDevice<'_> {
             r.render_stateful_widget(widget, &mut state);
             r.render_widget(menu);
         })?;
-        self.pane_offset = state.position as u16;
-        self.vertical_scroll = VerticalScroll::Line(state.visible_length.div_ceil(2));
+        self.motions
+            .last_mut()
+            .map(|p| p.vertical.position = state.position);
         Ok(())
     }
 
     fn render_help(&mut self) -> anyhow::Result<()> {
-        self.pane_kind = PaneKind::Help;
         self.render_scrollable_pane(MarkdownWidget::new("OPRS", HELP))
     }
 
@@ -516,8 +534,7 @@ impl TerminalDevice<'_> {
     }
 
     fn render_details(&mut self, details: &ProcessDetails) -> anyhow::Result<()> {
-        self.pane_kind = PaneKind::Process(DataKind::Details);
-        let offset = self.pane_offset;
+        let offset = self.motions.last().unwrap().vertical.position;
         let pinfo = details.process();
         let cmdline = pinfo.cmdline();
         let metrics = details.metrics();
@@ -590,38 +607,38 @@ impl TerminalDevice<'_> {
             r.render_widget(Clear);
             r.render_widget(menu);
         })?;
-        if self.pane_offset >= block_count {
-            self.pane_offset = block_count.saturating_sub(1);
+        if offset >= block_count {
+            self.motions
+                .last_mut()
+                .map(|p| p.horizontal.position = block_count.saturating_sub(1));
         }
-        self.vertical_scroll = VerticalScroll::Block; // scrolling by block not by line.
         Ok(())
     }
 
     fn render_table<T>(&mut self, table: T) -> anyhow::Result<()>
     where
-        T: BigTableStateGenerator + TableGenerator,
+        T: TableGenerator,
     {
         let column_spacing = self.tree_data.styles.column_spacing;
         let even_row_style = self.tree_data.styles.even_row;
         let odd_row_style = self.tree_data.styles.odd_row;
+        let mut motion = self.motions.pop().expect("motions for table");
         let menu = self.default_menu();
         let main = BigTableWidget::new(
             &table,
             TableStyle::new(column_spacing, even_row_style, odd_row_style),
         );
 
-        let mut inner_height = 0;
         self.terminal.borrow_mut().draw(|frame| {
             let area = frame.area();
             let mut rects = SingleScrollablePane::new(area, 2).with(&menu).build();
             let mut r = OptionalRenderer::new(frame, &mut rects);
-            let mut state = table.state();
-            state.zoom.vertical.position = self.pane_offset as usize;
+            let mut state = BigTableState::with_motion(self.motions.last().unwrap());
             r.render_stateful_widget(main, &mut state);
             r.render_widget(menu);
-            inner_height = state.zoom.vertical.visible_length;
+            motion = state.motion();
         })?;
-        self.vertical_scroll = VerticalScroll::Line(inner_height.div_ceil(2));
+        self.motions.push(motion);
         Ok(())
     }
 
@@ -640,7 +657,6 @@ impl TerminalDevice<'_> {
     }
 
     fn render_process(&mut self, kind: DataKind, process: &Process) -> anyhow::Result<()> {
-        self.pane_kind = PaneKind::Process(kind);
         match kind {
             DataKind::Limits => match process.limits() {
                 Ok(limits) => self.render_table(LimitsTable::new(limits)),
@@ -667,7 +683,6 @@ impl DisplayDevice for TerminalDevice<'_> {
                 .collect::<Vec<String>>();
             if last_id.is_none() || last_id.unwrap() != id {
                 last_id = Some(id);
-                self.limit_slots.push(true);
             } else {
                 let name = format!(
                     "{} ({})",
@@ -680,7 +695,6 @@ impl DisplayDevice for TerminalDevice<'_> {
                     }
                 );
                 header.push(name);
-                self.limit_slots.push(false);
             }
             if let Some(data) = Rc::get_mut(&mut self.tree_data) {
                 data.metric_headers.push(Text::from(
@@ -703,36 +717,15 @@ impl DisplayDevice for TerminalDevice<'_> {
 
     /// Render the current pane.
     fn render(&mut self, kind: PaneKind, data: PaneData, _redraw: bool) -> anyhow::Result<()> {
+        self.transition(kind);
         match (kind, data) {
-            (PaneKind::Main, PaneData::Collector(collector)) => {
-                let is_incremental_search = self.tree_data.bookmarks.is_incremental_search();
-                match self.keymap {
-                    KeyMap::IncrementalSearch if is_incremental_search => (),
-                    KeyMap::Main if !is_incremental_search => (),
-                    KeyMap::Filters => (),
-                    _ if is_incremental_search => {
-                        log::error!("{}: wrong keymap for incremental search", self.keymap);
-                        self.set_keymap(KeyMap::IncrementalSearch);
-                    }
-                    _ => {
-                        log::error!("{}: wrong keymap", self.keymap);
-                        self.set_keymap(KeyMap::Main);
-                    }
-                }
-                self.render_tree(collector)
-            }
+            (PaneKind::Main, PaneData::Collector(collector)) => self.render_tree(collector),
             (PaneKind::Process(DataKind::Details), PaneData::Details(details)) => {
-                self.set_keymap(KeyMap::Details);
                 self.render_details(details)
             }
-            (PaneKind::Process(kind), PaneData::Process(proc)) => {
-                self.set_keymap(KeyMap::Process);
-                self.render_process(kind, proc)
-            }
-            (PaneKind::Help, _) => {
-                self.set_keymap(KeyMap::Help);
-                self.render_help()
-            }
+            (PaneKind::Process(kind), PaneData::Process(proc)) => self.render_process(kind, proc),
+            (PaneKind::Help, _) => self.render_help(),
+
             (kind, _) => panic!("{kind:?}: invalid pane kind or data"),
         }
     }

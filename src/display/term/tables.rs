@@ -25,6 +25,8 @@ use ratatui::{
     widgets::Cell,
 };
 use std::{
+    borrow::Cow,
+    cell::RefCell,
     cmp::Ordering,
     collections::{BTreeSet, HashMap},
     ffi::OsString,
@@ -33,7 +35,7 @@ use std::{
 
 use super::{
     input::Bookmarks,
-    panes::{BigTableState, BigTableStateGenerator, TableGenerator, Zoom},
+    panes::{TableClip, TableGenerator},
     types::{Area, MaxLength},
 };
 
@@ -254,9 +256,7 @@ impl TreeData<'_> {
 
     /// Status of a process.
     fn pid_status(&self, pid: pid_t) -> PidStatus {
-        if self.bookmarks.is_selected(pid) {
-            PidStatus::Selected
-        } else if self.occurrences.contains(&pid) {
+        if self.occurrences.contains(&pid) {
             PidStatus::Matching
         } else if self.bookmarks.is_marked(pid) {
             PidStatus::Marked
@@ -280,6 +280,9 @@ pub(crate) struct ProcessTreeTable<'a, 'b, 't> {
     widths: Vec<u16>,
     /// Indentation
     indents: Vec<usize>,
+    /// Selected PID that must move to a next or previous page.
+    #[getset(get = "pub")]
+    selected_pid: RefCell<Option<pid_t>>,
 }
 
 impl<'a, 'b, 't> ProcessTreeTable<'a, 'b, 't> {
@@ -322,17 +325,8 @@ impl<'a, 'b, 't> ProcessTreeTable<'a, 'b, 't> {
             data,
             widths: widths.iter().map(|ml| ml.len()).collect::<Vec<u16>>(),
             indents,
+            selected_pid: RefCell::new(None),
         }
-    }
-
-    /// Number of columns in the body.
-    pub(crate) fn body_column_count(&self) -> usize {
-        self.data.metric_headers.len()
-    }
-
-    /// Number of rows in the body.
-    pub(crate) fn body_row_count(&self) -> usize {
-        self.collector.line_count()
     }
 }
 
@@ -341,7 +335,7 @@ impl TableGenerator for ProcessTreeTable<'_, '_, '_> {
         self.headers_size
     }
 
-    fn top_headers(&self, zoom: &Zoom) -> Vec<Cell> {
+    fn top_headers(&self) -> Vec<Cell> {
         Self::FIXED_HEADERS
             .iter()
             .map(|s| lcell!(*s))
@@ -349,49 +343,55 @@ impl TableGenerator for ProcessTreeTable<'_, '_, '_> {
                 self.data
                     .metric_headers
                     .iter()
-                    .skip(zoom.position)
-                    .take(zoom.visible_length)
                     .map(|text| Cell::from(text.clone().alignment(Alignment::Center))),
             )
             .collect::<Vec<Cell>>()
     }
 
-    fn rows(&self, state: &BigTableState) -> Vec<Vec<Cell>> {
+    fn rows(&self, clip: &TableClip<'_, '_>) -> Vec<Vec<Cell>> {
+        let offset = clip.zoom().vertical.position;
+        let height = clip.zoom().vertical.visible_length;
         self.collector
             .lines()
-            .skip(state.zoom.vertical.position)
-            .take(state.zoom.vertical.visible_length)
+            .skip(offset)
+            .take(height)
             .enumerate()
             .map(|(n, ps)| {
-                let pid_status = self.data.pid_status(ps.pid());
+                let pid = ps.pid();
+                let pid_status = match clip.selected_lineno() {
+                    Some(lineno) if lineno == offset + n => {
+                        *self.selected_pid.borrow_mut() = Some(pid);
+                        PidStatus::Selected
+                    }
+                    _ => self.data.pid_status(pid),
+                };
                 let name = {
                     let name = ps.name();
                     format!("{:>width$}", name, width = self.indents[n] + name.len())
                 };
                 let name_style = self.data.styles.name_style(pid_status);
+                let mut i = 0;
                 vec![
                     Cell::from(name).style(name_style),
-                    rcell!(ps.pid().to_string()),
+                    rcell!(pid.to_string()),
                     rcell!(ps.state().to_string()),
                 ]
                 .drain(..)
-                .chain(
-                    ps.samples()
-                        .flat_map(|sample| {
-                            izip!(sample.strings(), sample.trends()).map(|(value, trend)| {
-                                Cell::from(
-                                    Text::from(value.as_str())
-                                        .style(self.data.styles.trend_style(trend))
-                                        .alignment(Alignment::Right),
-                                )
-                            })
-                        })
-                        .skip(state.zoom.horizontal.position)
-                        .take(state.zoom.horizontal.visible_length),
-                )
+                .chain(ps.samples().flat_map(|sample| {
+                    izip!(sample.strings(), sample.trends()).filter_map(move |(value, trend)| {
+                        let colnum = i;
+                        i += 1;
+                        clip.clip_cell(colnum, Cow::Borrowed(value.as_str()), Alignment::Right)
+                            .map(|t| Cell::from(t.style(self.data.styles.trend_style(trend))))
+                    })
+                }))
                 .collect::<Vec<Cell>>()
             })
             .collect::<Vec<Vec<Cell>>>()
+    }
+
+    fn body_row_count(&self) -> usize {
+        self.collector.line_count()
     }
 
     fn widths(&self) -> &[u16] {
@@ -479,20 +479,12 @@ impl LimitsTable {
     }
 }
 
-impl BigTableStateGenerator for LimitsTable {
-    fn state(&self) -> BigTableState {
-        let hlen = self.widths.len() - 1;
-        let vlen = self.limits.len();
-        BigTableState::new(Zoom::new(0, 0, hlen), Zoom::new(0, 0, vlen))
-    }
-}
-
 impl TableGenerator for LimitsTable {
     fn headers_size(&self) -> Area<usize> {
         Area::new(1, 1)
     }
 
-    fn top_headers(&self, zoom: &Zoom) -> Vec<Cell> {
+    fn top_headers(&self) -> Vec<Cell> {
         let bold = Style::default().bold();
         self.headers
             .iter()
@@ -508,25 +500,30 @@ impl TableGenerator for LimitsTable {
                         .bold(),
                 )
             })
-            .skip(zoom.position)
             .collect::<Vec<Cell>>()
     }
 
-    fn rows(&self, state: &BigTableState) -> Vec<Vec<Cell>> {
+    fn rows(&self, clip: &TableClip<'_, '_>) -> Vec<Vec<Cell>> {
+        let vzoom = &clip.zoom().vertical;
         self.limits
             .iter()
-            .skip(state.zoom.vertical.position)
+            .skip(vzoom.position)
+            .take(vzoom.visible_length)
             .map(|limit| {
                 vec![
-                    lcell!(limit.name),
-                    rcell!(limit.soft.to_string()),
-                    rcell!(limit.hard.to_string()),
+                    Some(Text::from(limit.name).alignment(Alignment::Left)),
+                    clip.clip_cell(0, Cow::Borrowed(limit.soft.as_str()), Alignment::Right),
+                    clip.clip_cell(1, Cow::Borrowed(limit.hard.as_str()), Alignment::Right),
                 ]
                 .drain(..)
-                .skip(state.zoom.horizontal.position)
+                .filter_map(|t| t.map(Cell::from))
                 .collect::<Vec<Cell>>()
             })
             .collect::<Vec<Vec<Cell>>>()
+    }
+
+    fn body_row_count(&self) -> usize {
+        self.limits.len()
     }
 
     fn widths(&self) -> &[u16] {
@@ -559,33 +556,39 @@ impl EnvironmentTable {
     }
 }
 
-impl BigTableStateGenerator for EnvironmentTable {
-    fn state(&self) -> BigTableState {
-        let vlen = self.env.len();
-        BigTableState::new(Zoom::new(0, 0, 2), Zoom::new(0, 0, vlen))
-    }
-}
-
 impl TableGenerator for EnvironmentTable {
     fn headers_size(&self) -> Area<usize> {
         Area::new(1, 1)
     }
 
-    fn top_headers(&self, _zoom: &Zoom) -> Vec<Cell> {
-        Vec::new()
+    fn top_headers(&self) -> Vec<Cell> {
+        let bold = Style::default().bold();
+        ["Variable", "Value"]
+            .iter()
+            .map(|s| Cell::from(Text::from(*s).style(bold)))
+            .collect::<Vec<_>>()
     }
 
-    fn rows(&self, state: &BigTableState) -> Vec<Vec<Cell>> {
+    fn rows(&self, clip: &TableClip<'_, '_>) -> Vec<Vec<Cell>> {
+        let vzoom = &clip.zoom().vertical;
         self.env
             .iter()
-            .skip(state.zoom.vertical.position)
+            .skip(vzoom.position)
+            .take(vzoom.visible_length)
             .map(|(k, v)| {
-                vec![lcell!(k.to_string()), lcell!(v.to_string())]
-                    .drain(..)
-                    .skip(state.zoom.horizontal.position)
-                    .collect::<Vec<Cell>>()
+                vec![
+                    Some(Text::from(k.to_string()).alignment(Alignment::Left)),
+                    clip.clip_cell(0, Cow::Owned(v.to_string()), Alignment::Left),
+                ]
+                .drain(..)
+                .filter_map(|t| t.map(Cell::from))
+                .collect::<Vec<Cell>>()
             })
             .collect::<Vec<Vec<Cell>>>()
+    }
+
+    fn body_row_count(&self) -> usize {
+        self.env.iter().count()
     }
 
     fn widths(&self) -> &[u16] {

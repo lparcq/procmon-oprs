@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2024  Laurent Pelecq
+// Copyright (C) 2024-2025  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,9 +15,9 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use num_traits::{ConstZero, Saturating, Zero};
+use smart_default::SmartDefault;
 use std::{
     cmp::Ordering,
-    collections::VecDeque,
     ops::{Add, Sub},
 };
 
@@ -32,19 +32,6 @@ macro_rules! void {
 pub(crate) enum Unbounded<T: Clone + Copy + Default> {
     Value(T),
     Infinite,
-}
-
-impl<T: Clone + Copy + Default + Zero + ConstZero> Unbounded<T> {
-    pub fn value(&self) -> Option<&T> {
-        match self {
-            Self::Value(value) => Some(value),
-            Self::Infinite => None,
-        }
-    }
-
-    pub fn value_or_zero(&self) -> T {
-        self.value().copied().unwrap_or(T::ZERO)
-    }
 }
 
 impl<
@@ -98,16 +85,6 @@ where
     }
 }
 
-impl<T: Clone + Copy + Default + Add<Output = T> + Sub<Output = T> + Saturating> Unbounded<T> {
-    pub(crate) fn add(self, delta: T) -> Self {
-        self + Unbounded::Value(delta)
-    }
-
-    pub(crate) fn sub(self, delta: T) -> Self {
-        self - Unbounded::Value(delta)
-    }
-}
-
 impl<T: Clone + Copy + Default + Add<Output = T> + Sub<Output = T>> Default for Unbounded<T> {
     fn default() -> Self {
         Unbounded::Value(T::default())
@@ -147,59 +124,6 @@ impl<T: Clone + Copy + Default + Add<Output = T> + Sub<Output = T> + PartialEq +
     }
 }
 
-pub type UnboundedSize = Unbounded<usize>;
-
-/// Area an unbounded horizontal and vertical value.
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct UnboundedArea {
-    pub horizontal: UnboundedSize,
-    pub vertical: UnboundedSize,
-}
-
-impl UnboundedArea {
-    pub fn scroll_left(&mut self, delta: usize) {
-        self.horizontal = self.horizontal.sub(delta);
-    }
-
-    pub fn scroll_right(&mut self, delta: usize) {
-        self.horizontal = self.horizontal.add(delta);
-    }
-
-    pub fn _scroll_up(&mut self, delta: usize) {
-        self.vertical = self.vertical.sub(delta);
-    }
-
-    pub fn _scroll_down(&mut self, delta: usize) {
-        self.vertical = self.vertical.add(delta);
-    }
-
-    pub fn set_horizontal(&mut self, horizontal: usize) {
-        self.horizontal = UnboundedSize::Value(horizontal);
-    }
-
-    pub fn set_vertical(&mut self, vertical: usize) {
-        self.vertical = UnboundedSize::Value(vertical);
-    }
-
-    /// Replace infinite values by integer or keep the current ones if finite.
-    pub fn set_bounds(&mut self, horizontal: usize, vertical: usize) {
-        if matches!(self.horizontal, Unbounded::Infinite) {
-            self.set_horizontal(horizontal)
-        }
-        if matches!(self.vertical, Unbounded::Infinite) {
-            self.set_vertical(vertical);
-        }
-    }
-
-    pub fn horizontal_home(&mut self) {
-        self.horizontal = UnboundedSize::ZERO;
-    }
-
-    pub fn horizontal_end(&mut self) {
-        self.horizontal = UnboundedSize::Infinite;
-    }
-}
-
 /// Boolean properties applied to a 2-dimensions area.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct Area<T> {
@@ -213,43 +137,6 @@ impl<T> Area<T> {
             horizontal,
             vertical,
         }
-    }
-}
-
-/// FIFO with a bounded size.
-pub struct BoundedFifo<T>(VecDeque<T>);
-
-impl<T> BoundedFifo<T> {
-    pub fn new(capacity: usize) -> Self {
-        Self(VecDeque::with_capacity(capacity))
-    }
-
-    pub fn capacity(&self) -> usize {
-        let Self(v) = self;
-        v.capacity()
-    }
-
-    pub fn len(&self) -> usize {
-        let Self(v) = self;
-        v.len()
-    }
-
-    pub fn push(&mut self, item: T) {
-        let Self(v) = self;
-        if v.len() == v.capacity() {
-            let _ = v.pop_front();
-        }
-        v.push_back(item);
-    }
-
-    pub fn back(&self) -> Option<&T> {
-        let Self(v) = self;
-        v.back()
-    }
-
-    pub fn front(&self) -> Option<&T> {
-        let Self(v) = self;
-        v.front()
     }
 }
 
@@ -298,6 +185,65 @@ impl From<usize> for MaxLength {
 impl From<&str> for MaxLength {
     fn from(s: &str) -> Self {
         Self::from(s.len())
+    }
+}
+
+/// Horizontal or vertical scrolling.
+///
+/// The position is a number of characters horizontally or lines vertically.
+/// The page depends on the rendered component.
+#[derive(Debug, Clone, Copy, SmartDefault)]
+pub(crate) enum Scroll {
+    /// No move
+    #[default]
+    CurrentPosition,
+    /// First position.
+    FirstPosition,
+    /// Last position.
+    LastPosition,
+    /// Previous position from the current one.
+    PreviousPosition,
+    /// Next position from the current one.
+    NextPosition,
+    /// Previous page from the current one.
+    PreviousPage,
+    /// Next page from the current one.
+    NextPage,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct Motion {
+    pub(crate) position: usize,
+    pub(crate) scroll: Scroll,
+}
+
+impl Motion {
+    pub(crate) fn current(&mut self) {
+        self.scroll = Scroll::CurrentPosition;
+    }
+
+    pub(crate) fn first(&mut self) {
+        self.scroll = Scroll::FirstPosition;
+    }
+
+    pub(crate) fn last(&mut self) {
+        self.scroll = Scroll::LastPosition;
+    }
+
+    pub(crate) fn previous(&mut self) {
+        self.scroll = Scroll::PreviousPosition;
+    }
+
+    pub(crate) fn next(&mut self) {
+        self.scroll = Scroll::NextPosition;
+    }
+
+    pub(crate) fn previous_page(&mut self) {
+        self.scroll = Scroll::PreviousPage;
+    }
+
+    pub(crate) fn next_page(&mut self) {
+        self.scroll = Scroll::NextPage;
     }
 }
 
