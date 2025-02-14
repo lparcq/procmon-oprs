@@ -22,7 +22,7 @@ use nom::{
     combinator::{all_consuming, opt},
     multi::many0,
     sequence::{pair, preceded},
-    IResult,
+    IResult, Parser,
 };
 use std::result;
 use std::str::FromStr;
@@ -48,13 +48,14 @@ pub enum ParseError {
 
 /// Intermediate function to parse a size into two strings.
 fn parse_size_partial(input: &str) -> IResult<&str, (&str, Option<&str>)> {
-    pair(digit1, opt(alt((tag("k"), tag("m"), tag("g"), tag("t")))))(input)
+    pair(digit1, opt(alt((tag("k"), tag("m"), tag("g"), tag("t"))))).parse(input)
 }
 
 /// Parse size with optional units (ex: 5k)
 pub fn parse_size(input: &str) -> result::Result<u64, ParseError> {
-    let (_, (value, unit)) =
-        all_consuming(parse_size_partial)(input).map_err(|_| ParseError::SyntaxError)?;
+    let (_, (value, unit)) = all_consuming(parse_size_partial)
+        .parse(input)
+        .map_err(|_| ParseError::SyntaxError)?;
     let factor = match unit {
         None => 1,
         Some("k") => KILO,
@@ -115,14 +116,15 @@ fn parse_metric(input: &str) -> IResult<&str, Vec<MetricId>> {
 /// Parse aggregations: optional -raw followed by optional +min, ...
 fn parse_aggregations(input: &str) -> IResult<&str, AggregationSet> {
     let mut agg = AggregationSet::new();
-    let (input, res) = opt(preceded(char('-'), tag("raw")))(input)?;
+    let (input, res) = opt(preceded(char('-'), tag("raw"))).parse(input)?;
     if res.is_none() {
         agg.set(Aggregation::None);
     }
     let (input, variants) = many0(preceded(
         char('+'),
         alt((tag("min"), tag("max"), tag("ratio"))),
-    ))(input)?;
+    ))
+    .parse(input)?;
     for name in variants {
         agg.set(Aggregation::from_str(name).unwrap());
     }
@@ -145,7 +147,8 @@ fn parse_formatter(input: &str) -> IResult<&str, Option<Formatter>> {
             tag("sz"),
             tag("du"),
         )),
-    ))(input)?;
+    ))
+    .parse(input)?;
     Ok((
         input,
         res.map(|name| match name {
@@ -178,7 +181,7 @@ fn parse_metric_spec_partial(
 pub fn parse_metric_spec(
     input: &str,
 ) -> result::Result<(Vec<MetricId>, AggregationSet, Option<Formatter>), ()> {
-    match all_consuming(parse_metric_spec_partial)(input) {
+    match all_consuming(parse_metric_spec_partial).parse(input) {
         Ok((_, res)) => Ok(res),
         Err(err) => {
             warn!("{}: parsing failed: {:?}", input, err);

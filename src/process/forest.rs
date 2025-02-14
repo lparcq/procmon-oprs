@@ -696,7 +696,7 @@ mod tests {
     }
 
     fn shuffle(mut processes: Vec<Process>) -> Vec<Process> {
-        processes.shuffle(&mut rand::thread_rng());
+        processes.shuffle(&mut rand::rng());
         processes
     }
 
