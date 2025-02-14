@@ -120,7 +120,6 @@ pub enum KeyMap {
 impl KeyMap {
     /// Convert an input event to an action
     pub fn action_from_event(self, evt: Event) -> Action {
-        //log::debug!("event: {evt:?}");
         match self {
             KeyMap::IncrementalSearch => match evt {
                 Event::Key(KEY_ENTER) => Action::SearchExit,
@@ -318,7 +317,7 @@ pub enum BookmarkAction {
 }
 
 /// Action to edit search bar
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum SearchEdit {
     Push(char),
     Pop,
@@ -466,8 +465,14 @@ impl Bookmarks {
     }
 
     /// Clear search
-    pub fn clear_search(&mut self) {
-        self.search = None;
+    pub fn clear_search(&mut self) -> bool {
+        match self.search {
+            Some(_) => {
+                self.search = None;
+                true
+            }
+            None => false,
+        }
     }
 
     /// Return the search pattern if any.

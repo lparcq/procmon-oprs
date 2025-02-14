@@ -48,7 +48,7 @@ mod tables;
 #[macro_use]
 mod types;
 
-use input::{menu, Action, BookmarkAction, KeyMap, MenuEntry, SearchEdit};
+use input::{menu, Action, BookmarkAction, Bookmarks, KeyMap, MenuEntry, SearchEdit};
 use panes::{
     BigTableState, BigTableWidget, FieldsWidget, GridPane, MarkdownWidget, OneLineWidget,
     OptionalRenderer, Pane, SingleScrollablePane, TableGenerator, TableStyle, Zoom,
@@ -169,28 +169,39 @@ impl TerminalDevice<'_> {
         }
     }
 
+    /// Apply a function on bookmarks.
+    fn on_bookmarks<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&mut Bookmarks),
+    {
+        match Rc::get_mut(&mut self.tree_data) {
+            Some(data) => f(&mut data.bookmarks),
+            None => log::error!("cannot clear bookmarks"),
+        }
+    }
+
     /// Clear marks.
     fn clear_bookmarks(&mut self) {
-        void!(Rc::get_mut(&mut self.tree_data).map(|data| data.bookmarks.clear_marks()))
+        self.on_bookmarks(|bookmarks| {
+            if !bookmarks.clear_search() {
+                bookmarks.clear_marks();
+            }
+        });
     }
 
     /// Clear search.
     fn clear_search(&mut self) {
-        void!(Rc::get_mut(&mut self.tree_data).map(|data| data.bookmarks.clear_search()))
+        self.on_bookmarks(|bookmarks| void!(bookmarks.clear_search()));
     }
 
     /// Edit search.
     fn edit_search(&mut self, edit: SearchEdit) {
-        if let Some(data) = Rc::get_mut(&mut self.tree_data) {
-            data.bookmarks.edit_search(edit);
-        }
+        self.on_bookmarks(|bookmarks| void!(bookmarks.edit_search(edit)));
     }
 
     /// Set bookmark action.
     fn set_bookmarks_action(&mut self, action: BookmarkAction) {
-        if let Some(data) = Rc::get_mut(&mut self.tree_data) {
-            data.bookmarks.set_action(action);
-        }
+        self.on_bookmarks(|bookmarks| void!(bookmarks.set_action(action)));
     }
 
     fn last_motions(&mut self) -> &mut Area<Motion> {
@@ -245,10 +256,30 @@ impl TerminalDevice<'_> {
         self.last_motions().vertical.next_page();
     }
 
+    fn multiply_delay(&mut self, timer: &mut Timer, factor: u16) {
+        const MAX_TIMEOUT_SECS: u64 = 24 * 3_600; // 24 hours
+        let delay = timer.get_delay();
+        if delay.as_secs() * (factor as u64) < MAX_TIMEOUT_SECS {
+            if let Some(delay) = delay.checked_mul(factor as u32) {
+                timer.set_delay(delay);
+                self.every = delay;
+            }
+        }
+    }
+
+    fn divide_delay(&mut self, timer: &mut Timer, factor: u16) {
+        const MIN_TIMEOUT_MSECS: u128 = 1;
+        let delay = timer.get_delay();
+        if delay.as_millis() / (factor as u128) > MIN_TIMEOUT_MSECS {
+            if let Some(delay) = delay.checked_div(factor as u32) {
+                timer.set_delay(delay);
+                self.every = delay;
+            }
+        }
+    }
+
     /// Execute an interactive action.
     fn react(&mut self, action: Action, timer: &mut Timer) -> io::Result<Action> {
-        const MAX_TIMEOUT_SECS: u64 = 24 * 3_600; // 24 hours
-        const MIN_TIMEOUT_MSECS: u128 = 1;
         match action {
             Action::None
             | Action::ChangeScope
@@ -274,24 +305,8 @@ impl TerminalDevice<'_> {
                 self.filter = ProcessFilter::Active;
                 self.set_keymap(KeyMap::Main);
             }
-            Action::MultiplyTimeout(factor) => {
-                let delay = timer.get_delay();
-                if delay.as_secs() * (factor as u64) < MAX_TIMEOUT_SECS {
-                    if let Some(delay) = delay.checked_mul(factor as u32) {
-                        timer.set_delay(delay);
-                        self.every = delay;
-                    }
-                }
-            }
-            Action::DivideTimeout(factor) => {
-                let delay = timer.get_delay();
-                if delay.as_millis() / (factor as u128) > MIN_TIMEOUT_MSECS {
-                    if let Some(delay) = delay.checked_div(factor as u32) {
-                        timer.set_delay(delay);
-                        self.every = delay;
-                    }
-                }
-            }
+            Action::MultiplyTimeout(factor) => self.multiply_delay(timer, factor),
+            Action::DivideTimeout(factor) => self.divide_delay(timer, factor),
             Action::ScrollLeft => self.scroll_left(),
             Action::ScrollRight => self.scroll_right(),
             Action::ScrollPageUp => self.scroll_page_up(),
@@ -638,7 +653,7 @@ impl TerminalDevice<'_> {
             let area = frame.area();
             let mut rects = SingleScrollablePane::new(area, 2).with(&menu).build();
             let mut r = OptionalRenderer::new(frame, &mut rects);
-            let mut state = BigTableState::with_motion(self.motions.last().unwrap());
+            let mut state = BigTableState::with_motion(&motion);
             r.render_stateful_widget(main, &mut state);
             r.render_widget(menu);
             motion = state.motion();
