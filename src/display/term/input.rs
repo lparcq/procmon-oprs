@@ -51,6 +51,8 @@ const KEY_QUIT: Key = Key::Char('q');
 const KEY_SCOPE: Key = Key::Char('s');
 const KEY_SEARCH: Key = Key::Char('/');
 const KEY_SEARCH_CANCEL: Key = Key::Ctrl('c');
+const KEY_SEARCH_NEXT: Key = Key::Ctrl('n');
+const KEY_SEARCH_PREVIOUS: Key = Key::Ctrl('N');
 const KEY_SELECT_NEXT: Key = Key::Char(KEY_SELECT_NEXT_CHAR);
 const KEY_SELECT_NEXT_CHAR: char = 'n';
 const KEY_SELECT_PARENT: Key = Key::Char('p');
@@ -129,6 +131,8 @@ impl KeyMap {
                 Event::Key(KEY_ENTER) => Action::SearchExit,
                 Event::Key(Key::Char(c)) => Action::SearchPush(c),
                 Event::Key(Key::Backspace) => Action::SearchPop,
+                Event::Key(KEY_SEARCH_PREVIOUS) => Action::SelectPrevious,
+                Event::Key(KEY_SEARCH_NEXT) => Action::SelectNext,
                 Event::Key(KEY_SEARCH_CANCEL) => Action::SearchCancel,
                 _ => Action::None,
             },
@@ -527,6 +531,8 @@ impl Bookmarks {
 
     /// Transform the motion on the bookmarks to a motion on lines.
     ///
+    /// Returns the selected line.
+    ///
     /// * `scroll` - The requested scroll.
     /// * `occurrences` - The set of matching pid in case of search.
     /// * `lines` - The lines of process identities.
@@ -573,6 +579,14 @@ impl Bookmarks {
             }
             last_linepid = Some(this_linepid);
         }
+        match selected_linepid {
+            Some(lp) if occurrences.contains(&lp.pid) => (),
+            Some(lp) => {
+                selected_linepid = self.move_to_pid_in_ring(&matches, Some(lp), LinePid::next_in);
+            }
+            None => selected_linepid = matches.first().copied(),
+        }
+        self.selected_pid = selected_linepid.map(|lp| lp.pid);
 
         self.marks = BTreeSet::from_iter(marks.iter().map(|lp| lp.pid)); // Keep only marks on existing PIDs.
         let ring = match pattern {
@@ -617,7 +631,7 @@ impl Bookmarks {
         }
     }
 
-    /// Move to closest PID in the ring if possible.
+    /// Apply the function to the ring and pid if the latest is set.
     fn move_to_pid_in_ring<F>(
         &mut self,
         ring: &[LinePid],

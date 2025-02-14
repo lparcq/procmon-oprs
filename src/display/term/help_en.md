@@ -15,6 +15,7 @@
 - Start an incremental search with '/'.
   . Hit enter to validate the search string.
   . Hit Ctrl-c to clear the search.
+  . Use Ctrl-n and Ctrl-N to select the next or previous match.
 - Once the search pattern has been entered, move to the next match with 'n'
   and the previous match with 'N'.
 - Hit Ctrl-c to clear the search.

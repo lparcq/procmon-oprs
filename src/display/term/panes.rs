@@ -475,7 +475,7 @@ pub(crate) trait TableGenerator {
     fn widths(&self) -> &[u16];
 
     /// Number of columns in the body.
-    fn body_column_count(&self) -> usize {
+    fn _body_column_count(&self) -> usize {
         self.widths().len() - self.headers_size().horizontal
     }
 
