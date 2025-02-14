@@ -357,9 +357,10 @@ impl TableGenerator for ProcessTreeTable<'_, '_, '_> {
             .take(height)
             .enumerate()
             .map(|(n, ps)| {
+                let index = offset + n;
                 let pid = ps.pid();
                 let pid_status = match clip.selected_lineno() {
-                    Some(lineno) if lineno == offset + n => {
+                    Some(lineno) if lineno == index => {
                         *self.selected_pid.borrow_mut() = Some(pid);
                         PidStatus::Selected
                     }
@@ -367,7 +368,7 @@ impl TableGenerator for ProcessTreeTable<'_, '_, '_> {
                 };
                 let name = {
                     let name = ps.name();
-                    format!("{:>width$}", name, width = self.indents[n] + name.len())
+                    format!("{:>width$}", name, width = self.indents[index] + name.len())
                 };
                 let name_style = self.data.styles.name_style(pid_status);
                 let mut i = 0;
