@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.35.0] - 2025-02-14
+
+### 🐛 Bug Fixes
+
+- Let the last column of a table fill the remaining space.
+- In environment, display the scrollbar only on the value.
+- In main pane, Ctrl-C clears the search first.
+- Scroll environment table in all directions.
+- Indentation of processes when scrolling.
+- Go to first match when searching.
+
+### 🚜 Refactor
+
+- Make terminal RefCell to avoid mutable borrow just for it.
+- Manage the motion in BigTableWidget.
+
+### ⚙️ Miscellaneous Tasks
+
+- Fix tests and clippy warnings.
+- Remove file that shouldn't have been commited
+
 ## [0.34.0] - 2025-01-26
 
 ### 🚀 Features
@@ -24,6 +45,7 @@ All notable changes to this project will be documented in this file.
 ### ⚙️ Miscellaneous Tasks
 
 - Fix clippy warnings
+- Release procmon-oprs version 0.34.0
 
 ## [0.33.0] - 2025-01-12
 
