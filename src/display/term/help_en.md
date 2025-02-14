@@ -6,7 +6,7 @@
 - Page up and down: scroll the cursor by pages.
 - Control-Home: go to first line.
 - Control-End: go to last line.
-- Left and Right: move the columns left or right.
+- Shift-Tab and Tab: scroll the columns left or right.
 - Home: go to first column.
 - End: go to last column.
 

@@ -640,8 +640,8 @@ impl<T: TableGenerator> StatefulWidget for BigTableWidget<'_, T> {
                     .render(area, buf, &mut bar_state);
             }
         }
-        state.motion.horizontal.current();
-        state.motion.vertical.current();
+        state.motion.horizontal.move_to(hzoom.position);
+        state.motion.vertical.move_to(vzoom.position);
     }
 }
 

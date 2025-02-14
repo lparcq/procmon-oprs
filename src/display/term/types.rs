@@ -218,6 +218,11 @@ pub(crate) struct Motion {
 }
 
 impl Motion {
+    pub(crate) fn move_to(&mut self, position: usize) {
+        self.position = position;
+        self.current();
+    }
+
     pub(crate) fn current(&mut self) {
         self.scroll = Scroll::CurrentPosition;
     }

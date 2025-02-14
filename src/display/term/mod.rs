@@ -240,11 +240,11 @@ impl TerminalDevice<'_> {
         self.last_motions().vertical.next();
     }
 
-    fn _scroll_page_left(&mut self) {
+    fn scroll_page_left(&mut self) {
         self.last_motions().horizontal.previous_page();
     }
 
-    fn _scroll_page_right(&mut self) {
+    fn scroll_page_right(&mut self) {
         self.last_motions().horizontal.next_page();
     }
 
@@ -309,6 +309,8 @@ impl TerminalDevice<'_> {
             Action::DivideTimeout(factor) => self.divide_delay(timer, factor),
             Action::ScrollLeft => self.scroll_left(),
             Action::ScrollRight => self.scroll_right(),
+            Action::ScrollPageLeft => self.scroll_page_left(),
+            Action::ScrollPageRight => self.scroll_page_right(),
             Action::ScrollPageUp => self.scroll_page_up(),
             Action::ScrollPageDown => self.scroll_page_down(),
             Action::ScrollLineUp => self.scroll_up(),
@@ -649,6 +651,7 @@ impl TerminalDevice<'_> {
             TableStyle::new(column_spacing, even_row_style, odd_row_style),
         );
 
+        log::debug!("DBG before {motion:?}");
         self.terminal.borrow_mut().draw(|frame| {
             let area = frame.area();
             let mut rects = SingleScrollablePane::new(area, 2).with(&menu).build();
@@ -658,6 +661,7 @@ impl TerminalDevice<'_> {
             r.render_widget(menu);
             motion = state.motion();
         })?;
+        log::debug!("DBG after  {motion:?}");
         self.motions.push(motion);
         Ok(())
     }

@@ -45,6 +45,8 @@ const KEY_HELP: Key = Key::Char('?');
 const KEY_LIMITS: Key = Key::Char('l');
 const KEY_MARK_CLEAR: Key = Key::Ctrl('c');
 const KEY_MARK_TOGGLE: Key = Key::Char(' ');
+const KEY_PAGE_LEFT: Key = Key::BackTab;
+const KEY_PAGE_RIGHT: Key = Key::Char('\t');
 const KEY_QUIT: Key = Key::Char('q');
 const KEY_SCOPE: Key = Key::Char('s');
 const KEY_SEARCH: Key = Key::Char('/');
@@ -86,6 +88,8 @@ pub enum Action {
     ScrollLineDown,
     ScrollLineUp,
     ScrollPageDown,
+    ScrollPageLeft,
+    ScrollPageRight,
     ScrollPageUp,
     ScrollRight,
     SearchCancel,
@@ -128,10 +132,26 @@ impl KeyMap {
                 Event::Key(KEY_SEARCH_CANCEL) => Action::SearchCancel,
                 _ => Action::None,
             },
-            KeyMap::Help | KeyMap::Process => match evt {
+            KeyMap::Help => match evt {
                 Event::Key(KEY_QUIT) | Event::Key(KEY_ESCAPE) => Action::SwitchBack,
                 Event::Key(Key::PageDown) => Action::ScrollPageDown,
                 Event::Key(Key::PageUp) => Action::ScrollPageUp,
+                _ => Action::None,
+            },
+            KeyMap::Process => match evt {
+                Event::Key(KEY_QUIT) | Event::Key(KEY_ESCAPE) => Action::SwitchBack,
+                Event::Key(KEY_GOTO_TBL_BOTTOM) => Action::GotoTableBottom,
+                Event::Key(KEY_GOTO_TBL_LEFT) => Action::GotoTableLeft,
+                Event::Key(KEY_GOTO_TBL_RIGHT) => Action::GotoTableRight,
+                Event::Key(KEY_GOTO_TBL_TOP) => Action::GotoTableTop,
+                Event::Key(KEY_PAGE_LEFT) => Action::ScrollPageLeft,
+                Event::Key(KEY_PAGE_RIGHT) => Action::ScrollPageRight,
+                Event::Key(Key::PageDown) => Action::ScrollPageDown,
+                Event::Key(Key::PageUp) => Action::ScrollPageUp,
+                Event::Key(Key::Down) => Action::ScrollLineDown,
+                Event::Key(Key::Up) => Action::ScrollLineUp,
+                Event::Key(Key::Left) => Action::ScrollLeft,
+                Event::Key(Key::Right) => Action::ScrollRight,
                 _ => Action::None,
             },
             KeyMap::Details => match evt {
@@ -168,6 +188,8 @@ impl KeyMap {
                 Event::Key(KEY_UNSELECT_ROOT_PID) => Action::UnselectRootPid,
                 Event::Key(KEY_SLOWER) => Action::MultiplyTimeout(2),
                 Event::Key(KEY_QUIT) | Event::Key(KEY_ESCAPE) => Action::Quit,
+                Event::Key(KEY_PAGE_LEFT) => Action::ScrollPageLeft,
+                Event::Key(KEY_PAGE_RIGHT) => Action::ScrollPageRight,
                 Event::Key(Key::PageDown) => Action::ScrollPageDown,
                 Event::Key(Key::PageUp) => Action::ScrollPageUp,
                 Event::Key(Key::Down) => Action::ScrollLineDown,
