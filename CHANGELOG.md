@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.35.1] - 2025-02-15
+
+### 🐛 Bug Fixes
+
+- Selected line was always erased.
+- Correctly scroll horizontally if columns exceed the screen width.
+
+### ⚙️ Miscellaneous Tasks
+
+- Update nom and rand
+
 ## [0.35.0] - 2025-02-14
 
 ### 🐛 Bug Fixes
@@ -22,6 +33,7 @@ All notable changes to this project will be documented in this file.
 
 - Fix tests and clippy warnings.
 - Remove file that shouldn't have been commited
+- Release procmon-oprs version 0.35.0
 
 ## [0.34.0] - 2025-01-26
 
