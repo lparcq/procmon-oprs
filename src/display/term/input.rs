@@ -580,11 +580,12 @@ impl Bookmarks {
             last_linepid = Some(this_linepid);
         }
         match selected_linepid {
-            Some(lp) if occurrences.contains(&lp.pid) => (),
-            Some(lp) => {
+            Some(lp) if !occurrences.is_empty() && occurrences.contains(&lp.pid) => (),
+            Some(lp) if !matches.is_empty() => {
                 selected_linepid = self.move_to_pid_in_ring(&matches, Some(lp), LinePid::next_in);
             }
-            None => selected_linepid = matches.first().copied(),
+            _ if !matches.is_empty() => selected_linepid = matches.first().copied(),
+            _ => (),
         }
         self.selected_pid = selected_linepid.map(|lp| lp.pid);
 

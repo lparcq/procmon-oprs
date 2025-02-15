@@ -651,7 +651,6 @@ impl TerminalDevice<'_> {
             TableStyle::new(column_spacing, even_row_style, odd_row_style),
         );
 
-        log::debug!("DBG before {motion:?}");
         self.terminal.borrow_mut().draw(|frame| {
             let area = frame.area();
             let mut rects = SingleScrollablePane::new(area, 2).with(&menu).build();
@@ -661,7 +660,6 @@ impl TerminalDevice<'_> {
             r.render_widget(menu);
             motion = state.motion();
         })?;
-        log::debug!("DBG after  {motion:?}");
         self.motions.push(motion);
         Ok(())
     }
