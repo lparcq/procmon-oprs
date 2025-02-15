@@ -224,9 +224,9 @@ impl PidStack {
 
 /// Data used to generate the tree as a table.
 #[derive(Debug)]
-pub(crate) struct TreeData<'t> {
+pub(crate) struct TreeData {
     /// Column headers for metrics
-    pub(crate) metric_headers: Vec<Text<'t>>,
+    pub(crate) metric_headers: Vec<String>,
     /// Display styles
     pub(crate) styles: Styles,
     /// Bookmarks for PIDs.
@@ -235,7 +235,7 @@ pub(crate) struct TreeData<'t> {
     pub(crate) occurrences: BTreeSet<pid_t>,
 }
 
-impl TreeData<'_> {
+impl TreeData {
     pub(crate) fn new(styles: Styles) -> Self {
         Self {
             metric_headers: Vec::new(),
@@ -268,11 +268,11 @@ impl TreeData<'_> {
 
 /// Table generator for a tree of processes.
 #[derive(Getters)]
-pub(crate) struct ProcessTreeTable<'a, 'b, 't> {
+pub(crate) struct ProcessTreeTable<'a, 'b> {
     /// Sample collector.
     collector: &'b Collector<'a>,
     /// Tree data.
-    data: Rc<TreeData<'t>>,
+    data: Rc<TreeData>,
     /// Headers size.
     #[getset(get = "pub")]
     headers_size: Area<usize>,
@@ -285,24 +285,32 @@ pub(crate) struct ProcessTreeTable<'a, 'b, 't> {
     selected_pid: RefCell<Option<pid_t>>,
 }
 
-impl<'a, 'b, 't> ProcessTreeTable<'a, 'b, 't> {
+impl<'a, 'b> ProcessTreeTable<'a, 'b> {
     const TITLE_PROCESS: &'static str = "Process";
     const TITLE_PID: &'static str = "PID";
     const TITLE_STATE: &'static str = "S";
     const FIXED_HEADERS: [&'static str; 3] =
         [Self::TITLE_PROCESS, Self::TITLE_PID, Self::TITLE_STATE];
 
-    pub(crate) fn new(collector: &'b Collector<'a>, data: Rc<TreeData<'t>>) -> Self {
+    pub(crate) fn new(collector: &'b Collector<'a>, data: Rc<TreeData>) -> Self {
         let mut pids = PidStack::default();
         let mut headers_height = 0;
         let mut widths = Self::FIXED_HEADERS
             .iter()
             .map(|s| MaxLength::from(*s))
             .chain(data.metric_headers.iter().map(|text| {
-                if headers_height < text.lines.len() {
-                    headers_height = text.lines.len();
-                }
-                MaxLength::from(text.iter().map(|line| line.width()).max().unwrap_or(0))
+                MaxLength::from(
+                    text.lines()
+                        .enumerate()
+                        .map(|(i, l)| {
+                            if headers_height <= i {
+                                headers_height = i + 1;
+                            };
+                            l.len()
+                        })
+                        .max()
+                        .unwrap_or(0),
+                )
             }))
             .collect::<Vec<MaxLength>>();
         let headers_size = Area::new(Self::FIXED_HEADERS.len(), headers_height);
@@ -330,12 +338,12 @@ impl<'a, 'b, 't> ProcessTreeTable<'a, 'b, 't> {
     }
 }
 
-impl TableGenerator for ProcessTreeTable<'_, '_, '_> {
+impl TableGenerator for ProcessTreeTable<'_, '_> {
     fn headers_size(&self) -> Area<usize> {
         self.headers_size
     }
 
-    fn top_headers(&self) -> Vec<Cell> {
+    fn top_headers(&self, clip: &TableClip<'_, '_>) -> Vec<Cell> {
         Self::FIXED_HEADERS
             .iter()
             .map(|s| lcell!(*s))
@@ -343,7 +351,11 @@ impl TableGenerator for ProcessTreeTable<'_, '_, '_> {
                 self.data
                     .metric_headers
                     .iter()
-                    .map(|text| Cell::from(text.clone().alignment(Alignment::Center))),
+                    .enumerate()
+                    .filter_map(|(colnum, text)| {
+                        clip.clip_cell(colnum, Cow::Borrowed(text), Alignment::Center)
+                            .map(Cell::from)
+                    }),
             )
             .collect::<Vec<Cell>>()
     }
@@ -371,21 +383,21 @@ impl TableGenerator for ProcessTreeTable<'_, '_, '_> {
                     format!("{:>width$}", name, width = self.indents[index] + name.len())
                 };
                 let name_style = self.data.styles.name_style(pid_status);
-                let mut i = 0;
                 vec![
                     Cell::from(name).style(name_style),
                     rcell!(pid.to_string()),
                     rcell!(ps.state().to_string()),
                 ]
                 .drain(..)
-                .chain(ps.samples().flat_map(|sample| {
-                    izip!(sample.strings(), sample.trends()).filter_map(move |(value, trend)| {
-                        let colnum = i;
-                        i += 1;
-                        clip.clip_cell(colnum, Cow::Borrowed(value.as_str()), Alignment::Right)
-                            .map(|t| Cell::from(t.style(self.data.styles.trend_style(trend))))
-                    })
-                }))
+                .chain(
+                    ps.samples()
+                        .flat_map(|sample| izip!(sample.strings(), sample.trends()))
+                        .enumerate()
+                        .filter_map(|(colnum, (value, trend))| {
+                            clip.clip_cell(colnum, Cow::Borrowed(value.as_str()), Alignment::Right)
+                                .map(|t| Cell::from(t.style(self.data.styles.trend_style(trend))))
+                        }),
+                )
                 .collect::<Vec<Cell>>()
             })
             .collect::<Vec<Vec<Cell>>>()
@@ -485,22 +497,21 @@ impl TableGenerator for LimitsTable {
         Area::new(1, 1)
     }
 
-    fn top_headers(&self) -> Vec<Cell> {
-        let bold = Style::default().bold();
+    fn top_headers(&self, clip: &TableClip<'_, '_>) -> Vec<Cell> {
         self.headers
             .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                Cell::from(
-                    Text::styled(*s, bold)
-                        .alignment(if i == 0 {
-                            Alignment::Left
-                        } else {
-                            Alignment::Right
-                        })
-                        .bold(),
-                )
-            })
+            .take(1)
+            .map(|s| Cell::from(Text::from(*s).bold().alignment(Alignment::Left)))
+            .chain(
+                self.headers
+                    .iter()
+                    .skip(1)
+                    .enumerate()
+                    .filter_map(|(colnum, s)| {
+                        clip.clip_cell(colnum, Cow::Borrowed(*s), Alignment::Right)
+                            .map(Cell::from)
+                    }),
+            )
             .collect::<Vec<Cell>>()
     }
 
@@ -562,12 +573,15 @@ impl TableGenerator for EnvironmentTable {
         Area::new(1, 1)
     }
 
-    fn top_headers(&self) -> Vec<Cell> {
-        let bold = Style::default().bold();
-        ["Variable", "Value"]
-            .iter()
-            .map(|s| Cell::from(Text::from(*s).style(bold)))
-            .collect::<Vec<_>>()
+    fn top_headers(&self, clip: &TableClip<'_, '_>) -> Vec<Cell> {
+        vec![
+            Some(Text::from("Variable").bold()),
+            clip.clip_cell(0, Cow::Borrowed("Value"), Alignment::Left)
+                .map(|t| t.bold()),
+        ]
+        .drain(..)
+        .filter_map(|t| t.map(Cell::from))
+        .collect::<Vec<_>>()
     }
 
     fn rows(&self, clip: &TableClip<'_, '_>) -> Vec<Vec<Cell>> {

@@ -17,12 +17,7 @@
 use chrono::Local;
 use libc::pid_t;
 use ratatui::{
-    backend::TermionBackend,
-    prelude::*,
-    style::Style,
-    text::{Line, Text},
-    widgets::Clear,
-    Terminal,
+    backend::TermionBackend, prelude::*, style::Style, text::Text, widgets::Clear, Terminal,
 };
 use std::{cell::RefCell, convert::TryFrom, fmt, io, rc::Rc, time::Duration};
 use termion::{
@@ -99,7 +94,7 @@ type Screen = AlternateScreen<RawTerminal<io::Stdout>>;
 type TermionTerminal = Terminal<TermionBackend<Box<Screen>>>;
 
 /// Print on standard output as a table
-pub struct TerminalDevice<'t> {
+pub struct TerminalDevice {
     /// Interval to update the screen
     every: Duration,
     /// Channel for input events
@@ -107,7 +102,7 @@ pub struct TerminalDevice<'t> {
     /// Terminal
     terminal: RefCell<TermionTerminal>,
     /// Table tree data
-    tree_data: Rc<TreeData<'t>>,
+    tree_data: Rc<TreeData>,
     /// Position in the panes. Last position for the currently visible pane.
     motions: Vec<Area<Motion>>,
     /// Filter
@@ -120,7 +115,7 @@ pub struct TerminalDevice<'t> {
     keymap: KeyMap,
 }
 
-impl TerminalDevice<'_> {
+impl TerminalDevice {
     pub fn new(every: Duration, theme: Option<BuiltinTheme>) -> anyhow::Result<Self> {
         let screen = io::stdout().into_raw_mode()?.into_alternate_screen()?;
         let backend = TermionBackend::new(Box::new(screen));
@@ -693,7 +688,7 @@ impl TerminalDevice<'_> {
     }
 }
 
-impl DisplayDevice for TerminalDevice<'_> {
+impl DisplayDevice for TerminalDevice {
     fn open(&mut self, metrics: SliceIter<FormattedMetric>) -> anyhow::Result<()> {
         let mut last_id = None;
 
@@ -719,12 +714,7 @@ impl DisplayDevice for TerminalDevice<'_> {
                 header.push(name);
             }
             if let Some(data) = Rc::get_mut(&mut self.tree_data) {
-                data.metric_headers.push(Text::from(
-                    header
-                        .iter()
-                        .map(|s| Line::from(s.to_string()))
-                        .collect::<Vec<Line>>(),
-                ));
+                data.metric_headers.push(header.join("\n"));
             }
         });
         self.terminal.borrow_mut().hide_cursor()?;

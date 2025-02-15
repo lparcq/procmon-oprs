@@ -448,7 +448,7 @@ impl<'a, 'b> TableClip<'a, 'b> {
                 Alignment::Right => format!("{l: >w$}", w = llen),
                 _ => panic!("must be called with left or right alignment"),
             };
-            Self::prefix(&s, len)
+            Self::prefix(&s, len).trim().to_owned()
         }))
     }
 }
@@ -461,7 +461,7 @@ pub(crate) trait TableGenerator {
     fn headers_size(&self) -> Area<usize>;
 
     /// The headers on top.
-    fn top_headers(&self) -> Vec<Cell>;
+    fn top_headers(&self, clip: &TableClip<'_, '_>) -> Vec<Cell>;
 
     /// The visible rows.
     ///
@@ -520,6 +520,11 @@ impl<'a, T: TableGenerator> BigTableWidget<'a, T> {
         }
     }
 
+    /// Move the position and adapt the zoom so that the position is visible.
+    ///
+    /// If a position is given, it is moved and the zoom also if required.
+    /// If there is no position, the position is set at the beginning or the
+    /// end of the visible area.
     fn new_zoom(
         position: Option<usize>,
         min_position: usize,
@@ -591,8 +596,16 @@ impl<T: TableGenerator> StatefulWidget for BigTableWidget<'_, T> {
             .height
             .saturating_sub(borders)
             .saturating_sub(nheadrows as u16);
-        let (_, hzoom) =
-            Self::new_zoom(None, 0, &state.motion.horizontal, visible_width, body_width);
+        let hzoom = Zoom::new(
+            Self::move_position(
+                state.motion.horizontal.position,
+                body_width.saturating_sub(visible_width) as usize,
+                visible_width.div_ceil(2) as usize,
+                state.motion.horizontal.scroll,
+            ),
+            visible_width as usize,
+            body_width as usize,
+        );
         state.zoom.horizontal = hzoom;
         let (selected_lineno, vzoom) = Self::new_zoom(
             state.selected_lineno,
@@ -606,7 +619,7 @@ impl<T: TableGenerator> StatefulWidget for BigTableWidget<'_, T> {
         let clip = TableClip::new(state, widths, nheadcols, column_spacing);
 
         let constraints = clip.constraints();
-        let headers = self.table.top_headers();
+        let headers = self.table.top_headers(&clip);
         let rows = self.style.apply(self.table.rows(&clip));
 
         let table = {
@@ -1002,10 +1015,31 @@ mod test {
         }
     }
 
-    /// 0         1              0         1              0         1
-    /// 01234567890123456789     01234567890123456789     01234567890123456789
-    /// abcde  fgh ijkl mnopqr   abcde fgh  ijkl mnopqr   abcde  fgh ijkl mnopqr   
-    /// ABC   DEFG   HI   JKLM   ABC   DEFG HI   JKLM      ABC  DEFG  HI   JKLM
+    fn assert_bodies_match(
+        tc: &TableClip,
+        rows: &[&[&'static str]],
+        alignment: Alignment,
+        expected_rows: &[&[&'static str]],
+        expected_alignments: &[Alignment],
+        ncols: usize,
+        nheadcols: usize,
+    ) {
+        let body_size = ncols - nheadcols;
+        for (row, expected_row) in rows.iter().zip(expected_rows) {
+            let expected = expected_row
+                .iter()
+                .zip(expected_alignments)
+                .map(|(t, a)| Text::from(*t).alignment(*a))
+                .collect::<Vec<_>>();
+            let value = (0..body_size)
+                .flat_map(|offset| {
+                    tc.clip_cell(offset, Cow::Borrowed(row[offset + nheadcols]), alignment)
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(expected, value);
+        }
+    }
+
     const ROWS_5_4_4_5: &[&[&str]] = &[
         &["abcde", "fgh", "ijkl", "mnopqr"],
         &["ABC", "DEFG", "HI", "JKLM"],
@@ -1013,24 +1047,41 @@ mod test {
 
     /// 0         1
     /// 01234567890123456789
-    /// abcde  fgh ij klmnopqrs
-    /// ABC   DEFG HI   JKLMN
+    /// abcde  fgh ijkl mnopqr
+    /// ABC   DEFG   HI   JKLM
+    const EXPECTED_BODY_CASE_1: &[&[&str]] = &[&["fgh", "ijkl", "mnop"], &["DEFG", "HI", "JK"]];
+
+    /// 0         1
+    /// 01234567890123456789
+    /// abcde fgh  ijkl mnopqr
+    /// ABC   DEFG HI   JKLM
+    const EXPECTED_BODY_CASE_2: &[&[&str]] = &[&["fgh", "ijkl", "mnop"], &["DEFG", "HI", "JKLM"]];
+
     const ROWS_5_4_2_9: &[&[&str]] = &[
         &["abcde", "fgh", "ij", "klmnopqrs"],
         &["ABC", "DEFG", "HI", "JKLMN"],
     ];
 
+    /// 0         1
+    /// 01234567890123456789
+    /// abcde  fgh ij klmnopqrs
+    /// ABC   DEFG HI   JKLMN
+    const EXPECTED_BODY_CASE_3: &[&[&str]] = &[&["fgh", "ij", "klmnop"], &["DEFG", "HI", "JKLM"]];
+
     /// Columns truncated on the right.
     #[rstest]
-    #[case(ROWS_5_4_4_5, &[5, 4, 4, 4], &["mnop", "JK"], Alignment::Right, None)]
-    #[case(ROWS_5_4_4_5, &[5, 4, 4, 4], &["mnop", "JKLM"], Alignment::Left, None)]
-    #[case(ROWS_5_4_2_9, &[5, 4, 2, 6], &["klmnop", "  JKLM"], Alignment::Center, Some(Alignment::Right))]
+    #[case(ROWS_5_4_4_5, Alignment::Right, &[5, 4, 4, 4],
+           EXPECTED_BODY_CASE_1, &[Alignment::Right, Alignment::Right, Alignment::Right])]
+    #[case(ROWS_5_4_4_5, Alignment::Left, &[5, 4, 4, 4],
+           EXPECTED_BODY_CASE_2, &[Alignment::Left, Alignment::Left, Alignment::Left])]
+    #[case(ROWS_5_4_2_9, Alignment::Center, &[5, 4, 2, 6],
+           EXPECTED_BODY_CASE_3, &[Alignment::Center, Alignment::Center, Alignment::Right])]
     fn test_constraints_right_truncated_without_clip(
         #[case] rows: &[&[&'static str]],
+        #[case] alignment: Alignment,
         #[case] expected_constraints: &[u16],
-        #[case] expected_last_cells: &[&'static str],
-        #[case] last_cell_alignment: Alignment,
-        #[case] expected_cell_alignment: Option<Alignment>,
+        #[case] expected_rows: &[&[&'static str]],
+        #[case] expected_alignments: &[Alignment],
     ) {
         const SCREEN_WIDTH: usize = 20;
         const NHEADCOLS: usize = 1;
@@ -1040,39 +1091,45 @@ mod test {
         let expected_constraints = new_constraints(expected_constraints);
         let constraints = tc.constraints();
         assert_eq!(expected_constraints, constraints);
-        let expected_alignment = expected_cell_alignment.unwrap_or(last_cell_alignment);
-        for (row, expected_last_cell) in rows.iter().zip(expected_last_cells) {
-            let colnum = row.len() - 1;
-            let cell = row[colnum];
-            let colnum = colnum - NHEADCOLS;
-            let expected = Text::from(*expected_last_cell).alignment(expected_alignment);
-            let value = tc
-                .clip_cell(colnum, Cow::Borrowed(cell), last_cell_alignment)
-                .expect("not empty cell");
-            assert_eq!(expected, value);
-        }
+        assert_bodies_match(
+            &tc,
+            rows,
+            alignment,
+            expected_rows,
+            expected_alignments,
+            widths.len(),
+            NHEADCOLS,
+        );
     }
 
-    /// 0         1              0         1              0         1
-    /// 01234567890123456789     01234567890123456789     01234567890123456789
-    /// abcde h  ijklm nopqrst   abcde gh ijklm nopqrst   abcde h  ijkl mnopqrst   
-    /// ABC   FG HI    JKLM        ABC FG  HI      JKLM   ABC   FG  HI    JKLM
     const ROWS_5_4_5_7: &[&[&str]] = &[
         &["abcde", "fgh", "ijklm", "nopqrst"],
         &["ABC", "DEFG", "HI", "JKLM"],
     ];
 
+    /// 0         1
+    /// 01234567890123456789
+    /// abcde h  ijklm nopqrst
+    /// ABC   FG HI    JKLM
+    const EXPECTED_ROWS_CLIP_CASE_1: &[&[&str]] =
+        &[&["h", "ijklm", "nopqr"], &["FG", "HI", "JKLM"]];
+
+    /// 0         1
+    /// 01234567890123456789
+    /// abcde gh ijklm nopqrst   abcde h  ijkl mnopqrst   
+    ///   ABC FG  HI      JKLM   ABC   FG  HI    JKLM
+    const EXPECTED_ROWS_CLIP_CASE_2: &[&[&str]] = &[&["gh", "ijklm", "nopqr"], &["FG", "HI", "JK"]];
+
     /// Columns truncated on the left.
     #[rstest]
-    #[case(ROWS_5_4_5_7, 2, Alignment::Left, &[5, 2, 5, 5], (&["h", "FG"], Alignment::Left), (&["nopqr", "JKLM"], Alignment::Left))]
-    #[case(ROWS_5_4_5_7, 2, Alignment::Right, &[5, 2, 5, 5], (&["gh", "FG"], Alignment::Right), (&["nopqr", "JK"], Alignment::Right))]
+    #[case(ROWS_5_4_5_7, 2, Alignment::Left, &[5, 2, 5, 5], EXPECTED_ROWS_CLIP_CASE_1)]
+    #[case(ROWS_5_4_5_7, 2, Alignment::Right, &[5, 2, 5, 5], EXPECTED_ROWS_CLIP_CASE_2)]
     fn test_constraints_with_clip(
         #[case] rows: &[&[&'static str]],
         #[case] position: usize,
-        #[case] cell_alignment: Alignment,
+        #[case] alignment: Alignment,
         #[case] expected_constraints: &[u16],
-        #[case] expected_first_cells: (&[&'static str; 2], Alignment),
-        #[case] expected_last_cells: (&[&'static str; 2], Alignment),
+        #[case] expected_rows: &[&[&'static str]],
     ) {
         const SCREEN_WIDTH: usize = 20;
         const NHEADCOLS: usize = 1;
@@ -1082,28 +1139,16 @@ mod test {
         let expected_constraints = new_constraints(expected_constraints);
         let constraints = tc.constraints();
         assert_eq!(expected_constraints, constraints);
-        let (expected_first_cells, expected_first_alignment) = expected_first_cells;
-        for (row, expected_first_cell) in rows.iter().zip(expected_first_cells) {
-            let colnum = 1;
-            let cell = row[colnum];
-            let colnum = colnum - NHEADCOLS;
-            let expected = Text::from(*expected_first_cell).alignment(expected_first_alignment);
-            let value = tc
-                .clip_cell(colnum, Cow::Borrowed(cell), cell_alignment)
-                .expect("not empty cell");
-            assert_eq!(expected, value);
-        }
-        let (expected_last_cells, expected_last_alignment) = expected_last_cells;
-        for (row, expected_last_cell) in rows.iter().zip(expected_last_cells) {
-            let colnum = row.len() - 1;
-            let cell = row[colnum];
-            let colnum = colnum - NHEADCOLS;
-            let expected = Text::from(*expected_last_cell).alignment(expected_last_alignment);
-            let value = tc
-                .clip_cell(colnum, Cow::Borrowed(cell), cell_alignment)
-                .expect("not empty cell");
-            assert_eq!(expected, value);
-        }
+        let body_size = widths.len() - NHEADCOLS;
+        assert_bodies_match(
+            &tc,
+            rows,
+            alignment,
+            expected_rows,
+            &(0..body_size).map(|_| alignment).collect::<Vec<_>>(),
+            widths.len(),
+            NHEADCOLS,
+        );
     }
 
     #[derive(Debug)]

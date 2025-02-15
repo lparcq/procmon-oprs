@@ -552,6 +552,10 @@ impl Bookmarks {
         let mut last_linepid = None;
         let mut matches = Vec::new();
         let mut marks = Vec::new();
+        if !matches!(scroll, Scroll::CurrentPosition) {
+            self.search = None;
+            self.clear_marks();
+        }
         let pattern = self.search_pattern();
 
         for (lineno, pi) in lines.enumerate() {
