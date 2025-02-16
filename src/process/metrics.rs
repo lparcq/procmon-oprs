@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020-2024  Laurent Pelecq
+// Copyright (C) 2020-2025  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::hash::Hash;
 use std::result;
-use strum_macros::{EnumIter, EnumMessage, EnumString, IntoStaticStr};
+use strum::{EnumIter, EnumMessage, EnumString, IntoStaticStr};
 
 use super::{
     format::{self, Formatter},

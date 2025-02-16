@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020-2024  Laurent Pelecq
+// Copyright (C) 2020-2025  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -16,7 +16,7 @@
 
 use light_ini::{IniHandler, IniParser};
 use std::{path::PathBuf, str::FromStr};
-use strum_macros::{EnumString, IntoStaticStr};
+use strum::{EnumString, IntoStaticStr};
 
 use crate::process::parsers::parse_size;
 

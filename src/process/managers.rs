@@ -17,7 +17,7 @@
 use getset::{Getters, Setters};
 use libc::pid_t;
 use std::borrow::Cow;
-use strum_macros::Display as StrumDisplay;
+use strum::Display as StrumDisplay;
 
 use super::{
     forest::{ProcessClassifier, ProcessResult},
