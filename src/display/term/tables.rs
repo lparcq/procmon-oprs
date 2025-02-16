@@ -17,7 +17,7 @@
 use getset::Getters;
 use itertools::izip;
 use libc::pid_t;
-use procfs::process::{Limit, LimitValue, Limits};
+use procfs::process::{FDInfo, FDPermissions, FDTarget, Limit, LimitValue, Limits};
 use ratatui::{
     layout::Alignment,
     style::{Color, Modifier, Style, Stylize},
@@ -30,6 +30,7 @@ use std::{
     cmp::Ordering,
     collections::{BTreeSet, HashMap},
     ffi::OsString,
+    fmt,
     rc::Rc,
 };
 
@@ -604,6 +605,140 @@ impl TableGenerator for EnvironmentTable {
 
     fn body_row_count(&self) -> usize {
         self.env.len()
+    }
+
+    fn widths(&self) -> &[u16] {
+        &self.widths
+    }
+}
+
+/// Table generator for process files.
+pub(crate) struct FilesTable {
+    files: Vec<(String, String, &'static str, String)>,
+    widths: Vec<u16>,
+}
+
+impl FilesTable {
+    const TITLES: [&str; 4] = ["Fd", "Mode", "Kind", "Value"];
+
+    pub(crate) fn new<E, I>(files: I) -> Self
+    where
+        E: fmt::Display,
+        I: IntoIterator<Item = Result<FDInfo, E>>,
+    {
+        let files = files
+            .into_iter()
+            .map(|res| match res {
+                Ok(fi) => {
+                    let fd = format!("{}", fi.fd);
+                    let mode = Self::bits_to_string(fi.mode().bits());
+                    let kind = Self::target_kind(&fi.target);
+                    let name = Self::target_to_string(&fi.target);
+                    (fd, mode, kind, name)
+                }
+                Err(err) => (String::new(), String::new(), "", format!("{err}")),
+            })
+            .collect::<Vec<_>>();
+        let widths = vec![
+            MaxLength::with_lines(files.iter().map(|(s, _, _, _)| s.as_str()))
+                .max(MaxLength::from(Self::TITLES[0]))
+                .len(),
+            MaxLength::with_lines(files.iter().map(|(_, s, _, _)| s.as_str()))
+                .max(MaxLength::from(Self::TITLES[1]))
+                .len(),
+            MaxLength::with_lines(files.iter().map(|(_, _, s, _)| *s))
+                .max(MaxLength::from(Self::TITLES[2]))
+                .len(),
+            MaxLength::with_lines(files.iter().map(|(_, _, _, s)| s.as_str()))
+                .max(MaxLength::from(Self::TITLES[3]))
+                .len(),
+        ];
+        Self { files, widths }
+    }
+
+    fn bits_to_string(bits: u16) -> String {
+        format!(
+            "{}{}{}",
+            Self::bit_to_char(bits, FDPermissions::READ.bits(), 'r'),
+            Self::bit_to_char(bits, FDPermissions::WRITE.bits(), 'r'),
+            Self::bit_to_char(bits, FDPermissions::EXECUTE.bits(), 'r')
+        )
+    }
+
+    fn bit_to_char(bits: u16, mask: u16, c: char) -> char {
+        if bits & mask == mask {
+            c
+        } else {
+            '-'
+        }
+    }
+
+    fn target_kind(target: &FDTarget) -> &'static str {
+        match target {
+            FDTarget::Path(_) => "file",
+            FDTarget::Socket(_) => "socket",
+            FDTarget::Net(_) => "net",
+            FDTarget::Pipe(_) => "pipe",
+            FDTarget::AnonInode(_) => "inode",
+            FDTarget::MemFD(_) => "memfd",
+            FDTarget::Other(_, _) => "other",
+        }
+    }
+
+    fn target_to_string(target: &FDTarget) -> String {
+        match target {
+            FDTarget::Path(path) => path
+                .to_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("{path:?}")),
+            FDTarget::Net(value) | FDTarget::Socket(value) | FDTarget::Pipe(value) => {
+                value.to_string()
+            }
+            FDTarget::AnonInode(value) | FDTarget::MemFD(value) => value.to_string(),
+            FDTarget::Other(s, n) => format!("{s}[{n}]"),
+        }
+    }
+}
+
+impl TableGenerator for FilesTable {
+    fn headers_size(&self) -> Area<usize> {
+        Area::new(0, 1)
+    }
+
+    fn top_headers(&self, clip: &TableClip<'_, '_>) -> Vec<Cell> {
+        Self::TITLES
+            .to_vec()
+            .drain(..)
+            .enumerate()
+            .filter_map(|(i, s)| {
+                clip.clip_cell(i, Cow::Borrowed(s), Alignment::Center)
+                    .map(|t| Cell::from(t.bold()))
+            })
+            .collect::<Vec<_>>()
+    }
+
+    fn rows(&self, clip: &TableClip<'_, '_>) -> Vec<Vec<Cell>> {
+        let vzoom = &clip.zoom().vertical;
+        self.files
+            .iter()
+            .skip(vzoom.position)
+            .take(vzoom.visible_length)
+            .map(|(fd, mode, kind, name)| {
+                vec![
+                    clip.clip_cell(0, Cow::Borrowed(fd.as_str()), Alignment::Right),
+                    clip.clip_cell(1, Cow::Borrowed(mode.as_str()), Alignment::Left),
+                    clip.clip_cell(2, Cow::Borrowed(kind), Alignment::Left),
+                    clip.clip_cell(3, Cow::Borrowed(name.as_str()), Alignment::Left),
+                ]
+                .drain(..)
+                .filter_map(|c| c.map(Cell::from))
+                .collect::<Vec<Cell>>()
+            })
+            .collect::<Vec<Vec<Cell>>>()
+    }
+
+    fn body_row_count(&self) -> usize {
+        self.files.len()
     }
 
     fn widths(&self) -> &[u16] {

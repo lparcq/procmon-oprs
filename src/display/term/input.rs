@@ -33,6 +33,7 @@ const KEY_ENV: Key = Key::Char('e');
 const KEY_ESCAPE: Key = Key::Esc;
 const KEY_FASTER: Key = Key::Char(KEY_FASTER_CHAR);
 const KEY_FASTER_CHAR: char = '+';
+const KEY_FILES: Key = Key::Char('f');
 const KEY_FILTERS: Key = Key::Char('f');
 const KEY_FILTER_ACTIVE: Key = Key::Char('a');
 const KEY_FILTER_NONE: Key = Key::Char('n');
@@ -82,6 +83,7 @@ pub enum Action {
     SwitchToDetails,
     SwitchToLimits,
     SwitchToEnvironment,
+    SwitchToFiles,
     ClearMarks,
     ToggleMarks,
     MultiplyTimeout(u16),
@@ -163,6 +165,7 @@ impl KeyMap {
                 Event::Key(KEY_SELECT_PARENT) => Action::SelectParent,
                 Event::Key(KEY_LIMITS) => Action::SwitchToLimits,
                 Event::Key(KEY_ENV) => Action::SwitchToEnvironment,
+                Event::Key(KEY_FILES) => Action::SwitchToFiles,
                 Event::Key(Key::PageDown) => Action::ScrollPageDown,
                 Event::Key(Key::PageUp) => Action::ScrollPageUp,
                 _ => Action::None,
@@ -290,6 +293,7 @@ pub fn menu() -> Vec<MenuEntry> {
         MenuEntry::with_key(KEY_SEARCH, "Search", KeyMapSet::OnlyIn(KeyMap::Main)),
         MenuEntry::with_key(KEY_LIMITS, "Limits", KeyMapSet::OnlyIn(KeyMap::Details)),
         MenuEntry::with_key(KEY_ENV, "Environment", KeyMapSet::OnlyIn(KeyMap::Details)),
+        MenuEntry::with_key(KEY_FILES, "Files", KeyMapSet::OnlyIn(KeyMap::Details)),
         MenuEntry::with_key(KEY_FILTERS, "Filters", KeyMapSet::OnlyIn(KeyMap::Main)),
         MenuEntry::with_key(
             KEY_SELECT_PARENT,

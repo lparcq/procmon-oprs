@@ -441,7 +441,12 @@ impl<'a, 'b> TableClip<'a, 'b> {
         let len = width - truncation;
         Text::from_iter(value.lines().map(|l| {
             let llen = l.len();
-            let indent = (width - llen) / 2;
+            let indent = if width >= llen {
+                (width - llen) / 2
+            } else {
+                log::error!("text \"{l}\" centered length {llen} is larger than column {width}");
+                0
+            };
             let llen = llen + indent;
             let s = match alignement {
                 Alignment::Left => format!("{l: <w$}", w = llen),

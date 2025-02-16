@@ -36,7 +36,7 @@ pub enum PauseStatus {
 pub enum DataKind {
     Details,
     Environment,
-    _Files,
+    Files,
     Limits,
     _Maps,
     _Threads,

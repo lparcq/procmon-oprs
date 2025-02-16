@@ -48,7 +48,7 @@ use panes::{
     BigTableState, BigTableWidget, FieldsWidget, GridPane, MarkdownWidget, OneLineWidget,
     OptionalRenderer, Pane, SingleScrollablePane, TableGenerator, TableStyle, Zoom,
 };
-use tables::{EnvironmentTable, LimitsTable, ProcessTreeTable, Styles, TreeData};
+use tables::{EnvironmentTable, FilesTable, LimitsTable, ProcessTreeTable, Styles, TreeData};
 use types::{Area, Motion};
 
 const HELP: &str = include_str!("help_en.md");
@@ -285,6 +285,7 @@ impl TerminalDevice {
             | Action::SwitchToDetails
             | Action::SwitchToLimits
             | Action::SwitchToEnvironment
+            | Action::SwitchToFiles
             | Action::UnselectRootPid
             | Action::Quit => (),
             Action::Filters => self.set_keymap(KeyMap::Filters),
@@ -367,6 +368,7 @@ impl TerminalDevice {
             },
             Action::SwitchToLimits => Interaction::SwitchTo(DataKind::Limits),
             Action::SwitchToEnvironment => Interaction::SwitchTo(DataKind::Environment),
+            Action::SwitchToFiles => Interaction::SwitchTo(DataKind::Files),
             _ => Interaction::None,
         })
     }
@@ -428,12 +430,14 @@ impl TerminalDevice {
             },
             PaneKind::Process(DataKind::Details) => match kind {
                 PaneKind::Process(DataKind::Details) => (None, Update::None),
-                PaneKind::Process(DataKind::Environment) => (Some(KeyMap::Process), Update::Push),
+                PaneKind::Process(DataKind::Environment | DataKind::Files) => {
+                    (Some(KeyMap::Process), Update::Push)
+                }
                 PaneKind::Main => (Some(KeyMap::Main), Update::Pop),
                 _ => mismatch(self.pane_kind, kind),
             },
-            PaneKind::Process(DataKind::Environment) => match kind {
-                PaneKind::Process(DataKind::Environment) => (None, Update::None),
+            PaneKind::Process(DataKind::Environment | DataKind::Files) => match kind {
+                PaneKind::Process(DataKind::Environment | DataKind::Files) => (None, Update::None),
                 PaneKind::Process(DataKind::Details) => (Some(KeyMap::Details), Update::Pop),
                 _ => mismatch(self.pane_kind, kind),
             },
@@ -681,6 +685,10 @@ impl TerminalDevice {
             },
             DataKind::Environment => match process.environ() {
                 Ok(env) => self.render_table(EnvironmentTable::new(env)),
+                Err(err) => self.render_error(err.to_string()),
+            },
+            DataKind::Files => match process.fd() {
+                Ok(files) => self.render_table(FilesTable::new(files)),
                 Err(err) => self.render_error(err.to_string()),
             },
             _ => self.render_error("not implemented"),

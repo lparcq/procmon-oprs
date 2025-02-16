@@ -149,10 +149,8 @@ impl MaxLength {
     where
         I: IntoIterator<Item = &'a str>,
     {
-        let mut ml = MaxLength(0);
-        for item in items.into_iter() {
-            ml.check(item);
-        }
+        let mut ml = Self(0);
+        ml.check_lines(items);
         ml
     }
 
@@ -165,6 +163,24 @@ impl MaxLength {
     /// Count the maximun length of a string
     pub(crate) fn check(&mut self, s: &str) {
         self.set_min(s.len());
+    }
+
+    pub(crate) fn max(self, other: Self) -> Self {
+        if self.0 < other.0 {
+            other
+        } else {
+            self
+        }
+    }
+
+    /// Check the length of each lines.
+    pub(crate) fn check_lines<'a, I>(&mut self, items: I)
+    where
+        I: IntoIterator<Item = &'a str>,
+    {
+        for item in items.into_iter() {
+            self.check(item);
+        }
     }
 
     /// Ensure a minimum length
