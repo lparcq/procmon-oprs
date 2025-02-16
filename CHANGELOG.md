@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.36.0] - 2025-02-16
+
+### 🚀 Features
+
+- Display file descriptors opened by a process.
+
+### 🐛 Bug Fixes
+
+- Upgrade to strum 0.27.
+- Change headers in table files.
+- Replace termbg to save size.
+
 ## [0.35.1] - 2025-02-15
 
 ### 🐛 Bug Fixes
@@ -12,6 +24,7 @@ All notable changes to this project will be documented in this file.
 ### ⚙️ Miscellaneous Tasks
 
 - Update nom and rand
+- Release procmon-oprs version 0.35.1
 
 ## [0.35.0] - 2025-02-14
 
