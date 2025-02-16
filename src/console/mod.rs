@@ -16,6 +16,7 @@
 
 use strum::EnumString;
 use supports_color::Stream;
+use terminal_colorsaurus::{color_scheme, ColorScheme, QueryOptions};
 
 pub use self::input::{is_tty, Event, EventChannel, Key};
 
@@ -38,23 +39,22 @@ pub enum BuiltinTheme {
 impl BuiltinTheme {
     /// Guess the theme
     pub fn guess() -> Option<BuiltinTheme> {
-        let timeout = std::time::Duration::from_millis(100);
-        match termbg::theme(timeout) {
+        match color_scheme(QueryOptions::default()) {
             Err(err) => {
                 log::info!("cannot guess theme: {err:?}");
                 None
             }
             Ok(theme) => match (theme, supports_color::on(Stream::Stdout)) {
-                (termbg::Theme::Dark, Some(support)) if support.has_16m || support.has_256 => {
+                (ColorScheme::Dark, Some(support)) if support.has_16m || support.has_256 => {
                     Some(BuiltinTheme::Dark)
                 }
-                (termbg::Theme::Light, Some(support)) if support.has_16m || support.has_256 => {
+                (ColorScheme::Light, Some(support)) if support.has_16m || support.has_256 => {
                     Some(BuiltinTheme::Light)
                 }
-                (termbg::Theme::Dark, Some(support)) if support.has_basic => {
+                (ColorScheme::Dark, Some(support)) if support.has_basic => {
                     Some(BuiltinTheme::Dark16)
                 }
-                (termbg::Theme::Light, Some(support)) if support.has_basic => {
+                (ColorScheme::Light, Some(support)) if support.has_basic => {
                     Some(BuiltinTheme::Light16)
                 }
                 _ => None,
