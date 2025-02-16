@@ -619,7 +619,7 @@ pub(crate) struct FilesTable {
 }
 
 impl FilesTable {
-    const TITLES: [&str; 4] = ["Fd", "Mode", "Kind", "Value"];
+    const TITLES: [&str; 4] = ["Fd", "Mode", "Kind", "Name"];
 
     pub(crate) fn new<E, I>(files: I) -> Self
     where
@@ -711,7 +711,7 @@ impl TableGenerator for FilesTable {
             .drain(..)
             .enumerate()
             .filter_map(|(i, s)| {
-                clip.clip_cell(i, Cow::Borrowed(s), Alignment::Center)
+                clip.clip_cell(i, Cow::Borrowed(s), Alignment::Left)
                     .map(|t| Cell::from(t.bold()))
             })
             .collect::<Vec<_>>()
