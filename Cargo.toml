@@ -14,6 +14,10 @@ edition = "2021"
 name = "oprs"
 path = "src/main.rs"
 
+[features]
+default = ["tui"]
+tui = ["dep:ratatui", "dep:supports-color", "dep:terminal-colorsaurus", "dep:termion"]
+
 [dependencies]
 anyhow = "1"
 argh = "0.1"
@@ -31,13 +35,13 @@ memchr = "2"
 nom = "8"
 num-traits = "0.2"
 procfs = "0.17"
+ratatui = { version = "0.29", default-features = false, features = ["termion"], optional = true }
 simplelog = "0.12"
 smart-default = "0.7"
 strum = { version = "0.27", features = ["derive"] }
-supports-color = "3"
-terminal-colorsaurus = "0.4"
-termion = "4"
-ratatui = { version = "0.29", default-features = false, features = ["termion"] }
+supports-color = { version = "3", optional = true }
+terminal-colorsaurus = { version = "0.4", optional = true }
+termion = { version = "4", optional = true }
 thiserror = "2"
 xdg = "2"
 

@@ -25,6 +25,8 @@ use std::{
     slice::Iter,
 };
 
+use super::{FormattedMetric, ProcessStat};
+
 #[cfg(not(test))]
 pub use procfs::{
     process::{self, all_processes, Process},
@@ -38,13 +40,14 @@ pub(crate) use super::mocks::procfs::{
     ProcResult,
 };
 
+#[cfg(feature = "tui")]
 fn format_path(path: PathBuf) -> String {
     path.to_str()
         .map(String::from)
         .unwrap_or_else(|| path.to_string_lossy().to_string())
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), feature = "tui"))]
 mod format {
     use super::format_path;
     use procfs::ProcError;
@@ -71,7 +74,7 @@ mod format {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "tui"))]
 mod format {
     use super::super::mocks::procfs::ProcError;
 
@@ -79,8 +82,6 @@ mod format {
         format!("{:?}", err)
     }
 }
-
-use super::{FormattedMetric, ProcessStat, SystemConf};
 
 #[derive(thiserror::Error, Debug)]
 pub enum ProcessError {
@@ -93,6 +94,7 @@ pub enum ProcessError {
 pub type ProcessResult<T> = Result<T, ProcessError>;
 
 /// Format a result returned by procfs.
+#[cfg(feature = "tui")]
 pub fn format_result(res: ProcResult<PathBuf>) -> String {
     match res {
         Ok(path) => format_path(path),
@@ -211,10 +213,12 @@ impl ProcessInfo {
         Self::new(process)
     }
 
+    #[cfg(feature = "tui")]
     pub fn uid(&self) -> Option<u32> {
         self.process.uid().ok()
     }
 
+    #[cfg(feature = "tui")]
     pub fn cmdline(&self) -> String {
         self.process
             .cmdline()
@@ -247,14 +251,10 @@ impl ProcessInfo {
         }
     }
 
-    pub fn extract_metrics(
-        &self,
-        metrics: Iter<FormattedMetric>,
-        sysconf: &SystemConf,
-    ) -> Vec<u64> {
+    pub fn extract_metrics(&self, metrics: Iter<FormattedMetric>) -> Vec<u64> {
         self.stats
             .borrow_mut()
-            .extract_metrics(metrics, &self.process, sysconf)
+            .extract_metrics(metrics, &self.process)
     }
 }
 

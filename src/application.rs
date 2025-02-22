@@ -24,19 +24,23 @@ use std::{
 use strum::{EnumMessage, IntoEnumIterator};
 
 use crate::{
-    cfg::{DisplayMode, ExportSettings, ExportType, MetricFormat, Settings},
+    cfg::{DisplayMode, ExportSettings, ExportType, Settings},
     clock::{DriftMonitor, Timer},
-    console::BuiltinTheme,
-    display::{
-        DataKind, DisplayDevice, Interaction, NullDevice, PaneData, PaneKind, PauseStatus,
-        TerminalDevice, TextDevice,
-    },
+    display::{DisplayDevice, NullDevice, PaneData, PaneKind, TextDevice},
     export::{CsvExporter, Exporter, RrdExporter},
     process::{
         Collector, FlatProcessManager, ForestProcessManager, FormattedMetric, MetricDataType,
-        MetricId, MetricNamesParser, ProcessDetails, ProcessManager, SystemConf, TargetId,
+        MetricId, MetricNamesParser, ProcessManager, ProcessResult, TargetId,
     },
     sighdr::SignalHandler,
+};
+
+#[cfg(feature = "tui")]
+use crate::{
+    cfg::MetricFormat,
+    console::theme::BuiltinTheme,
+    display::{DataKind, Interaction, PauseStatus, TerminalDevice},
+    process::ProcessDetails,
 };
 
 /// Delay in seconds between two notifications for time drift
@@ -46,10 +50,12 @@ const DRIFT_NOTIFICATION_DELAY: u64 = 300;
 pub enum Error {
     #[error("no target specified in non-terminal mode")]
     NoTargets,
+    #[cfg(feature = "tui")]
     #[error("terminal not available")]
     TerminalNotAvailable,
 }
 
+#[cfg(feature = "tui")]
 pub type ApplicationResult<T> = Result<T, Error>;
 
 /// List available metrics
@@ -68,6 +74,7 @@ pub fn list_metrics() {
 }
 
 /// Return the best available display
+#[cfg(feature = "tui")]
 fn resolve_display_mode(
     mode: DisplayMode,
     theme: Option<BuiltinTheme>,
@@ -88,66 +95,81 @@ fn resolve_display_mode(
     }
 }
 
-/// Application displaying the details metrics
-pub struct Application<'s> {
-    display_mode: DisplayMode,
-    every: Duration,
-    count: Option<u64>,
-    metrics: Vec<FormattedMetric>,
-    export_settings: &'s ExportSettings,
-    theme: Option<BuiltinTheme>,
-    human: bool,
+/// Return the best available display
+#[cfg(not(feature = "tui"))]
+fn resolve_display_mode(mode: DisplayMode) -> DisplayMode {
+    match mode {
+        DisplayMode::Any => DisplayMode::Text,
+        _ => mode,
+    }
 }
 
-impl<'s> Application<'s> {
-    pub fn new<'m>(
-        settings: &'s Settings,
-        metric_names: &[&'m str],
-    ) -> anyhow::Result<Application<'s>> {
-        let every = Duration::from_millis((settings.display.every * 1000.0) as u64);
-        let human = matches!(settings.display.format, MetricFormat::Human);
-        let mut metrics_parser = MetricNamesParser::new(human);
-        let (display_mode, theme) =
-            resolve_display_mode(settings.display.mode, settings.display.theme)?;
+/// State of the application
+struct State<'a> {
+    collector: Collector<'a>,
+    manager: Box<dyn ProcessManager>,
+    #[cfg(feature = "tui")]
+    human: bool,
+    pane_kind: PaneKind,
+    #[cfg(feature = "tui")]
+    root_pid: Option<pid_t>,
+    #[cfg(feature = "tui")]
+    details: Option<ProcessDetails<'a>>,
+}
 
-        Ok(Application {
-            display_mode,
-            every,
-            count: settings.display.count,
-            metrics: metrics_parser.parse(metric_names)?,
-            export_settings: &settings.export,
-            theme,
+impl<'a> State<'a> {
+    fn new(
+        metrics: &'a [FormattedMetric],
+        #[cfg(feature = "tui")] human: bool,
+        target_ids: &[TargetId],
+        root_pid: Option<pid_t>,
+    ) -> anyhow::Result<Self> {
+        let mut manager: Box<dyn ProcessManager> = if target_ids.is_empty() {
+            Box::new(ForestProcessManager::new()?)
+        } else {
+            Box::new(FlatProcessManager::new(metrics, target_ids)?)
+        };
+        if let Some(ctx) = manager.context() {
+            ctx.set_root_pid(root_pid);
+        }
+        Ok(Self {
+            collector: Collector::new(Cow::Borrowed(metrics)),
+            manager,
+            #[cfg(feature = "tui")]
             human,
+            pane_kind: PaneKind::Main,
+            #[cfg(feature = "tui")]
+            root_pid,
+            #[cfg(feature = "tui")]
+            details: None,
         })
     }
 
-    pub fn run(
-        &self,
-        target_ids: &[TargetId],
-        sysconf: &'_ SystemConf,
-        root_pid: Option<pid_t>,
-    ) -> anyhow::Result<()> {
-        info!("starting");
-        let mut is_interactive = false;
-        let device: Box<dyn DisplayDevice> = match self.display_mode {
-            DisplayMode::Terminal => {
-                is_interactive = true;
-                Box::new(TerminalDevice::new(self.every, self.theme)?)
+    fn refresh_metrics(&mut self) -> ProcessResult<bool> {
+        self.manager.refresh(&mut self.collector)
+    }
+
+    fn pane_data(&self) -> PaneData {
+        match self.pane_kind {
+            PaneKind::Main => PaneData::Collector(&self.collector),
+            #[cfg(feature = "tui")]
+            PaneKind::Process(DataKind::Details) => {
+                PaneData::Details(self.details.as_ref().unwrap())
             }
-            DisplayMode::Text => Box::new(TextDevice::new()),
-            _ => Box::new(NullDevice::new()),
-        };
-        if target_ids.is_empty() && !is_interactive {
-            Err(anyhow::anyhow!(Error::NoTargets))
-        } else {
-            self.run_loop(device, sysconf, target_ids, root_pid, is_interactive)
+            #[cfg(feature = "tui")]
+            PaneKind::Process(_) => {
+                PaneData::Process(self.details.as_ref().unwrap().process().process())
+            }
+            #[cfg(feature = "tui")]
+            PaneKind::Help => PaneData::None,
         }
     }
 
     /// Get process details.
-    fn get_details(&self, pid: pid_t, sysconf: &'_ SystemConf) -> Option<ProcessDetails> {
-        match ProcessDetails::new(pid, self.human) {
-            Ok(mut details) => details.refresh(sysconf).ok().map(|_| details),
+    #[cfg(feature = "tui")]
+    fn get_details(human: bool, pid: pid_t) -> Option<ProcessDetails<'a>> {
+        match ProcessDetails::new(pid, human) {
+            Ok(mut details) => details.refresh().ok().map(|_| details),
             Err(_) => {
                 log::error!("{pid}: details cannot be selected");
                 None
@@ -156,12 +178,10 @@ impl<'s> Application<'s> {
     }
 
     /// Get parent process details.
-    fn get_parent_details<'a>(
-        details: Option<ProcessDetails<'a>>,
-        sysconf: &'_ SystemConf,
-    ) -> Option<ProcessDetails<'a>> {
+    #[cfg(feature = "tui")]
+    fn get_parent_details(details: Option<ProcessDetails<'a>>) -> Option<ProcessDetails<'a>> {
         details.and_then(|details| match details.parent() {
-            Ok(mut details) => details.refresh(sysconf).ok().map(|_| details),
+            Ok(mut details) => details.refresh().ok().map(|_| details),
             Err(_) => {
                 log::error!(
                     "{}: details of parent cannot be selected",
@@ -172,23 +192,159 @@ impl<'s> Application<'s> {
         })
     }
 
+    #[cfg(feature = "tui")]
+    fn refresh_details(&mut self) {
+        if match &mut self.details {
+            Some(details) => details.refresh().is_err(),
+            None => false,
+        } {
+            self.details = None;
+            self.pane_kind = PaneKind::Main;
+        }
+    }
+
+    #[cfg(feature = "tui")]
+    fn interact(&mut self, action: &Interaction) -> anyhow::Result<bool> {
+        match action {
+            Interaction::Quit => return Ok(false),
+            Interaction::Filter(filter) => {
+                self.manager.context().map(|c| c.set_filter(*filter));
+                self.manager.refresh(&mut self.collector)?;
+            }
+            Interaction::SwitchBack => match (self.pane_kind, &self.details) {
+                (PaneKind::Process(DataKind::Details), Some(_)) => {
+                    self.details = None;
+                    self.pane_kind = PaneKind::Main;
+                }
+                (PaneKind::Help | PaneKind::Process(_), Some(_)) => {
+                    self.pane_kind = PaneKind::Process(DataKind::Details)
+                }
+                (_, _) => self.pane_kind = PaneKind::Main,
+            },
+            Interaction::SwitchToHelp => self.pane_kind = PaneKind::Help,
+            Interaction::SwitchTo(kind) => {
+                if matches!(self.pane_kind, PaneKind::Process(_)) {
+                    self.pane_kind = PaneKind::Process(*kind);
+                }
+            }
+            Interaction::SelectPid(pid) => {
+                self.details = Self::get_details(self.human, *pid);
+                if self.details.is_some() {
+                    self.pane_kind = PaneKind::Process(DataKind::Details);
+                }
+            }
+            Interaction::SelectParent => {
+                self.details = Self::get_parent_details(self.details.take());
+                if self.details.is_some() {
+                    self.pane_kind = PaneKind::Process(DataKind::Details);
+                }
+            }
+            Interaction::SelectRootPid(new_root_pid) => {
+                self.root_pid = *new_root_pid;
+                self.manager
+                    .context()
+                    .map(|c| c.set_root_pid(self.root_pid));
+                self.manager.refresh(&mut self.collector)?;
+            }
+            Interaction::Narrow(pids) => {
+                log::debug!("switch to flat mode with {} PIDs", pids.len());
+                self.manager = Box::new(FlatProcessManager::with_pids(pids));
+                self.manager.refresh(&mut self.collector)?;
+            }
+            Interaction::Wide => {
+                log::debug!("switch to explorer mode");
+                self.manager = Box::new(ForestProcessManager::new()?);
+                self.manager
+                    .context()
+                    .map(|c| c.set_root_pid(self.root_pid));
+                self.manager.refresh(&mut self.collector)?;
+            }
+            Interaction::None => (),
+        }
+        Ok(true)
+    }
+}
+
+/// Application displaying the details metrics
+pub struct Application<'s> {
+    display_mode: DisplayMode,
+    every: Duration,
+    count: Option<u64>,
+    metrics: Vec<FormattedMetric>,
+    export_settings: &'s ExportSettings,
+    #[cfg(feature = "tui")]
+    theme: Option<BuiltinTheme>,
+    #[cfg(feature = "tui")]
+    human: bool,
+}
+
+impl<'s> Application<'s> {
+    pub fn new<'m>(
+        settings: &'s Settings,
+        metric_names: &[&'m str],
+    ) -> anyhow::Result<Application<'s>> {
+        let every = Duration::from_millis((settings.display.every * 1000.0) as u64);
+        #[cfg(feature = "tui")]
+        let human = matches!(settings.display.format, MetricFormat::Human);
+        #[cfg(not(feature = "tui"))]
+        let human = false;
+        let mut metrics_parser = MetricNamesParser::new(human);
+        #[cfg(feature = "tui")]
+        let (display_mode, theme) =
+            resolve_display_mode(settings.display.mode, settings.display.theme)?;
+        #[cfg(not(feature = "tui"))]
+        let display_mode = resolve_display_mode(settings.display.mode);
+
+        Ok(Application {
+            display_mode,
+            every,
+            count: settings.display.count,
+            metrics: metrics_parser.parse(metric_names)?,
+            export_settings: &settings.export,
+            #[cfg(feature = "tui")]
+            theme,
+            #[cfg(feature = "tui")]
+            human,
+        })
+    }
+
+    pub fn run(&self, target_ids: &[TargetId], root_pid: Option<pid_t>) -> anyhow::Result<()> {
+        info!("starting");
+        #[cfg(feature = "tui")]
+        let mut is_interactive = false;
+        #[cfg(not(feature = "tui"))]
+        let is_interactive = false;
+        let device: Box<dyn DisplayDevice> = match self.display_mode {
+            #[cfg(feature = "tui")]
+            DisplayMode::Terminal => {
+                is_interactive = true;
+                Box::new(TerminalDevice::new(self.every, self.theme)?)
+            }
+            DisplayMode::Text => Box::new(TextDevice::new()),
+            _ => Box::new(NullDevice::new()),
+        };
+
+        if target_ids.is_empty() && !is_interactive {
+            Err(anyhow::anyhow!(Error::NoTargets))
+        } else {
+            self.run_loop(device, target_ids, root_pid, is_interactive)
+        }
+    }
+
     fn run_loop(
         &self,
         mut device: Box<dyn DisplayDevice>,
-        sysconf: &'_ SystemConf,
         target_ids: &[TargetId],
-        mut root_pid: Option<pid_t>,
+        root_pid: Option<pid_t>,
         is_interactive: bool,
     ) -> anyhow::Result<()> {
-        let mut collector = Collector::new(Cow::Borrowed(&self.metrics));
-        let mut tmgt: Box<dyn ProcessManager> = if target_ids.is_empty() {
-            Box::new(ForestProcessManager::new(sysconf)?)
-        } else {
-            Box::new(FlatProcessManager::new(sysconf, &self.metrics, target_ids)?)
-        };
-        tmgt.context().map(|c| c.set_root_pid(root_pid));
-        let mut details: Option<ProcessDetails> = None;
-        let mut pane_kind = PaneKind::Main;
+        let mut state = State::new(
+            &self.metrics,
+            #[cfg(feature = "tui")]
+            self.human,
+            target_ids,
+            root_pid,
+        )?;
 
         device.open(self.metrics.iter())?;
         let mut exporter: Option<Box<dyn Exporter>> = match self.export_settings.kind {
@@ -214,36 +370,18 @@ impl<'s> Application<'s> {
         while !sighdr.caught() {
             let targets_updated = if timer.expired() {
                 let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
-                let targets_updated = tmgt.refresh(&mut collector)?;
-                if match &mut details {
-                    Some(details) => details.refresh(sysconf).is_err(),
-                    None => false,
-                } {
-                    details = None;
-                    pane_kind = PaneKind::Main;
-                }
+                let targets_updated = state.refresh_metrics()?;
+                #[cfg(feature = "tui")]
+                state.refresh_details();
                 if let Some(ref mut exporter) = exporter {
-                    exporter.export(&collector, &timestamp)?;
+                    exporter.export(&state.collector, &timestamp)?;
                 }
                 timer.reset();
                 targets_updated
             } else {
                 false
             };
-            device.render(
-                pane_kind,
-                match pane_kind {
-                    PaneKind::Main => PaneData::Collector(&collector),
-                    PaneKind::Process(DataKind::Details) => {
-                        PaneData::Details(details.as_ref().unwrap())
-                    }
-                    PaneKind::Process(_) => {
-                        PaneData::Process(details.as_ref().unwrap().process().process())
-                    }
-                    PaneKind::Help => PaneData::None,
-                },
-                targets_updated,
-            )?;
+            device.render(state.pane_kind, state.pane_data(), targets_updated)?;
 
             if let Some(count) = self.count {
                 loop_number += 1;
@@ -252,58 +390,10 @@ impl<'s> Application<'s> {
                 }
             }
             if is_interactive {
+                #[cfg(feature = "tui")]
                 if let PauseStatus::Action(action) = device.pause(&mut timer)? {
-                    match action {
-                        Interaction::Quit => break,
-                        Interaction::Filter(filter) => {
-                            tmgt.context().map(|c| c.set_filter(filter));
-                            tmgt.refresh(&mut collector)?;
-                        }
-                        Interaction::SwitchBack => match (pane_kind, &details) {
-                            (PaneKind::Process(DataKind::Details), Some(_)) => {
-                                details = None;
-                                pane_kind = PaneKind::Main;
-                            }
-                            (PaneKind::Help | PaneKind::Process(_), Some(_)) => {
-                                pane_kind = PaneKind::Process(DataKind::Details)
-                            }
-                            (_, _) => pane_kind = PaneKind::Main,
-                        },
-                        Interaction::SwitchToHelp => pane_kind = PaneKind::Help,
-                        Interaction::SwitchTo(kind) => {
-                            if matches!(pane_kind, PaneKind::Process(_)) {
-                                pane_kind = PaneKind::Process(kind);
-                            }
-                        }
-                        Interaction::SelectPid(pid) => {
-                            details = self.get_details(pid, sysconf);
-                            if details.is_some() {
-                                pane_kind = PaneKind::Process(DataKind::Details);
-                            }
-                        }
-                        Interaction::SelectParent => {
-                            details = Application::get_parent_details(details, sysconf);
-                            if details.is_some() {
-                                pane_kind = PaneKind::Process(DataKind::Details);
-                            }
-                        }
-                        Interaction::SelectRootPid(new_root_pid) => {
-                            root_pid = new_root_pid;
-                            tmgt.context().map(|c| c.set_root_pid(root_pid));
-                            tmgt.refresh(&mut collector)?;
-                        }
-                        Interaction::Narrow(pids) => {
-                            log::debug!("switch to flat mode with {} PIDs", pids.len());
-                            tmgt = Box::new(FlatProcessManager::with_pids(sysconf, &pids));
-                            tmgt.refresh(&mut collector)?;
-                        }
-                        Interaction::Wide => {
-                            log::debug!("switch to explorer mode");
-                            tmgt = Box::new(ForestProcessManager::new(sysconf)?);
-                            tmgt.context().map(|c| c.set_root_pid(root_pid));
-                            tmgt.refresh(&mut collector)?;
-                        }
-                        Interaction::None => (),
+                    if !state.interact(&action)? {
+                        break;
                     }
                 }
             } else {

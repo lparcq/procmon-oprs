@@ -27,7 +27,7 @@ use termion::{
 
 use crate::{
     clock::Timer,
-    console::{is_tty, BuiltinTheme, EventChannel},
+    console::{is_tty, theme::BuiltinTheme, EventChannel},
     process::{
         self, format::human_duration, Aggregation, Collector, FormattedMetric, Process,
         ProcessDetails, ProcessFilter,

@@ -33,8 +33,13 @@ impl CpuTime {
 pub(crate) mod process {
 
     use libc::pid_t;
-    use procfs::process::{FDInfo, Io, Limits, MemoryMaps, StatM};
-    use std::{cell::RefCell, collections::HashMap, ffi::OsString, io, path::PathBuf, rc::Rc};
+    use procfs::process::{FDInfo, Io, MemoryMaps, StatM};
+    use std::{cell::RefCell, io, path::PathBuf, rc::Rc};
+
+    #[cfg(feature = "tui")]
+    use procfs::process::Limits;
+    #[cfg(feature = "tui")]
+    use std::{collections::HashMap, ffi::OsString};
 
     pub(crate) use procfs::process::Stat;
 
@@ -135,6 +140,7 @@ pub(crate) mod process {
                 .ok_or_else(|| new_error("no command line"))
         }
 
+        #[cfg(feature = "tui")]
         pub(crate) fn uid(&self) -> ProcResult<u32> {
             Ok(0)
         }
@@ -146,6 +152,7 @@ pub(crate) mod process {
                 .ok_or_else(|| new_error("no executable"))
         }
 
+        #[cfg(feature = "tui")]
         pub(crate) fn cwd(&self) -> ProcResult<PathBuf> {
             Err(new_error("Process::cwd not implemented"))
         }
@@ -158,10 +165,12 @@ pub(crate) mod process {
             Err(new_error("Process::io not implemented"))
         }
 
+        #[cfg(feature = "tui")]
         pub(crate) fn environ(&self) -> ProcResult<HashMap<OsString, OsString>> {
             Err(new_error("Process::environ not implemented"))
         }
 
+        #[cfg(feature = "tui")]
         pub(crate) fn limits(&self) -> ProcResult<Limits> {
             Err(new_error("Process::limits not implemented"))
         }

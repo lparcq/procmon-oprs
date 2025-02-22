@@ -16,14 +16,19 @@
 
 use getset::{Getters, Setters};
 use libc::pid_t;
-use std::borrow::Cow;
 use strum::Display as StrumDisplay;
+
+#[cfg(feature = "tui")]
+use std::borrow::Cow;
 
 use super::{
     forest::{ProcessClassifier, ProcessResult},
-    format, Aggregation, Collector, Forest, FormattedMetric, MetricNamesParser, ProcessInfo,
-    Sample, SystemConf, SystemStat, TargetContainer, TargetError, TargetId,
+    format, Aggregation, Collector, Forest, FormattedMetric, ProcessInfo, SystemStat,
+    TargetContainer, TargetError, TargetId,
 };
+
+#[cfg(feature = "tui")]
+use super::{MetricNamesParser, Sample};
 
 /// Number of idle cycles to be considered as inactive.
 const INACTIVITY: u16 = 5;
@@ -31,10 +36,12 @@ const INACTIVITY: u16 = 5;
 /// High-level filter on processes
 #[derive(Clone, Copy, Debug, StrumDisplay)]
 pub enum ProcessFilter {
+    #[cfg(feature = "tui")]
     #[strum(serialize = "none")]
     None,
     #[strum(serialize = "user")]
     UserLand,
+    #[cfg(feature = "tui")]
     #[strum(serialize = "active")]
     Active,
 }
@@ -48,6 +55,7 @@ impl Default for ProcessFilter {
 /// Context for mananagers.
 #[derive(Debug, Default, Getters, Setters)]
 pub struct ManagerContext {
+    #[cfg(feature = "tui")]
     #[getset(set = "pub")]
     filter: ProcessFilter,
     #[getset(get_copy = "pub", set = "pub")]
@@ -55,6 +63,7 @@ pub struct ManagerContext {
 }
 
 /// Specific metrics.
+#[cfg(feature = "tui")]
 pub struct ProcessMetrics<'b> {
     pub time_cpu: &'b Sample,
     pub time_elapsed: &'b Sample,
@@ -69,6 +78,7 @@ pub struct ProcessMetrics<'b> {
 }
 
 /// Detailled view of a process.
+#[cfg(feature = "tui")]
 #[derive(Getters)]
 pub struct ProcessDetails<'a> {
     #[getset(get = "pub")]
@@ -78,6 +88,7 @@ pub struct ProcessDetails<'a> {
     collector: Collector<'a>,
 }
 
+#[cfg(feature = "tui")]
 impl ProcessDetails<'_> {
     pub fn new(pid: pid_t, human: bool) -> ProcessResult<Self> {
         let metric_names = vec![
@@ -123,9 +134,9 @@ impl ProcessDetails<'_> {
     }
 
     /// Refresh the metrics.
-    pub fn refresh(&mut self, sysconf: &SystemConf) -> ProcessResult<()> {
+    pub fn refresh(&mut self) -> ProcessResult<()> {
         self.process.refresh()?;
-        self.collector.collect(&self.name, &self.process, sysconf);
+        self.collector.collect(&self.name, &self.process);
         Ok(())
     }
 
@@ -160,28 +171,25 @@ pub trait ProcessManager {
 }
 
 /// A Process manager that process a fixed list of targets.
-pub struct FlatProcessManager<'s> {
-    targets: TargetContainer<'s>,
+pub struct FlatProcessManager {
+    targets: TargetContainer,
 }
 
-impl<'s> FlatProcessManager<'s> {
-    pub fn new(
-        sysconf: &'s SystemConf,
-        metrics: &[FormattedMetric],
-        target_ids: &[TargetId],
-    ) -> Result<Self, TargetError> {
+impl FlatProcessManager {
+    pub fn new(metrics: &[FormattedMetric], target_ids: &[TargetId]) -> Result<Self, TargetError> {
         let with_system = metrics
             .iter()
             .any(|metric| metric.aggregations.has(Aggregation::Ratio));
 
-        let mut targets = TargetContainer::new(sysconf, with_system);
+        let mut targets = TargetContainer::new(with_system);
         targets.push_all(target_ids)?;
         Ok(Self { targets })
     }
 
     /// Create a process manager only from PIDS. Discard PIDS that are not valid.
-    pub fn with_pids(sysconf: &'s SystemConf, pids: &[pid_t]) -> Self {
-        let mut targets = TargetContainer::new(sysconf, true);
+    #[cfg(feature = "tui")]
+    pub fn with_pids(pids: &[pid_t]) -> Self {
+        let mut targets = TargetContainer::new(true);
         pids.iter().for_each(|pid| {
             if let Err(err) = targets.push_by_pid(&TargetId::Pid(*pid)) {
                 log::warn!("{pid}: {err}");
@@ -191,7 +199,7 @@ impl<'s> FlatProcessManager<'s> {
     }
 }
 
-impl ProcessManager for FlatProcessManager<'_> {
+impl ProcessManager for FlatProcessManager {
     fn refresh(&mut self, collector: &mut Collector) -> ProcessResult<bool> {
         let targets_updated = self.targets.refresh();
         self.targets.collect(collector);
@@ -210,17 +218,15 @@ impl ProcessClassifier for AcceptUserLand {
 }
 
 /// A Process explorer that interactively displays the process tree.
-pub struct ForestProcessManager<'s> {
-    sysconf: &'s SystemConf,
+pub struct ForestProcessManager {
     forest: Forest,
     context: ManagerContext,
     inactivity: u16,
 }
 
-impl<'s> ForestProcessManager<'s> {
-    pub fn new(sysconf: &'s SystemConf) -> Result<Self, TargetError> {
+impl ForestProcessManager {
+    pub fn new() -> Result<Self, TargetError> {
         Ok(Self {
-            sysconf,
             forest: Forest::new(),
             context: ManagerContext::default(),
             inactivity: 0,
@@ -239,19 +245,19 @@ impl<'s> ForestProcessManager<'s> {
                 .filter(|pinfo| {
                     !pinfo.hidden() && (ignore_idleness || pinfo.idleness() < self.inactivity)
                 })
-                .for_each(|pinfo| collector.collect(pinfo.name(), pinfo, self.sysconf));
+                .for_each(|pinfo| collector.collect(pinfo.name(), pinfo));
         }
         Ok(())
     }
 }
 
-impl ProcessManager for ForestProcessManager<'_> {
+impl ProcessManager for ForestProcessManager {
     fn context(&mut self) -> Option<&mut ManagerContext> {
         Some(&mut self.context)
     }
 
     fn refresh(&mut self, collector: &mut Collector) -> ProcessResult<bool> {
-        let mut system = SystemStat::new(self.sysconf);
+        let mut system = SystemStat::new();
         let system_info = format!(
             "[{} cores -- {}]",
             SystemStat::num_cores().unwrap_or(0),
@@ -269,13 +275,19 @@ impl ProcessManager for ForestProcessManager<'_> {
         if self.inactivity < INACTIVITY {
             self.inactivity += 1;
         }
+        #[cfg(feature = "tui")]
         let changed = match self.context.filter {
             ProcessFilter::None => self.forest.refresh(),
             ProcessFilter::UserLand | ProcessFilter::Active => {
                 self.forest.refresh_if(&AcceptUserLand::default())
             }
         }?;
+        #[cfg(not(feature = "tui"))]
+        let changed = self.forest.refresh_if(&AcceptUserLand::default())?;
+        #[cfg(feature = "tui")]
         let ignore_idleness = !matches!(self.context.filter, ProcessFilter::Active);
+        #[cfg(not(feature = "tui"))]
+        let ignore_idleness = false;
         match self.context.root_pid {
             Some(root_pid) if self.forest.has_process(root_pid) => {
                 self.collect_descendants(collector, &[root_pid], ignore_idleness)?

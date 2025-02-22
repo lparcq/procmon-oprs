@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020-2024  Laurent Pelecq
+// Copyright (C) 2020-2025  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -27,9 +27,7 @@ use std::fs;
 #[cfg(test)]
 use super::mocks::fs;
 
-use super::{
-    Collector, Forest as ProcessForest, ProcessError, ProcessInfo, SystemConf, SystemStat,
-};
+use super::{Collector, Forest as ProcessForest, ProcessError, ProcessInfo, SystemStat};
 
 #[derive(thiserror::Error, Debug)]
 pub enum TargetError {
@@ -87,25 +85,23 @@ fn read_pid_file(pid_file: &Path) -> TargetResult<pid_t> {
 /// Process defined by a pid.
 ///
 /// Once the process is gone, the target returns no metrics.
-struct Target<'a> {
+struct Target {
     name: String,
     pinfo: Option<ProcessInfo>,
     pid_file: Option<PathBuf>,
-    sysconf: &'a SystemConf,
 }
 
-impl<'a> Target<'a> {
-    fn new(pid: pid_t, sysconf: &'a SystemConf) -> TargetResult<Self> {
+impl Target {
+    fn new(pid: pid_t) -> TargetResult<Self> {
         let pinfo = ProcessInfo::with_pid(pid).map_err(|_| TargetError::InvalidProcessId(pid))?;
         Ok(Self {
             name: pinfo.name().to_string(),
             pinfo: Some(pinfo),
             pid_file: None,
-            sysconf,
         })
     }
 
-    fn with_pid_file<P>(pid_file: P, sysconf: &'a SystemConf) -> TargetResult<Self>
+    fn with_pid_file<P>(pid_file: P) -> TargetResult<Self>
     where
         P: AsRef<Path>,
     {
@@ -115,7 +111,6 @@ impl<'a> Target<'a> {
                 .ok_or_else(|| TargetError::InvalidPath(pid_file.to_path_buf()))?,
             pinfo: None,
             pid_file: Some(pid_file.to_path_buf()),
-            sysconf,
         })
     }
 
@@ -144,23 +139,21 @@ impl<'a> Target<'a> {
 
     fn collect(&self, collector: &mut Collector) {
         if let Some(pinfo) = &self.pinfo {
-            collector.collect(&self.name, pinfo, self.sysconf);
+            collector.collect(&self.name, pinfo);
         }
     }
 }
 
 /// Target container
-pub struct TargetContainer<'a> {
-    targets: Vec<Target<'a>>,
-    sysconf: &'a SystemConf,
+pub struct TargetContainer {
+    targets: Vec<Target>,
     with_system: bool,
 }
 
-impl<'a> TargetContainer<'a> {
-    pub fn new(sysconf: &'a SystemConf, with_system: bool) -> TargetContainer<'a> {
+impl TargetContainer {
+    pub fn new(with_system: bool) -> TargetContainer {
         TargetContainer {
             targets: Vec::new(),
-            sysconf,
             with_system,
         }
     }
@@ -187,7 +180,7 @@ impl<'a> TargetContainer<'a> {
     pub fn collect(&self, collector: &mut Collector) {
         collector.rewind();
         if self.with_system {
-            let mut system = SystemStat::new(self.sysconf);
+            let mut system = SystemStat::new();
             collector.collect_system(&mut system);
             collector.record("system", None, &system.extract_metrics(collector.metrics()));
         }
@@ -202,8 +195,8 @@ impl<'a> TargetContainer<'a> {
     /// Panic if the target is not a PID or a PID file.
     pub fn push_by_pid(&mut self, target_id: &TargetId) -> TargetResult<()> {
         let target = match target_id {
-            TargetId::Pid(pid) => Target::new(*pid, self.sysconf)?,
-            TargetId::PidFile(pid_file) => Target::with_pid_file(pid_file, self.sysconf)?,
+            TargetId::Pid(pid) => Target::new(*pid)?,
+            TargetId::PidFile(pid_file) => Target::with_pid_file(pid_file)?,
             _ => panic!("already matched"),
         };
         self.targets.push(target);
@@ -221,7 +214,7 @@ impl<'a> TargetContainer<'a> {
                     if let Ok(descendants) = forest.descendants(p.pid()) {
                         descendants.for_each(|p| {
                             if name == p.name() {
-                                match Target::new(p.pid(), self.sysconf) {
+                                match Target::new(p.pid()) {
                                     Ok(target) => self.targets.push(target),
                                     Err(err) => error!("{name}: {err}"),
                                 }

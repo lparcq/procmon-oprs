@@ -41,7 +41,7 @@ use super::{
 };
 
 use crate::{
-    console::BuiltinTheme,
+    console::theme::BuiltinTheme,
     process::{
         format::{human_format, Unit},
         Collector, ProcessIdentity, ProcessSamples,

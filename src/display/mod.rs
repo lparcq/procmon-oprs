@@ -16,22 +16,29 @@
 
 use std::slice::Iter as SliceIter;
 
+use crate::process::{Collector, FormattedMetric};
+
+#[cfg(feature = "tui")]
 use crate::{
     clock::Timer,
-    process::{Collector, FormattedMetric, Process, ProcessDetails},
+    process::{Process, ProcessDetails},
 };
 
 pub mod null;
-pub mod term;
 pub mod text;
 
+#[cfg(feature = "tui")]
+pub mod term;
+
 /// Status of the device when returning from a pause.
+#[cfg(feature = "tui")]
 #[derive(Debug)]
 pub enum PauseStatus {
     TimeOut,
     Action(Interaction),
 }
 
+#[cfg(feature = "tui")]
 #[derive(Debug, Clone, Copy)]
 pub enum DataKind {
     Details,
@@ -45,19 +52,24 @@ pub enum DataKind {
 #[derive(Debug, Clone, Copy)]
 pub enum PaneKind {
     Main,
+    #[cfg(feature = "tui")]
     Process(DataKind),
+    #[cfg(feature = "tui")]
     Help,
 }
 
 /// Data to display the pane.
 pub enum PaneData<'a, 'p> {
     /// No data.
+    #[cfg(feature = "tui")]
     None,
     /// The collector for all processes.
     Collector(&'p Collector<'a>),
     /// The details for one process.
+    #[cfg(feature = "tui")]
     Details(&'p ProcessDetails<'a>),
     /// The process.
+    #[cfg(feature = "tui")]
     Process(&'p Process),
 }
 
@@ -75,11 +87,14 @@ pub trait DisplayDevice {
     fn render(&mut self, pane_kind: PaneKind, data: PaneData, redraw: bool) -> anyhow::Result<()>;
 
     /// Pause for the given duration.
+    #[cfg(feature = "tui")]
     fn pause(&mut self, _: &mut Timer) -> anyhow::Result<PauseStatus> {
         panic!("not available");
     }
 }
 
 pub use null::NullDevice;
-pub use term::{Interaction, TerminalDevice};
 pub use text::TextDevice;
+
+#[cfg(feature = "tui")]
+pub use term::{Interaction, TerminalDevice};

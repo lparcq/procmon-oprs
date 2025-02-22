@@ -38,11 +38,11 @@ mod process;
 mod sighdr;
 
 use application::Application;
-use cfg::{
-    BuiltinTheme, DisplayMode, ExportType, LoggingLevel, LoggingSettings, MetricFormat,
-    LOG_FILE_NAME,
-};
-use process::{matchers, parsers::parse_size, TargetId};
+use cfg::{DisplayMode, ExportType, LoggingLevel, LoggingSettings, MetricFormat, LOG_FILE_NAME};
+use process::{matchers, parsers::parse_size, SystemConf, TargetId};
+
+#[cfg(feature = "tui")]
+use crate::console::theme::BuiltinTheme;
 
 const APP_NAME: &str = "oprs";
 
@@ -58,7 +58,9 @@ macro_rules! make_arg_converter {
     };
 }
 
+#[cfg(feature = "tui")]
 make_arg_converter!(theme_from_str, BuiltinTheme);
+
 make_arg_converter!(export_type_from_str, ExportType);
 make_arg_converter!(display_mode_from_str, DisplayMode);
 make_arg_converter!(metric_format_from_str, MetricFormat);
@@ -79,6 +81,7 @@ struct Opt {
     #[argh(option, short = 'L', description = "log file")]
     log_file: Option<String>,
 
+    #[cfg(feature = "tui")]
     #[argh(
         option,
         short = 'T',
@@ -262,6 +265,7 @@ fn start(opt: Opt) -> anyhow::Result<()> {
     override_parameter!(settings.display.every, opt.every);
     override_parameter!(settings.display.format, opt.format);
     override_parameter!(settings.display.count, opt.count, count, Some(count));
+    #[cfg(feature = "tui")]
     override_parameter!(settings.display.theme, opt.theme, theme, Some(theme));
     override_parameter!(settings.export.kind, opt.export_type);
     override_parameter!(settings.export.dir, opt.export_dir, dir, PathBuf::from(dir));
@@ -337,8 +341,8 @@ fn start(opt: Opt) -> anyhow::Result<()> {
             log::debug!("{bcktrc}");
         }
     }));
-    let sysconf = process::SystemConf::new()?;
-    if let Err(err) = app.run(&target_ids, &sysconf, opt.root) {
+    let _ = SystemConf::initialize()?;
+    if let Err(err) = app.run(&target_ids, opt.root) {
         log::error!("{}", err);
         if settings.logging.file.is_some() {
             eprintln!("{err}");

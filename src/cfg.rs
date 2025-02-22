@@ -20,7 +20,8 @@ use strum::{EnumString, IntoStaticStr};
 
 use crate::process::parsers::parse_size;
 
-pub use crate::console::BuiltinTheme;
+#[cfg(feature = "tui")]
+use crate::console::theme::BuiltinTheme;
 
 pub const DEFAULT_DELAY: f64 = 5.0;
 pub const LOG_FILE_NAME: &str = "settings";
@@ -45,6 +46,7 @@ pub enum DisplayMode {
     Any,
     #[strum(serialize = "text")]
     Text,
+    #[cfg(feature = "tui")]
     #[strum(serialize = "term")]
     Terminal,
 }
@@ -108,6 +110,7 @@ pub struct DisplaySettings {
     pub every: f64,
     pub count: Option<u64>,
     pub format: MetricFormat,
+    #[cfg(feature = "tui")]
     pub theme: Option<BuiltinTheme>,
 }
 
@@ -118,6 +121,7 @@ impl DisplaySettings {
             every: DEFAULT_DELAY,
             count: None,
             format: MetricFormat::Human,
+            #[cfg(feature = "tui")]
             theme: None,
         }
     }
@@ -256,6 +260,7 @@ impl IniHandler for ConfigHandler<'_> {
                     "mode" => settings.mode = from_param!(DisplayMode, key, value)?,
                     "every" => settings.every = from_param!(key, value.parse::<f64>())?,
                     "format" => settings.format = from_param!(MetricFormat, key, value)?,
+                    #[cfg(feature = "tui")]
                     "theme" => settings.theme = Some(from_param!(BuiltinTheme, key, value)?),
                     _ => return Err(ConfigError::InvalidOption(key.to_string())),
                 }
@@ -331,12 +336,14 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        BuiltinTheme, ConfigHandler, DisplayMode, ExportType, IniParser, LoggingLevel,
-        MetricFormat, Settings,
+        ConfigHandler, DisplayMode, ExportType, IniParser, LoggingLevel, MetricFormat, Settings,
     };
 
+    #[cfg(feature = "tui")]
+    use super::BuiltinTheme;
+
     const VALID_INI: &str = "[display]
-mode = term
+mode = text
 every = 10
 format = human
 theme = light
@@ -365,6 +372,7 @@ myself = yes
         assert_eq!(DisplayMode::Any, settings.display.mode);
         assert_eq!(super::DEFAULT_DELAY, settings.display.every);
         assert_eq!(MetricFormat::Human, settings.display.format);
+        #[cfg(feature = "tui")]
         assert_eq!(None, settings.display.theme);
         assert_eq!(ExportType::None, settings.export.kind);
         assert_eq!(PathBuf::from("."), settings.export.dir);
@@ -378,9 +386,10 @@ myself = yes
         let mut parser = IniParser::new(&mut handler);
         parser.parse(buf).unwrap();
 
-        assert_eq!(DisplayMode::Terminal, settings.display.mode);
+        assert_eq!(DisplayMode::Text, settings.display.mode);
         assert_eq!(10.0, settings.display.every);
         assert_eq!(MetricFormat::Human, settings.display.format);
+        #[cfg(feature = "tui")]
         assert_eq!(Some(BuiltinTheme::Light), settings.display.theme);
         assert_eq!(ExportType::Rrd, settings.export.kind);
         assert_eq!(PathBuf::from("/tmp"), settings.export.dir);

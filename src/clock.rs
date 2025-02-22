@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020-2024  Laurent Pelecq
+// Copyright (C) 2020-2025  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -48,6 +48,7 @@ impl Timer {
     }
 
     /// change the delay of the timer. If it hasn't already expired, ajust the remaining time.
+    #[cfg(feature = "tui")]
     pub fn set_delay(&mut self, delay: Duration) {
         if let Some(remaining) = self.remaining {
             self.remaining = if delay >= self.delay {
@@ -186,6 +187,7 @@ mod tests {
         assert!(remaining < delay);
     }
 
+    #[cfg(feature = "tui")]
     #[test]
     fn set_delay() {
         const SHORT_DELAY_VALUE: u64 = 60;

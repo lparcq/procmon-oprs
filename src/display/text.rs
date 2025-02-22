@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020, 2021  Laurent Pelecq
+// Copyright (C) 2020-2025  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -327,6 +327,7 @@ impl DisplayDevice for TextDevice {
                     self.table.print(redraw);
                 }
             }
+            #[cfg(feature = "tui")]
             (_, _) => panic!("invalid pane for text device"),
         }
         Ok(())

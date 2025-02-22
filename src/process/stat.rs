@@ -16,7 +16,7 @@
 
 // Extract metrics from procfs interface.
 
-use std::{collections::HashMap, fmt, slice::Iter, time::SystemTime};
+use std::{collections::HashMap, fmt, slice::Iter, sync::OnceLock, time::SystemTime};
 
 use procfs::{
     process::{FDTarget, Io, MMapPath, Stat, StatM},
@@ -43,24 +43,26 @@ fn elapsed_seconds_since(start_time: u64) -> u64 {
 }
 
 /// System Configuration
+#[derive(Debug, Clone, Copy)]
 pub struct SystemConf {
     ticks_per_second: u64,
     boot_time_seconds: u64,
     page_size: u64,
 }
 
+pub static SYS_CONF: OnceLock<SystemConf> = OnceLock::new();
+
 impl SystemConf {
-    pub fn new() -> StatResult<SystemConf> {
+    pub fn initialize() -> StatResult<&'static SystemConf> {
         let ticks_per_second = procfs::ticks_per_second();
         let kstat =
             KernelStats::current().map_err(|err| StatError::KernelStats(format!("{:?}", err)))?;
         let page_size = procfs::page_size();
-
-        Ok(SystemConf {
+        Ok(SYS_CONF.get_or_init(|| SystemConf {
             ticks_per_second,
             boot_time_seconds: kstat.btime,
             page_size,
-        })
+        }))
     }
 
     /// Convert a number of ticks in milliseconds.
@@ -70,17 +72,28 @@ impl SystemConf {
     }
 }
 
+macro_rules! sysconf {
+    () => {
+        SYS_CONF.get().expect("system configuration")
+    };
+}
+
+macro_rules! ticks_to_millis {
+    ($ticks:expr) => {
+        sysconf!().ticks_to_millis($ticks)
+    };
+}
+
 /// System info
-pub struct SystemStat<'a> {
-    sysconf: &'a SystemConf,
+#[derive(Debug)]
+pub struct SystemStat {
     cputime: Option<CpuTime>,
     meminfo: Option<Meminfo>,
 }
 
-impl<'a> SystemStat<'a> {
-    pub fn new(sysconf: &'a SystemConf) -> SystemStat<'a> {
+impl SystemStat {
+    pub fn new() -> SystemStat {
         SystemStat {
-            sysconf,
             cputime: None,
             meminfo: None,
         }
@@ -126,8 +139,7 @@ impl<'a> SystemStat<'a> {
     }
 
     pub fn total_time(&mut self) -> u64 {
-        self.sysconf
-            .ticks_to_millis(self.with_cputime(|ct| ct.idle) + self.non_idle_ticks())
+        sysconf!().ticks_to_millis(self.with_cputime(|ct| ct.idle) + self.non_idle_ticks())
     }
 
     pub fn extract_metrics(&mut self, metrics: Iter<FormattedMetric>) -> Vec<u64> {
@@ -136,16 +148,10 @@ impl<'a> SystemStat<'a> {
                 MetricId::MemVm => self
                     .with_meminfo(|mi| mi.mem_total - mi.mem_free + mi.swap_total - mi.swap_free),
                 MetricId::MemRss => self.with_meminfo(|mi| mi.mem_total - mi.mem_free),
-                MetricId::TimeElapsed => {
-                    elapsed_seconds_since(self.sysconf.boot_time_seconds) * 1000
-                }
-                MetricId::TimeCpu => self.sysconf.ticks_to_millis(self.non_idle_ticks()),
-                MetricId::TimeSystem => self
-                    .sysconf
-                    .ticks_to_millis(self.with_cputime(|ct| ct.system)),
-                MetricId::TimeUser => self
-                    .sysconf
-                    .ticks_to_millis(self.with_cputime(|ct| ct.user)),
+                MetricId::TimeElapsed => elapsed_seconds_since(sysconf!().boot_time_seconds) * 1000,
+                MetricId::TimeCpu => ticks_to_millis!(self.non_idle_ticks()),
+                MetricId::TimeSystem => ticks_to_millis!(self.with_cputime(|ct| ct.system)),
+                MetricId::TimeUser => ticks_to_millis!(self.with_cputime(|ct| ct.user)),
                 _ => 0,
             })
             .collect()
@@ -376,28 +382,29 @@ impl ProcessStat {
         self.on_optional_stat(process, func).unwrap_or(0)
     }
 
-    fn on_system_stat<F>(&mut self, process: &Process, sysconf: &SystemConf, func: F) -> u64
+    fn on_system_stat<F>(&mut self, process: &Process, func: F) -> u64
     where
-        F: Fn(&Stat, &SystemConf) -> u64,
+        F: Fn(&Stat) -> u64,
     {
         if self.stat.is_none() {
             self.stat = process.stat().ok();
         }
-        self.stat.as_ref().map_or(0, |stat| func(stat, sysconf))
+        self.stat.as_ref().map_or(0, func)
     }
 
-    fn on_system_statm<F>(&mut self, process: &Process, sysconf: &SystemConf, func: F) -> u64
+    fn on_system_statm<F>(&mut self, process: &Process, func: F) -> u64
     where
-        F: Fn(&StatM, &SystemConf) -> u64,
+        F: Fn(&StatM) -> u64,
     {
         if self.statm.is_none() {
             self.statm = process.statm().ok();
         }
-        self.statm.as_ref().map_or(0, |statm| func(statm, sysconf))
+        self.statm.as_ref().map_or(0, func)
     }
 
     /// Elapsed seconds of the process
-    fn elapsed_seconds(stat: &Stat, sysconf: &SystemConf) -> u64 {
+    fn elapsed_seconds(stat: &Stat) -> u64 {
+        let sysconf = sysconf!();
         let process_start = sysconf.boot_time_seconds + stat.starttime / sysconf.ticks_per_second;
         elapsed_seconds_since(process_start)
     }
@@ -406,7 +413,6 @@ impl ProcessStat {
         &mut self,
         metrics: Iter<FormattedMetric>,
         process: &Process,
-        sysconf: &SystemConf,
     ) -> Vec<u64> {
         metrics
             .map(|metric| match metric.id {
@@ -455,25 +461,25 @@ impl ProcessStat {
                 }
                 MetricId::MemVm => self.on_stat(process, |stat| stat.vsize),
                 MetricId::MemRss => {
-                    self.on_system_stat(process, sysconf, |stat, sc| stat.rss * sc.page_size)
+                    self.on_system_stat(process, |stat| stat.rss * sysconf!().page_size)
                 }
                 MetricId::MemText => {
-                    self.on_system_statm(process, sysconf, |statm, sc| statm.text * sc.page_size)
+                    self.on_system_statm(process, |statm| statm.text * sysconf!().page_size)
                 }
                 MetricId::MemData => {
-                    self.on_system_statm(process, sysconf, |statm, sc| statm.data * sc.page_size)
+                    self.on_system_statm(process, |statm| statm.data * sysconf!().page_size)
                 }
                 MetricId::TimeElapsed => {
-                    self.on_system_stat(process, sysconf, ProcessStat::elapsed_seconds) * 1000
+                    self.on_system_stat(process, ProcessStat::elapsed_seconds) * 1000
                 }
                 MetricId::TimeCpu => {
-                    sysconf.ticks_to_millis(self.on_stat(process, |stat| stat.stime + stat.utime))
+                    ticks_to_millis!(self.on_stat(process, |stat| stat.stime + stat.utime))
                 }
                 MetricId::TimeSystem => {
-                    sysconf.ticks_to_millis(self.on_stat(process, |stat| stat.stime))
+                    ticks_to_millis!(self.on_stat(process, |stat| stat.stime))
                 }
                 MetricId::TimeUser => {
-                    sysconf.ticks_to_millis(self.on_stat(process, |stat| stat.utime))
+                    ticks_to_millis!(self.on_stat(process, |stat| stat.utime))
                 }
                 MetricId::ThreadCount => self.on_stat(process, |stat| stat.num_threads as u64),
             })

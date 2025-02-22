@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020  Laurent Pelecq
+// Copyright (C) 2020-2025  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+#[cfg(feature = "tui")]
 use std::time::Duration;
 
 pub type Formatter = fn(u64) -> String;
@@ -151,6 +152,7 @@ pub fn human_milliseconds(millis: u64) -> String {
 }
 
 /// Duration in human readable format
+#[cfg(feature = "tui")]
 pub fn human_duration(duration: Duration) -> String {
     let ms = duration.as_secs() * 1000 + duration.subsec_millis() as u64;
     human_milliseconds(ms)
@@ -161,6 +163,7 @@ pub fn ratio(value: u64) -> String {
     format!("{:.1}%", (value as f32) / 10.0)
 }
 
+#[cfg(feature = "tui")]
 #[derive(Debug, Clone, Copy)]
 pub enum Unit {
     Number,
@@ -169,6 +172,7 @@ pub enum Unit {
 }
 
 /// Format according to the unit.
+#[cfg(feature = "tui")]
 pub fn human_format(value: u64, unit: Unit) -> String {
     match unit {
         Unit::Number => value.to_string(),

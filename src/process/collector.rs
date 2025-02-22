@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020-2024  Laurent Pelecq
+// Copyright (C) 2020-2025  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@ use std::{
 };
 use strum::IntoEnumIterator;
 
-use super::{format, Aggregation, FormattedMetric, MetricId, ProcessInfo, SystemConf, SystemStat};
+use super::{format, Aggregation, FormattedMetric, MetricId, ProcessInfo, SystemStat};
 
 /// Tell if it makes sense to track metric changes
 ///
@@ -68,6 +68,7 @@ impl Sample {
     }
 
     /// Return the trend of formatted strings
+    #[cfg(feature = "tui")]
     pub fn trends(&self) -> SliceIter<Ordering> {
         self.trends.iter()
     }
@@ -398,6 +399,7 @@ impl<'b> Iterator for LineIter<'b> {
 }
 
 /// Collect raw samples from target and returns computed values
+#[derive(Getters)]
 pub struct Collector<'a> {
     /// List of tracked metrics.
     metrics: Cow<'a, [FormattedMetric]>,
@@ -488,8 +490,8 @@ impl<'a> Collector<'a> {
     }
 
     /// Collect metrics
-    pub fn collect(&mut self, target_name: &str, pinfo: &ProcessInfo, sysconf: &SystemConf) {
-        let values = pinfo.extract_metrics(self.metrics(), sysconf);
+    pub fn collect(&mut self, target_name: &str, pinfo: &ProcessInfo) {
+        let values = pinfo.extract_metrics(self.metrics());
         self.record(target_name, Some(pinfo), &values);
     }
 
@@ -522,6 +524,7 @@ impl<'a> Collector<'a> {
         }
     }
 
+    #[cfg(feature = "tui")]
     pub fn line_count(&self) -> usize {
         self.pids.len()
     }
