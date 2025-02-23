@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.37.0] - 2025-02-23
+
+### 🚀 Features
+
+- Add feature tui to optionally disable terminal support
+- [**breaking**] Change --format human to units.
+
+### 🐛 Bug Fixes
+
+- Add units back in non tui mode.
+
+### ⚙️ Miscellaneous Tasks
+
+- Num-traits is used only for feature tui.
+
 ## [0.36.0] - 2025-02-16
 
 ### 🚀 Features
@@ -13,6 +28,10 @@ All notable changes to this project will be documented in this file.
 - Upgrade to strum 0.27.
 - Change headers in table files.
 - Replace termbg to save size.
+
+### ⚙️ Miscellaneous Tasks
+
+- Release procmon-oprs version 0.36.0
 
 ## [0.35.1] - 2025-02-15
 
