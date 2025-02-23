@@ -24,7 +24,7 @@ use std::{
 use strum::{EnumMessage, IntoEnumIterator};
 
 use crate::{
-    cfg::{DisplayMode, ExportSettings, ExportType, Settings},
+    cfg::{DisplayMode, ExportSettings, ExportType, MetricFormat, Settings},
     clock::{DriftMonitor, Timer},
     display::{DisplayDevice, NullDevice, PaneData, PaneKind, TextDevice},
     export::{CsvExporter, Exporter, RrdExporter},
@@ -37,7 +37,6 @@ use crate::{
 
 #[cfg(feature = "tui")]
 use crate::{
-    cfg::MetricFormat,
     console::theme::BuiltinTheme,
     display::{DataKind, Interaction, PauseStatus, TerminalDevice},
     process::ProcessDetails,
@@ -284,10 +283,7 @@ impl<'s> Application<'s> {
         metric_names: &[&'m str],
     ) -> anyhow::Result<Application<'s>> {
         let every = Duration::from_millis((settings.display.every * 1000.0) as u64);
-        #[cfg(feature = "tui")]
         let human = matches!(settings.display.format, MetricFormat::Human);
-        #[cfg(not(feature = "tui"))]
-        let human = false;
         let mut metrics_parser = MetricNamesParser::new(human);
         #[cfg(feature = "tui")]
         let (display_mode, theme) =
