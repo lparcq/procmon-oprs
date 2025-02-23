@@ -43,6 +43,8 @@ pub(crate) use self::managers::{FlatProcessManager, ForestProcessManager, Proces
 #[cfg(feature = "tui")]
 pub(crate) use self::managers::{ProcessDetails, ProcessFilter};
 
-pub(crate) use self::metrics::{FormattedMetric, MetricDataType, MetricId, MetricNamesParser};
+pub(crate) use self::metrics::{
+    FormattedMetric, MetricDataType, MetricFormat, MetricId, MetricNamesParser,
+};
 pub(crate) use self::stat::{ProcessStat, SystemConf, SystemStat};
 pub(crate) use self::targets::{TargetContainer, TargetError, TargetId};

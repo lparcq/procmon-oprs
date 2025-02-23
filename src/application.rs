@@ -24,7 +24,7 @@ use std::{
 use strum::{EnumMessage, IntoEnumIterator};
 
 use crate::{
-    cfg::{DisplayMode, ExportSettings, ExportType, MetricFormat, Settings},
+    cfg::{DisplayMode, ExportSettings, ExportType, Settings},
     clock::{DriftMonitor, Timer},
     display::{DisplayDevice, NullDevice, PaneData, PaneKind, TextDevice},
     export::{CsvExporter, Exporter, RrdExporter},
@@ -39,7 +39,7 @@ use crate::{
 use crate::{
     console::theme::BuiltinTheme,
     display::{DataKind, Interaction, PauseStatus, TerminalDevice},
-    process::ProcessDetails,
+    process::{MetricFormat, ProcessDetails},
 };
 
 /// Delay in seconds between two notifications for time drift
@@ -108,7 +108,7 @@ struct State<'a> {
     collector: Collector<'a>,
     manager: Box<dyn ProcessManager>,
     #[cfg(feature = "tui")]
-    human: bool,
+    format: MetricFormat,
     pane_kind: PaneKind,
     #[cfg(feature = "tui")]
     root_pid: Option<pid_t>,
@@ -119,7 +119,7 @@ struct State<'a> {
 impl<'a> State<'a> {
     fn new(
         metrics: &'a [FormattedMetric],
-        #[cfg(feature = "tui")] human: bool,
+        #[cfg(feature = "tui")] format: MetricFormat,
         target_ids: &[TargetId],
         root_pid: Option<pid_t>,
     ) -> anyhow::Result<Self> {
@@ -135,7 +135,7 @@ impl<'a> State<'a> {
             collector: Collector::new(Cow::Borrowed(metrics)),
             manager,
             #[cfg(feature = "tui")]
-            human,
+            format,
             pane_kind: PaneKind::Main,
             #[cfg(feature = "tui")]
             root_pid,
@@ -166,8 +166,8 @@ impl<'a> State<'a> {
 
     /// Get process details.
     #[cfg(feature = "tui")]
-    fn get_details(human: bool, pid: pid_t) -> Option<ProcessDetails<'a>> {
-        match ProcessDetails::new(pid, human) {
+    fn get_details(pid: pid_t, format: MetricFormat) -> Option<ProcessDetails<'a>> {
+        match ProcessDetails::new(pid, format) {
             Ok(mut details) => details.refresh().ok().map(|_| details),
             Err(_) => {
                 log::error!("{pid}: details cannot be selected");
@@ -227,7 +227,7 @@ impl<'a> State<'a> {
                 }
             }
             Interaction::SelectPid(pid) => {
-                self.details = Self::get_details(self.human, *pid);
+                self.details = Self::get_details(*pid, self.format);
                 if self.details.is_some() {
                     self.pane_kind = PaneKind::Process(DataKind::Details);
                 }
@@ -274,7 +274,7 @@ pub struct Application<'s> {
     #[cfg(feature = "tui")]
     theme: Option<BuiltinTheme>,
     #[cfg(feature = "tui")]
-    human: bool,
+    format: MetricFormat,
 }
 
 impl<'s> Application<'s> {
@@ -283,8 +283,8 @@ impl<'s> Application<'s> {
         metric_names: &[&'m str],
     ) -> anyhow::Result<Application<'s>> {
         let every = Duration::from_millis((settings.display.every * 1000.0) as u64);
-        let human = matches!(settings.display.format, MetricFormat::Human);
-        let mut metrics_parser = MetricNamesParser::new(human);
+        let format = settings.display.format;
+        let mut metrics_parser = MetricNamesParser::new(format);
         #[cfg(feature = "tui")]
         let (display_mode, theme) =
             resolve_display_mode(settings.display.mode, settings.display.theme)?;
@@ -300,7 +300,7 @@ impl<'s> Application<'s> {
             #[cfg(feature = "tui")]
             theme,
             #[cfg(feature = "tui")]
-            human,
+            format,
         })
     }
 
@@ -337,7 +337,7 @@ impl<'s> Application<'s> {
         let mut state = State::new(
             &self.metrics,
             #[cfg(feature = "tui")]
-            self.human,
+            self.format,
             target_ids,
             root_pid,
         )?;

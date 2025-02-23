@@ -18,7 +18,7 @@ use light_ini::{IniHandler, IniParser};
 use std::{path::PathBuf, str::FromStr};
 use strum::{EnumString, IntoStaticStr};
 
-use crate::process::parsers::parse_size;
+use crate::process::{parsers::parse_size, MetricFormat};
 
 #[cfg(feature = "tui")]
 use crate::console::theme::BuiltinTheme;
@@ -77,20 +77,6 @@ impl ExportType {
     }
 }
 
-#[derive(Clone, Copy, Debug, EnumString, IntoStaticStr, PartialEq, Eq)]
-pub enum MetricFormat {
-    #[strum(serialize = "raw")]
-    Raw,
-    #[strum(serialize = "human")]
-    Human,
-}
-
-impl MetricFormat {
-    pub fn as_str(self) -> &'static str {
-        self.into()
-    }
-}
-
 #[derive(thiserror::Error, Debug)]
 pub enum ConfigError {
     #[error("{0}: invalid section")]
@@ -120,7 +106,7 @@ impl DisplaySettings {
             mode: DisplayMode::Any,
             every: DEFAULT_DELAY,
             count: None,
-            format: MetricFormat::Human,
+            format: MetricFormat::Units,
             #[cfg(feature = "tui")]
             theme: None,
         }
@@ -345,7 +331,7 @@ mod tests {
     const VALID_INI: &str = "[display]
 mode = text
 every = 10
-format = human
+format = units
 theme = light
 
 [export]
@@ -371,7 +357,7 @@ myself = yes
         let mut settings = Settings::new();
         assert_eq!(DisplayMode::Any, settings.display.mode);
         assert_eq!(super::DEFAULT_DELAY, settings.display.every);
-        assert_eq!(MetricFormat::Human, settings.display.format);
+        assert_eq!(MetricFormat::Units, settings.display.format);
         #[cfg(feature = "tui")]
         assert_eq!(None, settings.display.theme);
         assert_eq!(ExportType::None, settings.export.kind);
@@ -388,7 +374,7 @@ myself = yes
 
         assert_eq!(DisplayMode::Text, settings.display.mode);
         assert_eq!(10.0, settings.display.every);
-        assert_eq!(MetricFormat::Human, settings.display.format);
+        assert_eq!(MetricFormat::Units, settings.display.format);
         #[cfg(feature = "tui")]
         assert_eq!(Some(BuiltinTheme::Light), settings.display.theme);
         assert_eq!(ExportType::Rrd, settings.export.kind);

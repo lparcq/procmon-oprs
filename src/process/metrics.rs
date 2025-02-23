@@ -38,6 +38,20 @@ pub enum Error {
     UnknownMetric(String),
 }
 
+#[derive(Clone, Copy, Debug, EnumString, IntoStaticStr, PartialEq, Eq)]
+pub enum MetricFormat {
+    #[strum(serialize = "raw")]
+    Raw,
+    #[strum(serialize = "units")]
+    Units,
+}
+
+impl MetricFormat {
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
+}
+
 /// Metric data type
 ///
 /// There are two types:
@@ -371,17 +385,15 @@ impl FormattedMetric {
 }
 
 /// Metric names parser
-pub struct MetricNamesParser {
-    human_format: bool,
-}
+pub struct MetricNamesParser(MetricFormat);
 
 impl MetricNamesParser {
-    pub fn new(human_format: bool) -> MetricNamesParser {
-        MetricNamesParser { human_format }
+    pub fn new(format: MetricFormat) -> Self {
+        Self(format)
     }
 
-    // Return the more readable format for a human
-    fn get_human_format(id: MetricId) -> Formatter {
+    /// Return the more readable format for a human
+    fn get_units_formatter(id: MetricId) -> Formatter {
         match id {
             MetricId::IoReadCall
             | MetricId::IoReadTotal
@@ -409,17 +421,21 @@ impl MetricNamesParser {
         }
     }
 
+    /// Raw formatter.
+    fn get_raw_formatter(id: MetricId) -> Formatter {
+        match id {
+            MetricId::TimeElapsed
+            | MetricId::TimeCpu
+            | MetricId::TimeSystem
+            | MetricId::TimeUser => format::seconds,
+            _ => format::identity,
+        }
+    }
+
     fn get_default_formatter(&self, id: MetricId) -> Formatter {
-        if self.human_format {
-            MetricNamesParser::get_human_format(id)
-        } else {
-            match id {
-                MetricId::TimeElapsed
-                | MetricId::TimeCpu
-                | MetricId::TimeSystem
-                | MetricId::TimeUser => format::seconds,
-                _ => format::identity,
-            }
+        match self.0 {
+            MetricFormat::Units => Self::get_units_formatter(id),
+            MetricFormat::Raw => Self::get_raw_formatter(id),
         }
     }
 
@@ -463,7 +479,7 @@ mod tests {
     use std::str::FromStr;
     use strum::{EnumMessage, IntoEnumIterator};
 
-    use super::{MetricDataType, MetricId, MetricNamesParser};
+    use super::{MetricDataType, MetricFormat, MetricId, MetricNamesParser};
 
     fn vec_of_string(vstr: &[&str]) -> Vec<String> {
         vstr.iter().map(|s| s.to_string()).collect()
@@ -528,12 +544,12 @@ mod tests {
             "thread:count",
         ]);
         // Check few metrics
-        let mut parser1 = MetricNamesParser::new(false);
+        let mut parser1 = MetricNamesParser::new(MetricFormat::Raw);
         let metrics1 = parser1.parse(&metric_names[0..2]).unwrap();
         assert_eq!(2, metrics1.len());
 
         // Check all metrics
-        let mut parser2 = MetricNamesParser::new(false);
+        let mut parser2 = MetricNamesParser::new(MetricFormat::Raw);
         let metric_count = metric_names.len();
         let metrics2 = parser2.parse(&metric_names).unwrap();
         assert_eq!(metric_count, metrics2.len());
@@ -543,19 +559,19 @@ mod tests {
     fn test_expand_metric_names() {
         // Check prefix
         let metric_names1 = vec_of_string(&["mem:*"]);
-        let mut parser1 = MetricNamesParser::new(false);
+        let mut parser1 = MetricNamesParser::new(MetricFormat::Raw);
         let metrics1 = parser1.parse(&metric_names1).unwrap();
         assert_eq!(4, metrics1.len());
 
         // Check suffix
         let metric_names2 = vec_of_string(&["*:storage"]);
-        let mut parser2 = MetricNamesParser::new(false);
+        let mut parser2 = MetricNamesParser::new(MetricFormat::Raw);
         let metrics2 = parser2.parse(&metric_names2).unwrap();
         assert_eq!(2, metrics2.len());
 
         // Check middle
         let metric_names3 = vec_of_string(&["io:*:total"]);
-        let mut parser3 = MetricNamesParser::new(false);
+        let mut parser3 = MetricNamesParser::new(MetricFormat::Raw);
         let metrics3 = parser3.parse(&metric_names3).unwrap();
         assert_eq!(2, metrics3.len());
     }
@@ -564,7 +580,7 @@ mod tests {
     fn test_expand_metric_names_errors() {
         for pattern in &["mem:*:*", "me*", "not:*"] {
             let metric_names = vec_of_string(&[pattern]);
-            let mut parser = MetricNamesParser::new(false);
+            let mut parser = MetricNamesParser::new(MetricFormat::Raw);
             assert!(
                 parser.parse(&metric_names).is_err(),
                 "pattern \"{}\" works unexpectedly",

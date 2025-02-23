@@ -38,8 +38,8 @@ mod process;
 mod sighdr;
 
 use application::Application;
-use cfg::{DisplayMode, ExportType, LoggingLevel, LoggingSettings, MetricFormat, LOG_FILE_NAME};
-use process::{matchers, parsers::parse_size, SystemConf, TargetId};
+use cfg::{DisplayMode, ExportType, LoggingLevel, LoggingSettings, LOG_FILE_NAME};
+use process::{matchers, parsers::parse_size, MetricFormat, SystemConf, TargetId};
 
 #[cfg(feature = "tui")]
 use crate::console::theme::BuiltinTheme;
@@ -137,7 +137,7 @@ struct Opt {
         option,
         short = 'U',
         from_str_fn(metric_format_from_str),
-        description = "units format to display metrics (raw, human)"
+        description = "format to display metrics (raw, units)"
     )]
     format: Option<MetricFormat>,
 

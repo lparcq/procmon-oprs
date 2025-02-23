@@ -28,7 +28,7 @@ use super::{
 };
 
 #[cfg(feature = "tui")]
-use super::{MetricNamesParser, Sample};
+use super::{MetricFormat, MetricNamesParser, Sample};
 
 /// Number of idle cycles to be considered as inactive.
 const INACTIVITY: u16 = 5;
@@ -90,7 +90,7 @@ pub struct ProcessDetails<'a> {
 
 #[cfg(feature = "tui")]
 impl ProcessDetails<'_> {
-    pub fn new(pid: pid_t, human: bool) -> ProcessResult<Self> {
+    pub fn new(pid: pid_t, format: MetricFormat) -> ProcessResult<Self> {
         let metric_names = vec![
             "time:cpu-raw+ratio",
             "time:elapsed",
@@ -103,7 +103,7 @@ impl ProcessDetails<'_> {
             "io:write:total",
             "thread:count",
         ];
-        let mut parser = MetricNamesParser::new(human);
+        let mut parser = MetricNamesParser::new(format);
         let metrics = parser.parse(&metric_names).unwrap();
         let process = ProcessInfo::with_pid(pid)?;
         let name = process.name().to_string();
