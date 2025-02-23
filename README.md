@@ -27,7 +27,7 @@ Example
 To get the memory size, elapsed time and page fault of a process by PID (firefox), a process by pid
 file (pulseaudio) and a process by name (bash), run:
 
-    oprs -F human -p 29220 -f pulseaudio.pid -n zellij mem:vm mem:rss+max time:elapsed fault:major
+    oprs -F units -p 29220 -f pulseaudio.pid -n zellij mem:vm mem:rss+max time:elapsed fault:major
 
 ![Screenshot of oprs](doc/screenshot.jpeg)
 
@@ -40,7 +40,7 @@ Limited patterns are allowed for metrics: by prefix `mem:*`, suffix `*:call`,
 both `io:*:count`.
 
 A metric may be followed by a unit, for example: `mem:vm/gi`. It's usually
-easier to use `--format human`.
+easier to use `--format units`.
 
 Available units:
 - ki: kibi
@@ -131,7 +131,7 @@ Example `~/.config/oprs/settings.ini`:
     [display]
     mode = term
     every = 10
-    format = human
+    format = units
     theme = light
     border = yes
 
