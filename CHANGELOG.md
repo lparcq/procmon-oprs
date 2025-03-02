@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.37.1] - 2025-03-02
+
+### 🐛 Bug Fixes
+
+- Error messages in console breaks the UI.
+
+### ⚙️ Miscellaneous Tasks
+
+- Fix README to mention the new format 'units'
+
 ## [0.37.0] - 2025-02-23
 
 ### 🚀 Features
@@ -16,6 +26,7 @@ All notable changes to this project will be documented in this file.
 ### ⚙️ Miscellaneous Tasks
 
 - Num-traits is used only for feature tui.
+- Release procmon-oprs version 0.37.0
 
 ## [0.36.0] - 2025-02-16
 
