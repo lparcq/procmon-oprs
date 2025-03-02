@@ -17,7 +17,8 @@
 use getset::Getters;
 use itertools::izip;
 use libc::pid_t;
-use procfs::process::{FDInfo, FDPermissions, FDTarget, Limit, LimitValue, Limits};
+use num_traits::{ConstOne, One};
+use procfs::process::{FDInfo, FDTarget, Limit, LimitValue, Limits, MMapPath, MemoryMap};
 use ratatui::{
     layout::Alignment,
     style::{Color, Modifier, Style, Stylize},
@@ -31,6 +32,8 @@ use std::{
     collections::{BTreeSet, HashMap},
     ffi::OsString,
     fmt,
+    ops::{BitAnd, Shl, ShlAssign},
+    path::Path,
     rc::Rc,
 };
 
@@ -67,6 +70,37 @@ macro_rules! rcell {
     ($s:expr) => {
         aligned_cell!($s, Alignment::Right)
     };
+}
+
+/// Convert a mask to a string.
+///
+/// For example 0x5 with "rwx" is "r-x".
+fn bits_to_string<N>(bits: N, chars: &str) -> String
+where
+    N: Clone + Copy + PartialEq + BitAnd + Shl<Output = N> + ShlAssign + One + ConstOne,
+    <N as BitAnd>::Output: PartialEq<N>,
+{
+    let mut mask = N::ONE;
+    let mut res = String::with_capacity(chars.len());
+    chars.chars().for_each(|c| {
+        if bits & mask == mask {
+            res.push(c);
+        } else {
+            res.push('-')
+        }
+        mask <<= N::ONE;
+    });
+    res
+}
+
+/// Convert a path to string.
+///
+/// If the path is a valid string, returns the string itself. Otherwise
+/// returns the debug value.
+fn path_to_string(path: &Path) -> String {
+    path.to_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{path:?}"))
 }
 
 /// Status of a process.
@@ -631,7 +665,7 @@ impl FilesTable {
             .map(|res| match res {
                 Ok(fi) => {
                     let fd = format!("{}", fi.fd);
-                    let mode = Self::bits_to_string(fi.mode().bits());
+                    let mode = bits_to_string(fi.mode().bits() >> 6, "rwx");
                     let kind = Self::target_kind(&fi.target);
                     let name = Self::target_to_string(&fi.target);
                     (fd, mode, kind, name)
@@ -656,23 +690,6 @@ impl FilesTable {
         Self { files, widths }
     }
 
-    fn bits_to_string(bits: u16) -> String {
-        format!(
-            "{}{}{}",
-            Self::bit_to_char(bits, FDPermissions::READ.bits(), 'r'),
-            Self::bit_to_char(bits, FDPermissions::WRITE.bits(), 'w'),
-            Self::bit_to_char(bits, FDPermissions::EXECUTE.bits(), 'x')
-        )
-    }
-
-    fn bit_to_char(bits: u16, mask: u16, c: char) -> char {
-        if bits & mask == mask {
-            c
-        } else {
-            '-'
-        }
-    }
-
     fn target_kind(target: &FDTarget) -> &'static str {
         match target {
             FDTarget::Path(_) => "file",
@@ -687,10 +704,7 @@ impl FilesTable {
 
     fn target_to_string(target: &FDTarget) -> String {
         match target {
-            FDTarget::Path(path) => path
-                .to_str()
-                .map(str::to_string)
-                .unwrap_or_else(|| format!("{path:?}")),
+            FDTarget::Path(path) => path_to_string(path),
             FDTarget::Net(value) | FDTarget::Socket(value) | FDTarget::Pipe(value) => {
                 value.to_string()
             }
@@ -743,5 +757,136 @@ impl TableGenerator for FilesTable {
 
     fn widths(&self) -> &[u16] {
         &self.widths
+    }
+}
+
+/// Table generator for process files.
+pub(crate) struct MapsTable {
+    maps: Vec<[String; 6]>,
+    widths: Vec<u16>,
+}
+
+impl MapsTable {
+    const TITLES: [&str; 6] = ["Address", "Mode", "Offset", "Device", "Inode", "Path"];
+
+    pub(crate) fn new<I>(maps: I) -> Self
+    where
+        I: IntoIterator<Item = MemoryMap>,
+    {
+        let maps = maps
+            .into_iter()
+            .map(|map| {
+                [
+                    format!("{:x}-{:x}", map.address.0, map.address.1),
+                    bits_to_string(map.perms.bits(), "rwxsp"),
+                    map.offset.to_string(),
+                    format!("{:02x}:{:02x}", map.dev.0, map.dev.1),
+                    map.inode.to_string(),
+                    match map.pathname {
+                        MMapPath::Path(path) => path_to_string(&path),
+                        MMapPath::Heap => "[heap]".to_string(),
+                        MMapPath::Stack => "[stack]".to_string(),
+                        MMapPath::TStack(tid) => format!("[tstack:{tid}]"),
+                        MMapPath::Vdso => "[vdso]".to_string(),
+                        MMapPath::Vvar => "[vvar]".to_string(),
+                        MMapPath::Vsyscall => "[vsyscall]".to_string(),
+                        MMapPath::Rollup => "[rollup]".to_string(),
+                        MMapPath::Anonymous => "[anon]".to_string(),
+                        MMapPath::Vsys(key) => format!("[vsys:{key}]"),
+                        MMapPath::Other(name) => format!("[other:{name}]"),
+                    },
+                ]
+            })
+            .collect::<Vec<_>>();
+        let widths = {
+            let mut mls = Self::TITLES
+                .iter()
+                .map(|s| MaxLength::from(*s))
+                .collect::<Vec<_>>();
+            for row in maps.iter() {
+                for (w, s) in mls.iter_mut().zip(row.iter()) {
+                    w.check(s);
+                }
+            }
+            mls.iter().map(|ml| ml.len()).collect::<Vec<_>>()
+        };
+        Self { maps, widths }
+    }
+}
+
+impl TableGenerator for MapsTable {
+    fn headers_size(&self) -> Area<usize> {
+        Area::new(0, 1)
+    }
+
+    fn top_headers(&self, clip: &TableClip<'_, '_>) -> Vec<Cell> {
+        Self::TITLES
+            .to_vec()
+            .drain(..)
+            .enumerate()
+            .filter_map(|(i, s)| {
+                clip.clip_cell(i, Cow::Borrowed(s), Alignment::Left)
+                    .map(|t| Cell::from(t.bold()))
+            })
+            .collect::<Vec<_>>()
+    }
+
+    fn rows(&self, clip: &TableClip<'_, '_>) -> Vec<Vec<Cell>> {
+        let vzoom = &clip.zoom().vertical;
+        self.maps
+            .iter()
+            .skip(vzoom.position)
+            .take(vzoom.visible_length)
+            .map(|row| {
+                row.iter()
+                    .zip([
+                        Alignment::Left,
+                        Alignment::Left,
+                        Alignment::Right,
+                        Alignment::Right,
+                        Alignment::Right,
+                        Alignment::Left,
+                    ])
+                    .enumerate()
+                    .filter_map(|(i, (s, a))| {
+                        clip.clip_cell(i, Cow::Borrowed(s), a).map(Cell::from)
+                    })
+                    .collect::<Vec<Cell>>()
+            })
+            .collect::<Vec<Vec<Cell>>>()
+    }
+
+    fn body_row_count(&self) -> usize {
+        self.maps.len()
+    }
+
+    fn widths(&self) -> &[u16] {
+        &self.widths
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use rstest::rstest;
+
+    use super::bits_to_string;
+
+    #[rstest]
+    #[case(0x1u16, "rwx", "r--")]
+    #[case(0x2u16, "rwx", "-w-")]
+    #[case(0x4u16, "rwx", "--x")]
+    #[case(0x5u16, "rwx", "r-x")]
+    fn test_16bits_to_string(#[case] bits: u16, #[case] chars: &str, #[case] expected: &str) {
+        let res = bits_to_string(bits, chars);
+        assert_eq!(expected, res.as_str());
+    }
+
+    #[rstest]
+    #[case(0x3u8, "rwxsp", "rw---")]
+    #[case(0x10u8, "rwxsp", "----p")]
+    #[case(0x13u8, "rwxsp", "rw--p")]
+    fn test_8bits_to_string(#[case] bits: u8, #[case] chars: &str, #[case] expected: &str) {
+        let res = bits_to_string(bits, chars);
+        assert_eq!(expected, res.as_str());
     }
 }

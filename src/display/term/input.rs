@@ -44,6 +44,7 @@ const KEY_GOTO_TBL_RIGHT: Key = Key::End;
 const KEY_GOTO_TBL_TOP: Key = Key::CtrlHome;
 const KEY_HELP: Key = Key::Char('?');
 const KEY_LIMITS: Key = Key::Char('l');
+const KEY_MAPS: Key = Key::Char('m');
 const KEY_MARK_CLEAR: Key = Key::Ctrl('c');
 const KEY_MARK_TOGGLE: Key = Key::Char(' ');
 const KEY_PAGE_LEFT: Key = Key::BackTab;
@@ -84,6 +85,7 @@ pub enum Action {
     SwitchToLimits,
     SwitchToEnvironment,
     SwitchToFiles,
+    SwitchToMaps,
     ClearMarks,
     ToggleMarks,
     MultiplyTimeout(u16),
@@ -166,6 +168,7 @@ impl KeyMap {
                 Event::Key(KEY_LIMITS) => Action::SwitchToLimits,
                 Event::Key(KEY_ENV) => Action::SwitchToEnvironment,
                 Event::Key(KEY_FILES) => Action::SwitchToFiles,
+                Event::Key(KEY_MAPS) => Action::SwitchToMaps,
                 Event::Key(Key::PageDown) => Action::ScrollPageDown,
                 Event::Key(Key::PageUp) => Action::ScrollPageUp,
                 _ => Action::None,
@@ -294,6 +297,7 @@ pub fn menu() -> Vec<MenuEntry> {
         MenuEntry::with_key(KEY_LIMITS, "Limits", KeyMapSet::OnlyIn(KeyMap::Details)),
         MenuEntry::with_key(KEY_ENV, "Environment", KeyMapSet::OnlyIn(KeyMap::Details)),
         MenuEntry::with_key(KEY_FILES, "Files", KeyMapSet::OnlyIn(KeyMap::Details)),
+        MenuEntry::with_key(KEY_MAPS, "Maps", KeyMapSet::OnlyIn(KeyMap::Details)),
         MenuEntry::with_key(KEY_FILTERS, "Filters", KeyMapSet::OnlyIn(KeyMap::Main)),
         MenuEntry::with_key(
             KEY_SELECT_PARENT,

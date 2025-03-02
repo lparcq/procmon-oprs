@@ -45,7 +45,7 @@ pub enum DataKind {
     Environment,
     Files,
     Limits,
-    _Maps,
+    Maps,
     _Threads,
 }
 
