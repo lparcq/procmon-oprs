@@ -660,8 +660,8 @@ impl FilesTable {
         format!(
             "{}{}{}",
             Self::bit_to_char(bits, FDPermissions::READ.bits(), 'r'),
-            Self::bit_to_char(bits, FDPermissions::WRITE.bits(), 'r'),
-            Self::bit_to_char(bits, FDPermissions::EXECUTE.bits(), 'r')
+            Self::bit_to_char(bits, FDPermissions::WRITE.bits(), 'w'),
+            Self::bit_to_char(bits, FDPermissions::EXECUTE.bits(), 'x')
         )
     }
 
