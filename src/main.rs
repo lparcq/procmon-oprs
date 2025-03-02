@@ -38,7 +38,7 @@ mod process;
 mod sighdr;
 
 use application::Application;
-use cfg::{DisplayMode, ExportType, LoggingLevel, LoggingSettings, LOG_FILE_NAME};
+use cfg::{DisplayMode, ExportType, LoggingLevel, LoggingSettings, CONFIG_FILE_NAME};
 use process::{matchers, parsers::parse_size, MetricFormat, SystemConf, TargetId};
 
 #[cfg(feature = "tui")]
@@ -78,7 +78,11 @@ struct Opt {
     #[argh(switch, short = 'l', description = "list the available metrics")]
     list: bool,
 
-    #[argh(option, short = 'L', description = "log file")]
+    #[argh(
+        option,
+        short = 'L',
+        description = "log file (default in runtime directory if available)"
+    )]
     log_file: Option<String>,
 
     #[cfg(feature = "tui")]
@@ -258,7 +262,7 @@ macro_rules! override_parameter {
 fn start(opt: Opt) -> anyhow::Result<()> {
     // Configuration
     let dirs = cfg::Directories::new(APP_NAME)?;
-    let mut settings = dirs.read_config_file(LOG_FILE_NAME)?;
+    let mut settings = dirs.read_config_file(CONFIG_FILE_NAME)?;
 
     // Override config file with command line
     override_parameter!(settings.display.mode, opt.display);
@@ -279,9 +283,11 @@ fn start(opt: Opt) -> anyhow::Result<()> {
 
     override_parameter!(
         settings.logging.file,
-        opt.log_file,
+        opt.log_file
+            .map(PathBuf::from)
+            .or_else(|| dirs.default_log_file()),
         file,
-        Some(PathBuf::from(file))
+        Some(file)
     );
 
     if opt.debug {

@@ -318,12 +318,14 @@ impl TerminalDevice {
             Action::SearchEnter => {
                 if let Some(data) = Rc::get_mut(&mut self.tree_data) {
                     data.bookmarks.incremental_search();
+                    self.set_keymap(KeyMap::IncrementalSearch);
                 }
             }
             Action::SearchExit => {
                 self.terminal.borrow_mut().hide_cursor()?;
                 if let Some(data) = Rc::get_mut(&mut self.tree_data) {
                     data.bookmarks.fixed_search();
+                    self.set_keymap(KeyMap::Main);
                 }
             }
             Action::SearchPush(c) => self.edit_search(SearchEdit::Push(c)),
@@ -393,11 +395,11 @@ impl TerminalDevice {
             KeyMap::Main if !is_incremental_search => None,
             KeyMap::Filters => None,
             _ if is_incremental_search => {
-                log::error!("{}: wrong keymap for incremental search", self.keymap);
+                log::warn!("{}: wrong keymap for incremental search", self.keymap);
                 Some(KeyMap::IncrementalSearch)
             }
             _ => {
-                log::error!("{}: wrong keymap", self.keymap);
+                log::warn!("{}: wrong keymap", self.keymap);
                 Some(KeyMap::Main)
             }
         }

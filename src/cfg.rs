@@ -24,7 +24,7 @@ use crate::process::{parsers::parse_size, MetricFormat};
 use crate::console::theme::BuiltinTheme;
 
 pub const DEFAULT_DELAY: f64 = 5.0;
-pub const LOG_FILE_NAME: &str = "settings";
+pub const CONFIG_FILE_NAME: &str = "settings";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, EnumString, IntoStaticStr)]
 pub enum LoggingLevel {
@@ -287,20 +287,22 @@ impl IniHandler for ConfigHandler<'_> {
 
 /// Access to standard directories
 pub struct Directories {
-    xdg_dirs: xdg::BaseDirectories,
+    app_name: String,
+    app_dirs: xdg::BaseDirectories,
 }
 
 impl Directories {
     pub fn new(app_name: &str) -> anyhow::Result<Directories> {
         Ok(Directories {
-            xdg_dirs: xdg::BaseDirectories::with_prefix(app_name)?,
+            app_name: app_name.to_owned(),
+            app_dirs: xdg::BaseDirectories::with_prefix(app_name)?,
         })
     }
 
     /// Return the first config file in the path
     fn first_config_file(&self, name: &str) -> Option<PathBuf> {
         let basename = format!("{name}.ini");
-        self.xdg_dirs.find_config_file(basename)
+        self.app_dirs.find_config_file(basename)
     }
 
     /// Read INI configuration file
@@ -312,6 +314,14 @@ impl Directories {
             parser.parse_file(config_file_name)?;
         }
         Ok(settings)
+    }
+
+    /// Default log file name
+    pub fn default_log_file(&self) -> Option<PathBuf> {
+        xdg::BaseDirectories::new().ok().and_then(|xdg_dirs| {
+            let log_filename = format!("{}.log", self.app_name);
+            xdg_dirs.place_runtime_file(log_filename).ok()
+        })
     }
 }
 
