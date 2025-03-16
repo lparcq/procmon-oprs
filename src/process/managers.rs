@@ -39,11 +39,14 @@ pub enum ProcessFilter {
     #[cfg(feature = "tui")]
     #[strum(serialize = "none")]
     None,
-    #[strum(serialize = "user")]
+    #[strum(serialize = "users")]
     UserLand,
     #[cfg(feature = "tui")]
     #[strum(serialize = "active")]
     Active,
+    #[cfg(feature = "tui")]
+    #[strum(serialize = "myself")]
+    CurrentUser,
 }
 
 impl Default for ProcessFilter {
@@ -209,11 +212,28 @@ impl ProcessManager for FlatProcessManager {
 
 /// Accept all processes in userland.
 #[derive(Debug, Default)]
-struct AcceptUserLand(());
+struct FilterUserLand(());
 
-impl ProcessClassifier for AcceptUserLand {
+impl ProcessClassifier for FilterUserLand {
     fn accept(&self, pi: &ProcessInfo) -> bool {
         !pi.is_kernel()
+    }
+}
+
+/// Accept processes for the current user.
+#[derive(Debug)]
+struct FilterCurrentUser(u32);
+
+impl ProcessClassifier for FilterCurrentUser {
+    fn accept(&self, pi: &ProcessInfo) -> bool {
+        let Self(current_uid) = self;
+        match pi.process().uid() {
+            Ok(uid) => *current_uid == uid,
+            Err(err) => {
+                log::warn!("cannot get user id of process {}: {err:?}", pi.pid());
+                false
+            }
+        }
     }
 }
 
@@ -222,14 +242,17 @@ pub struct ForestProcessManager {
     forest: Forest,
     context: ManagerContext,
     inactivity: u16,
+    uid: u32,
 }
 
 impl ForestProcessManager {
     pub fn new() -> Result<Self, TargetError> {
+        let uid = unsafe { libc::getuid() };
         Ok(Self {
             forest: Forest::new(),
             context: ManagerContext::default(),
             inactivity: 0,
+            uid,
         })
     }
 
@@ -279,11 +302,12 @@ impl ProcessManager for ForestProcessManager {
         let changed = match self.context.filter {
             ProcessFilter::None => self.forest.refresh(),
             ProcessFilter::UserLand | ProcessFilter::Active => {
-                self.forest.refresh_if(&AcceptUserLand::default())
+                self.forest.refresh_if(&FilterUserLand::default())
             }
+            ProcessFilter::CurrentUser => self.forest.refresh_if(&FilterCurrentUser(self.uid)),
         }?;
         #[cfg(not(feature = "tui"))]
-        let changed = self.forest.refresh_if(&AcceptUserLand::default())?;
+        let changed = self.forest.refresh_if(&FilterUserLand::default())?;
         #[cfg(feature = "tui")]
         let ignore_idleness = !matches!(self.context.filter, ProcessFilter::Active);
         #[cfg(not(feature = "tui"))]

@@ -37,7 +37,8 @@ const KEY_FILES: Key = Key::Char('f');
 const KEY_FILTERS: Key = Key::Char('f');
 const KEY_FILTER_ACTIVE: Key = Key::Char('a');
 const KEY_FILTER_NONE: Key = Key::Char('n');
-const KEY_FILTER_USER: Key = Key::Char('u');
+const KEY_FILTER_USERS: Key = Key::Char('u');
+const KEY_FILTER_CURRENT_USER: Key = Key::Char('m');
 const KEY_GOTO_TBL_BOTTOM: Key = Key::CtrlEnd;
 const KEY_GOTO_TBL_LEFT: Key = Key::Home;
 const KEY_GOTO_TBL_RIGHT: Key = Key::End;
@@ -73,8 +74,9 @@ pub enum Action {
     DivideTimeout(u16),
     Filters,
     FilterNone,
-    FilterUser,
+    FilterUsers,
     FilterActive,
+    FilterCurrentUser,
     GotoTableBottom,
     GotoTableLeft,
     GotoTableRight,
@@ -175,8 +177,9 @@ impl KeyMap {
             },
             KeyMap::Filters => match evt {
                 Event::Key(KEY_FILTER_NONE) => Action::FilterNone,
-                Event::Key(KEY_FILTER_USER) => Action::FilterUser,
+                Event::Key(KEY_FILTER_USERS) => Action::FilterUsers,
                 Event::Key(KEY_FILTER_ACTIVE) => Action::FilterActive,
+                Event::Key(KEY_FILTER_CURRENT_USER) => Action::FilterCurrentUser,
                 _ => Action::None,
             },
             KeyMap::Main => match evt {
@@ -311,10 +314,15 @@ pub fn menu() -> Vec<MenuEntry> {
             KeyMapSet::OnlyIn(KeyMap::Main),
         ),
         MenuEntry::with_key(KEY_FILTER_NONE, "None", KeyMapSet::OnlyIn(KeyMap::Filters)),
-        MenuEntry::with_key(KEY_FILTER_USER, "User", KeyMapSet::OnlyIn(KeyMap::Filters)),
+        MenuEntry::with_key(KEY_FILTER_USERS, "User", KeyMapSet::OnlyIn(KeyMap::Filters)),
         MenuEntry::with_key(
             KEY_FILTER_ACTIVE,
             "Active",
+            KeyMapSet::OnlyIn(KeyMap::Filters),
+        ),
+        MenuEntry::with_key(
+            KEY_FILTER_CURRENT_USER,
+            "Myself",
             KeyMapSet::OnlyIn(KeyMap::Filters),
         ),
     ]

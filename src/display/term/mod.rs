@@ -296,12 +296,16 @@ impl TerminalDevice {
                 self.filter = ProcessFilter::None;
                 self.set_keymap(KeyMap::Main);
             }
-            Action::FilterUser => {
+            Action::FilterUsers => {
                 self.filter = ProcessFilter::UserLand;
                 self.set_keymap(KeyMap::Main);
             }
             Action::FilterActive => {
                 self.filter = ProcessFilter::Active;
+                self.set_keymap(KeyMap::Main);
+            }
+            Action::FilterCurrentUser => {
+                self.filter = ProcessFilter::CurrentUser;
                 self.set_keymap(KeyMap::Main);
             }
             Action::MultiplyTimeout(factor) => self.multiply_delay(timer, factor),
@@ -359,9 +363,10 @@ impl TerminalDevice {
                 Interaction::Narrow(pids)
             }
             Action::ChangeScope => Interaction::Wide,
-            Action::FilterNone | Action::FilterUser | Action::FilterActive => {
-                Interaction::Filter(self.filter)
-            }
+            Action::FilterNone
+            | Action::FilterUsers
+            | Action::FilterActive
+            | Action::FilterCurrentUser => Interaction::Filter(self.filter),
             Action::SelectRootPid => match self.tree_data.bookmarks.selected_pid() {
                 Some(selected) => Interaction::SelectRootPid(Some(*selected)),
                 None => Interaction::None,
