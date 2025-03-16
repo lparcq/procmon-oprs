@@ -48,6 +48,7 @@ to the full tree with 'R'. The command can be started at a given root with optio
 - none: show userland and kernel processes
 - user: show only userland processes (default)
 - active: show userland processes that have consumed some CPU in the last 5 cycles.
+- myself: show processes owned by the current user.
 
 ## State
 
