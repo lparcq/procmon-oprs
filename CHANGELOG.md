@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.38.0] - 2025-03-16
+
+### 🚀 Features
+
+- Display maps in process details.
+- Add a filter for processes owned by the current user (myself)
+
+### 🐛 Bug Fixes
+
+- Correctly show permissions on files.
+- Help for filter 'myself'
+
 ## [0.37.1] - 2025-03-02
 
 ### 🐛 Bug Fixes
@@ -11,6 +23,7 @@ All notable changes to this project will be documented in this file.
 ### ⚙️ Miscellaneous Tasks
 
 - Fix README to mention the new format 'units'
+- Release procmon-oprs version 0.37.1
 
 ## [0.37.0] - 2025-02-23
 
