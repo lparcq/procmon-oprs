@@ -38,8 +38,8 @@ mod process;
 mod sighdr;
 
 use application::Application;
-use cfg::{DisplayMode, ExportType, LoggingLevel, LoggingSettings, CONFIG_FILE_NAME};
-use process::{matchers, parsers::parse_size, MetricFormat, SystemConf, TargetId};
+use cfg::{CONFIG_FILE_NAME, DisplayMode, ExportType, LoggingLevel, LoggingSettings};
+use process::{MetricFormat, SystemConf, TargetId, matchers, parsers::parse_size};
 
 #[cfg(feature = "tui")]
 use crate::console::theme::BuiltinTheme;
@@ -230,7 +230,7 @@ fn configure_logging(settings: &LoggingSettings) {
         .build();
 
     match &settings.file {
-        Some(ref file) => configure_file_logging(config, file, settings.level),
+        Some(file) => configure_file_logging(config, file, settings.level),
         None => configure_console_logging(config, settings.level),
     }
     .unwrap_or_else(|_| {

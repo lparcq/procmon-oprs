@@ -46,8 +46,8 @@ use super::{
 use crate::{
     console::theme::BuiltinTheme,
     process::{
-        format::{human_format, Unit},
         Collector, ProcessIdentity, ProcessSamples,
+        format::{Unit, human_format},
     },
 };
 
@@ -241,7 +241,7 @@ impl PidStack {
 
     /// Pop pids that are not a parent of the given process and push the new pid on the stack.
     fn push(&mut self, samples: &ProcessSamples) {
-        let Self(ref mut stack) = self;
+        let Self(stack) = self;
         match samples.parent_pid() {
             Some(parent_pid) => {
                 while let Some(top_pid) = stack.last() {

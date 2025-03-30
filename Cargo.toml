@@ -8,7 +8,7 @@ homepage = "https://github.com/lparcq/procmon-oprs"
 keywords = ["proc", "linux", "process", "monitor"]
 categories = ["command-line-utilities"]
 license = "GPL-3.0-or-later"
-edition = "2021"
+edition = "2024"
 
 [[bin]]
 name = "oprs"
