@@ -16,9 +16,9 @@
 
 use light_ini::{IniHandler, IniParser};
 use std::{path::PathBuf, str::FromStr};
-use strum::{EnumString, IntoStaticStr};
+use strum::{EnumMessage, EnumString, IntoStaticStr};
 
-use crate::process::{parsers::parse_size, MetricFormat};
+use crate::process::{MetricFormat, parsers::parse_size};
 
 #[cfg(feature = "tui")]
 use crate::console::theme::BuiltinTheme;
@@ -38,14 +38,18 @@ pub enum LoggingLevel {
     Debug,
 }
 
-#[derive(Clone, Copy, Debug, EnumString, IntoStaticStr, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, EnumString, EnumMessage, IntoStaticStr, PartialEq, Eq)]
 pub enum DisplayMode {
+    /// No display, only export.
     #[strum(serialize = "none")]
     None,
+    /// Pick up the best available display mode.
     #[strum(serialize = "any")]
     Any,
+    /// Scrolling text.
     #[strum(serialize = "text")]
     Text,
+    /// Terminal User Interface.
     #[cfg(feature = "tui")]
     #[strum(serialize = "term")]
     Terminal,
@@ -57,16 +61,21 @@ impl DisplayMode {
     }
 }
 
-#[derive(Clone, Copy, Debug, EnumString, IntoStaticStr, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, EnumString, EnumMessage, IntoStaticStr, PartialEq, Eq)]
 pub enum ExportType {
+    /// No export.
     #[strum(serialize = "none")]
     None,
+    /// Comma separated values.
     #[strum(serialize = "csv")]
     Csv,
+    /// Tab separated values.
     #[strum(serialize = "tsv")]
     Tsv,
+    /// Round Robin database.
     #[strum(serialize = "rrd")]
     Rrd,
+    /// Round Robin database with graphs.
     #[strum(serialize = "rrd-graph")]
     RrdGraph,
 }
@@ -92,10 +101,15 @@ pub enum ConfigError {
 /// Parameters for display
 #[derive(Debug)]
 pub struct DisplaySettings {
+    /// Display mode.
     pub mode: DisplayMode,
+    /// Delay between updates.
     pub every: f64,
+    /// Number of loops.
     pub count: Option<u64>,
+    /// Format of metrics.
     pub format: MetricFormat,
+    /// Theme.
     #[cfg(feature = "tui")]
     pub theme: Option<BuiltinTheme>,
 }
@@ -116,9 +130,13 @@ impl DisplaySettings {
 /// Parameters for export
 #[derive(Debug)]
 pub struct ExportSettings {
+    /// Export type.
     pub kind: ExportType,
+    /// Export directory.
     pub dir: PathBuf,
+    /// Maximum exported file size.
     pub size: Option<u64>,
+    /// Maximum number of files.
     pub count: Option<usize>,
 }
 
@@ -134,8 +152,11 @@ impl ExportSettings {
 }
 
 /// Parameters for logging
+#[derive(Debug)]
 pub struct LoggingSettings {
+    /// Logging file.
     pub file: Option<PathBuf>,
+    /// Logging level.
     pub level: LoggingLevel,
 }
 
@@ -149,8 +170,11 @@ impl LoggingSettings {
 }
 
 /// Parameters for special targets
+#[derive(Debug)]
 pub struct TargetSettings {
+    /// Include system metrics.
     pub system: bool,
+    /// Include this process metrics.
     pub myself: bool,
 }
 

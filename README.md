@@ -133,7 +133,6 @@ Example `~/.config/oprs/settings.ini`:
     every = 10
     format = units
     theme = light
-    border = yes
 
     [export]
     kind = csv
