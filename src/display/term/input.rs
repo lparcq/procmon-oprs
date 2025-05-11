@@ -17,8 +17,11 @@
 use getset::{Getters, Setters};
 use libc::pid_t;
 use smart_default::SmartDefault;
-use std::{collections::BTreeSet, fmt};
-use strum::Display as StrumDisplay;
+use std::{
+    collections::{BTreeSet, HashMap},
+    fmt,
+    rc::Rc,
+};
 
 use crate::{
     console::{Event, Key},
@@ -28,13 +31,13 @@ use crate::{
 use super::types::Scroll;
 
 /// Standard keys
+const KEY_ABOUT: Key = Key::Char('a');
 const KEY_ENTER: Key = Key::Char('\n');
 const KEY_ENV: Key = Key::Char('e');
 const KEY_ESCAPE: Key = Key::Esc;
 const KEY_FASTER: Key = Key::Char(KEY_FASTER_CHAR);
 const KEY_FASTER_CHAR: char = '+';
 const KEY_FILES: Key = Key::Char('f');
-const KEY_FILTERS: Key = Key::Char('f');
 const KEY_FILTER_ACTIVE: Key = Key::Char('a');
 const KEY_FILTER_NONE: Key = Key::Char('n');
 const KEY_FILTER_USERS: Key = Key::Char('u');
@@ -48,6 +51,12 @@ const KEY_LIMITS: Key = Key::Char('l');
 const KEY_MAPS: Key = Key::Char('m');
 const KEY_MARK_CLEAR: Key = Key::Ctrl('c');
 const KEY_MARK_TOGGLE: Key = Key::Char(' ');
+const KEY_MENU_HELP: Key = Key::F(1);
+const KEY_MENU_EDIT: Key = Key::F(2);
+const KEY_MENU_NAVIGATE: Key = Key::F(3);
+const KEY_MENU_SEARCH: Key = Key::F(5);
+const KEY_MENU_SELECT: Key = Key::F(6);
+const KEY_MENU_FILTER: Key = Key::F(7);
 const KEY_PAGE_LEFT: Key = Key::BackTab;
 const KEY_PAGE_RIGHT: Key = Key::Char('\t');
 const KEY_QUIT: Key = Key::Char('q');
@@ -56,23 +65,21 @@ const KEY_SEARCH: Key = Key::Char('/');
 const KEY_SEARCH_CANCEL: Key = Key::Ctrl('c');
 const KEY_SEARCH_NEXT: Key = Key::Ctrl('n');
 const KEY_SEARCH_PREVIOUS: Key = Key::Ctrl('N');
-const KEY_SELECT_NEXT: Key = Key::Char(KEY_SELECT_NEXT_CHAR);
-const KEY_SELECT_NEXT_CHAR: char = 'n';
+const KEY_SELECT_NEXT: Key = Key::Char('n');
+const KEY_SELECT_PREVIOUS: Key = Key::Char('N');
 const KEY_SELECT_PARENT: Key = Key::Char('p');
-const KEY_SELECT_PREVIOUS: Key = Key::Char(KEY_SELECT_PREVIOUS_CHAR);
-const KEY_SELECT_PREVIOUS_CHAR: char = 'N';
 const KEY_SELECT_ROOT_PID: Key = Key::Char('r');
 const KEY_UNSELECT_ROOT_PID: Key = Key::Char('R');
 const KEY_SLOWER: Key = Key::Char(KEY_SLOWER_CHAR);
 const KEY_SLOWER_CHAR: char = '-';
 
 /// User action
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, SmartDefault)]
 pub enum Action {
+    #[default]
     None,
     ChangeScope,
     DivideTimeout(u16),
-    Filters,
     FilterNone,
     FilterUsers,
     FilterActive,
@@ -81,6 +88,7 @@ pub enum Action {
     GotoTableLeft,
     GotoTableRight,
     GotoTableTop,
+    SwitchToAbout,
     SwitchToHelp,
     SwitchBack,
     SwitchToDetails,
@@ -91,6 +99,8 @@ pub enum Action {
     ClearMarks,
     ToggleMarks,
     MultiplyTimeout(u16),
+    PushChar(char),
+    PopChar,
     Quit,
     ScrollLeft,
     ScrollLineDown,
@@ -103,130 +113,47 @@ pub enum Action {
     SearchCancel,
     SearchEnter,
     SearchExit,
-    SearchPop,
     SelectNext,
     SelectPrevious,
     SelectParent,
     SelectRootPid,
     UnselectRootPid,
-    SearchPush(char),
 }
 
-/// Keymap
-#[derive(Clone, Copy, Debug, StrumDisplay, PartialEq)]
-pub enum KeyMap {
-    #[strum(serialize = "main")]
-    Main,
-    #[strum(serialize = "help")]
-    Help,
-    #[strum(serialize = "filters")]
-    Filters,
-    #[strum(serialize = "incremental search")]
-    IncrementalSearch,
-    #[strum(serialize = "details")]
-    Details,
-    #[strum(serialize = "process")]
-    Process,
-}
+impl Action {
+    /// True if not None
+    pub fn is_some(&self) -> bool {
+        !matches!(self, Action::None)
+    }
 
-impl KeyMap {
-    /// Convert an input event to an action
-    pub fn action_from_event(self, evt: Event) -> Action {
+    /// Convert an action to an Option.
+    pub fn ok(self) -> Option<Action> {
         match self {
-            KeyMap::IncrementalSearch => match evt {
-                Event::Key(KEY_ENTER) => Action::SearchExit,
-                Event::Key(Key::Char(c)) => Action::SearchPush(c),
-                Event::Key(Key::Backspace) => Action::SearchPop,
-                Event::Key(KEY_SEARCH_PREVIOUS) => Action::SelectPrevious,
-                Event::Key(KEY_SEARCH_NEXT) => Action::SelectNext,
-                Event::Key(KEY_SEARCH_CANCEL) => Action::SearchCancel,
-                _ => Action::None,
-            },
-            KeyMap::Help => match evt {
-                Event::Key(KEY_QUIT) | Event::Key(KEY_ESCAPE) => Action::SwitchBack,
-                Event::Key(Key::PageDown) => Action::ScrollPageDown,
-                Event::Key(Key::PageUp) => Action::ScrollPageUp,
-                _ => Action::None,
-            },
-            KeyMap::Process => match evt {
-                Event::Key(KEY_QUIT) | Event::Key(KEY_ESCAPE) => Action::SwitchBack,
-                Event::Key(KEY_GOTO_TBL_BOTTOM) => Action::GotoTableBottom,
-                Event::Key(KEY_GOTO_TBL_LEFT) => Action::GotoTableLeft,
-                Event::Key(KEY_GOTO_TBL_RIGHT) => Action::GotoTableRight,
-                Event::Key(KEY_GOTO_TBL_TOP) => Action::GotoTableTop,
-                Event::Key(KEY_PAGE_LEFT) => Action::ScrollPageLeft,
-                Event::Key(KEY_PAGE_RIGHT) => Action::ScrollPageRight,
-                Event::Key(Key::PageDown) => Action::ScrollPageDown,
-                Event::Key(Key::PageUp) => Action::ScrollPageUp,
-                Event::Key(Key::Down) => Action::ScrollLineDown,
-                Event::Key(Key::Up) => Action::ScrollLineUp,
-                Event::Key(Key::Left) => Action::ScrollLeft,
-                Event::Key(Key::Right) => Action::ScrollRight,
-                _ => Action::None,
-            },
-            KeyMap::Details => match evt {
-                Event::Key(KEY_QUIT) | Event::Key(KEY_ESCAPE) => Action::SwitchBack,
-                Event::Key(KEY_SELECT_PARENT) => Action::SelectParent,
-                Event::Key(KEY_LIMITS) => Action::SwitchToLimits,
-                Event::Key(KEY_ENV) => Action::SwitchToEnvironment,
-                Event::Key(KEY_FILES) => Action::SwitchToFiles,
-                Event::Key(KEY_MAPS) => Action::SwitchToMaps,
-                Event::Key(Key::PageDown) => Action::ScrollPageDown,
-                Event::Key(Key::PageUp) => Action::ScrollPageUp,
-                _ => Action::None,
-            },
-            KeyMap::Filters => match evt {
-                Event::Key(KEY_FILTER_NONE) => Action::FilterNone,
-                Event::Key(KEY_FILTER_USERS) => Action::FilterUsers,
-                Event::Key(KEY_FILTER_ACTIVE) => Action::FilterActive,
-                Event::Key(KEY_FILTER_CURRENT_USER) => Action::FilterCurrentUser,
-                _ => Action::None,
-            },
-            KeyMap::Main => match evt {
-                Event::Key(KEY_FASTER) => Action::DivideTimeout(2),
-                Event::Key(KEY_GOTO_TBL_BOTTOM) => Action::GotoTableBottom,
-                Event::Key(KEY_GOTO_TBL_LEFT) => Action::GotoTableLeft,
-                Event::Key(KEY_GOTO_TBL_RIGHT) => Action::GotoTableRight,
-                Event::Key(KEY_GOTO_TBL_TOP) => Action::GotoTableTop,
-                Event::Key(KEY_ENTER) => Action::SwitchToDetails,
-                Event::Key(KEY_HELP) => Action::SwitchToHelp,
-                Event::Key(KEY_MARK_CLEAR) => Action::ClearMarks,
-                Event::Key(KEY_MARK_TOGGLE) => Action::ToggleMarks,
-                Event::Key(KEY_FILTERS) => Action::Filters,
-                Event::Key(KEY_SCOPE) => Action::ChangeScope,
-                Event::Key(KEY_SEARCH) => Action::SearchEnter,
-                Event::Key(KEY_SELECT_PREVIOUS) => Action::SelectPrevious,
-                Event::Key(KEY_SELECT_NEXT) => Action::SelectNext,
-                Event::Key(KEY_SELECT_ROOT_PID) => Action::SelectRootPid,
-                Event::Key(KEY_UNSELECT_ROOT_PID) => Action::UnselectRootPid,
-                Event::Key(KEY_SLOWER) => Action::MultiplyTimeout(2),
-                Event::Key(KEY_QUIT) | Event::Key(KEY_ESCAPE) => Action::Quit,
-                Event::Key(KEY_PAGE_LEFT) => Action::ScrollPageLeft,
-                Event::Key(KEY_PAGE_RIGHT) => Action::ScrollPageRight,
-                Event::Key(Key::PageDown) => Action::ScrollPageDown,
-                Event::Key(Key::PageUp) => Action::ScrollPageUp,
-                Event::Key(Key::Down) => Action::ScrollLineDown,
-                Event::Key(Key::Up) => Action::ScrollLineUp,
-                Event::Key(Key::Left) => Action::ScrollLeft,
-                Event::Key(Key::Right) => Action::ScrollRight,
-                _ => Action::None,
-            },
+            Action::None => None,
+            _ => Some(self),
         }
+    }
+
+    /// True if the action implies reverting to the parent menu
+    pub fn parent_menu(&self) -> bool {
+        matches!(self, Self::SearchExit | Self::SwitchBack)
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum KeyMapSet {
-    OnlyIn(KeyMap),
-    ExceptIn(KeyMap),
+/// Menu target
+#[derive(Debug)]
+pub enum MenuTarget {
+    // Action
+    Action(Action),
+    // Sub-menu
+    Menu(Rc<Menu>),
 }
 
-impl KeyMapSet {
-    pub fn contains(&self, keymap: KeyMap) -> bool {
+impl Clone for MenuTarget {
+    fn clone(&self) -> Self {
         match self {
-            Self::OnlyIn(valid) if keymap == *valid => true,
-            Self::ExceptIn(invalid) if keymap != *invalid => true,
-            _ => false,
+            Self::Action(action) => Self::Action(*action),
+            Self::Menu(menu) => Self::Menu(Rc::clone(menu)),
         }
     }
 }
@@ -234,28 +161,16 @@ impl KeyMapSet {
 /// Menu entry with a key and a label.
 #[derive(Debug, Getters)]
 pub struct MenuEntry {
+    #[getset(get = "pub")]
     key: String,
     #[getset(get = "pub")]
     label: &'static str,
-    #[getset(get = "pub")]
-    keymaps: KeyMapSet,
 }
 
 impl MenuEntry {
-    pub fn new(key: String, label: &'static str, keymaps: KeyMapSet) -> Self {
-        Self {
-            key,
-            label,
-            keymaps,
-        }
-    }
-
-    pub fn with_key(key: Key, label: &'static str, keymaps: KeyMapSet) -> Self {
-        Self::new(MenuEntry::key_name(key), label, keymaps)
-    }
-
-    pub fn key(&self) -> &str {
-        self.key.as_str()
+    fn new(key: Key, label: &'static str) -> Self {
+        let key = Self::key_name(key);
+        Self { key, label }
     }
 
     fn key_name(key: Key) -> String {
@@ -276,6 +191,7 @@ impl MenuEntry {
             Key::Insert => "Ins".to_string(),
             Key::F(num) => format!("F{num}"),
             Key::Char('\t') => "⇥".to_string(),
+            Key::Char('\n') => "⏎".to_string(),
             Key::Char(' ') => "Spc".to_string(),
             Key::Char(ch) => format!("{ch}"),
             Key::Alt(ch) => format!("M-{ch}"),
@@ -286,46 +202,260 @@ impl MenuEntry {
     }
 }
 
+/// A menu with entries to display and shorcuts.
+///
+/// A shorcut directly executes an action or opens a sub-menu whether it's
+/// displayed or not.
+#[derive(Debug, Default)]
+pub struct Menu {
+    /// Menu name
+    pub name: &'static str,
+    /// The action associated with this menu.
+    pub action: Action,
+    /// The list of entries to display.
+    entries: Vec<MenuEntry>,
+    /// The targets for each menu entries.
+    targets: HashMap<Key, MenuTarget>,
+    /// The direct actions without menu entries.
+    shortcuts: HashMap<Key, Action>,
+    /// Whether the menu accept any char.
+    char_stream: bool,
+}
+
+impl Menu {
+    fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            action: Action::None,
+            ..Default::default()
+        }
+    }
+    /// Return a slice iterator to the menu entries.
+    pub fn entries(&self) -> std::slice::Iter<MenuEntry> {
+        self.entries.iter()
+    }
+
+    /// Get the target
+    pub fn map_key(&self, key: &Key) -> Option<MenuTarget> {
+        self.targets
+            .get(key)
+            .cloned()
+            .or_else(|| self.shortcuts.get(key).map(|a| MenuTarget::Action(*a)))
+            .or({
+                if self.char_stream {
+                    match key {
+                        Key::Char(c) => Some(MenuTarget::Action(Action::PushChar(*c))),
+                        Key::Backspace => Some(MenuTarget::Action(Action::PopChar)),
+                        _ => None,
+                    }
+                } else {
+                    log::debug!("menu {}: unknown key {:?}", self.name, key);
+                    None
+                }
+            })
+    }
+
+    /// Get the target from an event.
+    pub fn map_event(&self, evt: Event) -> Option<MenuTarget> {
+        match evt {
+            Event::Key(key) => self.map_key(&key),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct MenuBuilder(Rc<Menu>);
+
+impl MenuBuilder {
+    fn new(name: &'static str) -> Self {
+        Self(Rc::new(Menu::new(name)))
+    }
+
+    fn menu(&mut self) -> &mut Menu {
+        Rc::get_mut(&mut self.0).expect("no reference to menu when constructed")
+    }
+
+    /// Add a target.
+    fn with_target(mut self, key: Key, label: &'static str, target: MenuTarget) -> Self {
+        let menu = self.menu();
+        menu.entries.push(MenuEntry::new(key, label));
+        menu.targets.insert(key, target);
+        self
+    }
+
+    /// Add an action.
+    fn with_action(self, key: Key, label: &'static str, action: Action) -> Self {
+        self.with_target(key, label, MenuTarget::Action(action))
+    }
+
+    /// Add a sub-menu.
+    fn with_menu(self, key: Key, menu: Rc<Menu>) -> Self {
+        self.with_target(key, menu.name, MenuTarget::Menu(menu))
+    }
+
+    /// Add a sub-menu and import all its entries as shortcuts.
+    fn with_imported_entries(self, key: Key, menu: Rc<Menu>) -> Self {
+        self.import_actions(&menu).with_menu(key, menu)
+    }
+
+    /// Add a shortcut.
+    ///
+    /// The shortcut is not visible in the menu.
+    fn with_shortcut(mut self, key: Key, action: Action) -> Self {
+        self.menu().shortcuts.insert(key, action);
+        self
+    }
+
+    /// Import submenu actions as shortcuts.
+    fn import_actions(mut self, other: &Menu) -> Self {
+        let menu = self.menu();
+        // Import the menu entries with a self action in the targets.
+        menu.targets
+            .extend(other.targets.iter().filter_map(|(key, tgt)| match tgt {
+                MenuTarget::Menu(menu) if menu.action.is_some() => Some((*key, tgt.clone())),
+                _ => None,
+            }));
+        // Import the menu entries actions as shortcuts.
+        menu.shortcuts
+            .extend(other.targets.iter().filter_map(|(key, tgt)| match tgt {
+                MenuTarget::Action(action) => Some((key, action)),
+                MenuTarget::Menu(_) => None,
+            }));
+        self
+    }
+
+    /// Import menu shortcuts.
+    fn import_shortcuts(mut self, other: &Menu) -> Self {
+        self.menu().shortcuts.extend(other.shortcuts.iter());
+        self
+    }
+
+    /// Accept any char.
+    fn enable_char_stream(mut self) -> Self {
+        self.menu().char_stream = true;
+        self
+    }
+
+    /// Associate an interaction
+    fn with_self_action(mut self, action: Action) -> Self {
+        self.menu().action = action;
+        self
+    }
+
+    /// Build the menu
+    fn build(self) -> Rc<Menu> {
+        let Self(menu) = self;
+        menu
+    }
+
+    /// Duplicate a menu with a different self actions.
+    fn duplicate(name: &'static str, menu: &Menu, action: Action) -> Rc<Menu> {
+        MenuBuilder::new(name)
+            .import_actions(menu)
+            .import_shortcuts(menu)
+            .with_self_action(action)
+            .build()
+    }
+}
+
 /// Return the menu
-pub fn menu() -> Vec<MenuEntry> {
-    vec![
-        MenuEntry::with_key(KEY_QUIT, "Quit", KeyMapSet::ExceptIn(KeyMap::Filters)),
-        MenuEntry::with_key(KEY_HELP, "Help", KeyMapSet::OnlyIn(KeyMap::Main)),
-        MenuEntry::new(
-            format!("{KEY_SELECT_NEXT_CHAR}/{KEY_SELECT_PREVIOUS_CHAR}",),
-            "Next/Prev",
-            KeyMapSet::OnlyIn(KeyMap::Main),
-        ),
-        MenuEntry::with_key(KEY_SEARCH, "Search", KeyMapSet::OnlyIn(KeyMap::Main)),
-        MenuEntry::with_key(KEY_LIMITS, "Limits", KeyMapSet::OnlyIn(KeyMap::Details)),
-        MenuEntry::with_key(KEY_ENV, "Environment", KeyMapSet::OnlyIn(KeyMap::Details)),
-        MenuEntry::with_key(KEY_FILES, "Files", KeyMapSet::OnlyIn(KeyMap::Details)),
-        MenuEntry::with_key(KEY_MAPS, "Maps", KeyMapSet::OnlyIn(KeyMap::Details)),
-        MenuEntry::with_key(KEY_FILTERS, "Filters", KeyMapSet::OnlyIn(KeyMap::Main)),
-        MenuEntry::with_key(
-            KEY_SELECT_PARENT,
-            "Parent",
-            KeyMapSet::OnlyIn(KeyMap::Details),
-        ),
-        MenuEntry::with_key(KEY_SELECT_ROOT_PID, "Root", KeyMapSet::OnlyIn(KeyMap::Main)),
-        MenuEntry::new(
-            format!("{KEY_FASTER_CHAR}/{KEY_SLOWER_CHAR}"),
-            "Speed",
-            KeyMapSet::OnlyIn(KeyMap::Main),
-        ),
-        MenuEntry::with_key(KEY_FILTER_NONE, "None", KeyMapSet::OnlyIn(KeyMap::Filters)),
-        MenuEntry::with_key(KEY_FILTER_USERS, "User", KeyMapSet::OnlyIn(KeyMap::Filters)),
-        MenuEntry::with_key(
-            KEY_FILTER_ACTIVE,
-            "Active",
-            KeyMapSet::OnlyIn(KeyMap::Filters),
-        ),
-        MenuEntry::with_key(
+pub fn menu() -> Rc<Menu> {
+    let menu_help = MenuBuilder::new("Help")
+        .with_action(KEY_HELP, "Help", Action::SwitchToHelp)
+        .with_action(KEY_ABOUT, "About", Action::SwitchToAbout)
+        .with_action(KEY_QUIT, "Quit", Action::Quit)
+        .with_shortcut(KEY_ESCAPE, Action::SwitchBack)
+        .build();
+    let menu_edit = MenuBuilder::new("Edit")
+        .with_action(KEY_FASTER, "Faster", Action::DivideTimeout(2))
+        .with_action(KEY_SLOWER, "Slower", Action::MultiplyTimeout(2))
+        .with_shortcut(KEY_ESCAPE, Action::SwitchBack)
+        //.new(KEY_with_action, "Settings", Action::SwitchToSettings))
+        .build();
+    let menu_nav = MenuBuilder::new("Navigate")
+        .with_action(Key::Up, "Previous line", Action::ScrollLineUp)
+        .with_action(Key::Down, "Next line", Action::ScrollLineDown)
+        .with_action(Key::Left, "Scroll left", Action::ScrollLeft)
+        .with_action(Key::Right, "Scroll right", Action::ScrollRight)
+        .with_action(Key::PageUp, "Page Up", Action::ScrollPageUp)
+        .with_action(Key::PageDown, "Page Down", Action::ScrollPageDown)
+        .with_action(KEY_PAGE_LEFT, "Page Left", Action::ScrollPageLeft)
+        .with_action(KEY_PAGE_RIGHT, "Page Right", Action::ScrollPageRight)
+        .with_action(KEY_GOTO_TBL_TOP, "Table Top", Action::GotoTableTop)
+        .with_action(KEY_GOTO_TBL_BOTTOM, "Table Bottom", Action::GotoTableBottom)
+        .with_action(KEY_GOTO_TBL_LEFT, "Table Left", Action::GotoTableLeft)
+        .with_action(KEY_GOTO_TBL_RIGHT, "Table Right", Action::GotoTableRight)
+        .with_shortcut(KEY_ESCAPE, Action::SwitchBack)
+        .build();
+    let menu_process_env =
+        MenuBuilder::duplicate("Environment", &menu_nav, Action::SwitchToEnvironment);
+    let menu_process_files = MenuBuilder::duplicate("Files", &menu_nav, Action::SwitchToFiles);
+    let menu_process_limits = MenuBuilder::duplicate("Limits", &menu_nav, Action::SwitchToLimits);
+    let menu_process_maps = MenuBuilder::duplicate("Maps", &menu_nav, Action::SwitchToMaps);
+    let menu_details = MenuBuilder::new("Details")
+        .with_menu(KEY_ENV, menu_process_env)
+        .with_menu(KEY_FILES, menu_process_files)
+        .with_menu(KEY_LIMITS, menu_process_limits)
+        .with_menu(KEY_MAPS, menu_process_maps)
+        .import_actions(&menu_nav)
+        .with_self_action(Action::SwitchToDetails)
+        .build();
+    let menu_isearch = MenuBuilder::new("Incremental Search")
+        .enable_char_stream()
+        .with_shortcut(KEY_ENTER, Action::SearchExit)
+        .with_shortcut(KEY_SEARCH_NEXT, Action::SelectNext)
+        .with_shortcut(KEY_SEARCH_PREVIOUS, Action::SelectPrevious)
+        .with_shortcut(KEY_SEARCH_CANCEL, Action::SearchCancel)
+        .with_self_action(Action::SearchEnter)
+        .build();
+    let menu_search = MenuBuilder::new("Search")
+        .with_menu(KEY_SEARCH, menu_isearch)
+        .with_action(KEY_MARK_CLEAR, "Clear", Action::ClearMarks)
+        .with_action(
+            KEY_SELECT_PREVIOUS,
+            "Previous Match",
+            Action::SelectPrevious,
+        )
+        .with_action(KEY_SELECT_NEXT, "Next Match", Action::SelectNext)
+        .with_shortcut(KEY_ESCAPE, Action::SwitchBack)
+        .build();
+    let menu_filter = MenuBuilder::new("Filters")
+        .with_action(KEY_FILTER_NONE, "None", Action::FilterNone)
+        .with_action(KEY_FILTER_USERS, "Users", Action::FilterUsers)
+        .with_action(KEY_FILTER_ACTIVE, "Active", Action::FilterActive)
+        .with_action(
             KEY_FILTER_CURRENT_USER,
-            "Myself",
-            KeyMapSet::OnlyIn(KeyMap::Filters),
-        ),
-    ]
+            "Current User",
+            Action::FilterCurrentUser,
+        )
+        .with_shortcut(KEY_ESCAPE, Action::SwitchBack)
+        .build();
+    let menu_select = MenuBuilder::new("Select")
+        .with_menu(KEY_ENTER, menu_details)
+        .with_action(KEY_MARK_TOGGLE, "Mark", Action::ToggleMarks)
+        .with_action(KEY_MARK_CLEAR, "Clear", Action::ClearMarks)
+        .with_action(KEY_SCOPE, "Scope", Action::ChangeScope)
+        .with_action(KEY_SELECT_ROOT_PID, "Root", Action::SelectRootPid)
+        .with_action(
+            KEY_UNSELECT_ROOT_PID,
+            "Unselect Root",
+            Action::UnselectRootPid,
+        )
+        .with_action(KEY_SELECT_PARENT, "Parent", Action::SelectParent)
+        .with_shortcut(KEY_ESCAPE, Action::SwitchBack)
+        .build();
+    MenuBuilder::new("Main")
+        .with_menu(KEY_MENU_HELP, menu_help)
+        .with_imported_entries(KEY_MENU_EDIT, menu_edit)
+        .with_imported_entries(KEY_MENU_NAVIGATE, menu_nav)
+        .with_imported_entries(KEY_MENU_SEARCH, menu_search)
+        .with_imported_entries(KEY_MENU_SELECT, menu_select)
+        .with_menu(KEY_MENU_FILTER, menu_filter)
+        .with_shortcut(KEY_HELP, Action::SwitchToHelp)
+        .with_shortcut(KEY_QUIT, Action::Quit)
+        .with_shortcut(KEY_ESCAPE, Action::Quit)
+        .build()
 }
 
 /// Search bar state
@@ -684,5 +814,35 @@ impl Bookmarks {
         if !self.marks.remove(&pid) {
             self.marks.insert(pid);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::{Action, KEY_ENTER, KEY_MENU_HELP, Key, MenuTarget, menu};
+
+    #[test]
+    fn test_menu_not_found() {
+        let menu = menu();
+        let entry = dbg!(menu.map_key(&Key::Null));
+        assert!(entry.is_none());
+    }
+
+    #[test]
+    fn test_menu_action() {
+        let menu = menu();
+        let entry = dbg!(menu.map_key(&KEY_ENTER));
+        assert!(matches!(
+            entry,
+            Some(MenuTarget::Action(Action::SwitchToDetails))
+        ));
+    }
+
+    #[test]
+    fn test_menu_submenu() {
+        let menu = menu();
+        let entry = dbg!(menu.map_key(&KEY_MENU_HELP));
+        assert!(matches!(entry, Some(MenuTarget::Menu(_))));
     }
 }

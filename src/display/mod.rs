@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::slice::Iter as SliceIter;
+use std::{io, slice::Iter as SliceIter};
 
 use crate::process::{Collector, FormattedMetric};
 
@@ -88,7 +88,7 @@ pub trait DisplayDevice {
 
     /// Pause for the given duration.
     #[cfg(feature = "tui")]
-    fn pause(&mut self, _: &mut Timer) -> anyhow::Result<PauseStatus> {
+    fn pause(&mut self, _: &mut Timer) -> io::Result<PauseStatus> {
         panic!("not available");
     }
 }

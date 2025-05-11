@@ -16,6 +16,7 @@
 
 use getset::CopyGetters;
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Layout},
     prelude::*,
     style::{Modifier, Style},
@@ -24,13 +25,12 @@ use ratatui::{
         Block, Borders, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
         StatefulWidget, Table, Widget, Wrap,
     },
-    Frame,
 };
 use std::{borrow::Cow, cmp, fmt, ops::Range};
 
 use super::{
+    input::MenuEntry,
     types::{Area, MaxLength, Motion, Scroll},
-    KeyMap, MenuEntry,
 };
 
 pub(crate) const BORDER_SIZE: u16 = 1;
@@ -152,24 +152,21 @@ impl<'t> OneLineWidget<'t> {
         }
     }
 
-    pub(crate) fn with_menu<'a, I>(entries: I, keymap: KeyMap) -> Self
+    pub(crate) fn with_menu<'a, I>(entries: I) -> Self
     where
         I: Iterator<Item = &'a MenuEntry>,
     {
         let mut spans = Vec::new();
         let mut sep = "";
-        entries
-            .into_iter()
-            .filter(|e| e.keymaps().contains(keymap))
-            .for_each(|entry| {
-                spans.push(Span::raw(sep));
-                spans.push(Span::styled(
-                    entry.key().to_string(),
-                    Style::default().add_modifier(Modifier::REVERSED),
-                ));
-                spans.push(Span::raw(format!(" {}", entry.label())));
-                sep = "  ";
-            });
+        entries.into_iter().for_each(|entry| {
+            spans.push(Span::raw(sep));
+            spans.push(Span::styled(
+                entry.key().to_string(),
+                Style::default().add_modifier(Modifier::REVERSED),
+            ));
+            spans.push(Span::raw(format!(" {}", entry.label())));
+            sep = "  ";
+        });
         Self::new(Text::from(Line::from(spans)), Style::default(), None)
     }
 }
@@ -796,11 +793,7 @@ impl GridPane {
     }
 
     pub(crate) fn with_row_if<W: StackableWidget>(self, row: &[&W], cond: bool) -> Self {
-        if cond {
-            self.with_row(row)
-        } else {
-            self
-        }
+        if cond { self.with_row(row) } else { self }
     }
 
     pub(crate) fn with_line<W: StackableWidget>(mut self, widget: &W) -> Self {
@@ -1121,7 +1114,7 @@ mod test {
 
     /// 0         1
     /// 01234567890123456789
-    /// abcde gh ijklm nopqrst   abcde h  ijkl mnopqrst   
+    /// abcde gh ijklm nopqrst   abcde h  ijkl mnopqrst
     ///   ABC FG  HI      JKLM   ABC   FG  HI    JKLM
     const EXPECTED_ROWS_CLIP_CASE_2: &[&[&str]] = &[&["gh", "ijklm", "nopqr"], &["FG", "HI", "JK"]];
 

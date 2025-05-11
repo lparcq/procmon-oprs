@@ -17,7 +17,7 @@
 use chrono::Local;
 use libc::pid_t;
 use ratatui::{
-    backend::TermionBackend, prelude::*, style::Style, text::Text, widgets::Clear, Terminal,
+    Terminal, backend::TermionBackend, prelude::*, style::Style, text::Text, widgets::Clear,
 };
 use std::{cell::RefCell, convert::TryFrom, fmt, io, rc::Rc, time::Duration};
 use termion::{
@@ -27,10 +27,10 @@ use termion::{
 
 use crate::{
     clock::Timer,
-    console::{is_tty, theme::BuiltinTheme, EventChannel},
+    console::{EventChannel, is_tty, theme::BuiltinTheme},
     process::{
-        self, format::human_duration, Aggregation, Collector, FormattedMetric, Process,
-        ProcessDetails, ProcessFilter,
+        self, Aggregation, Collector, FormattedMetric, Process, ProcessDetails, ProcessFilter,
+        format::human_duration,
     },
 };
 
@@ -43,7 +43,7 @@ mod tables;
 #[macro_use]
 mod types;
 
-use input::{menu, Action, BookmarkAction, Bookmarks, KeyMap, MenuEntry, SearchEdit};
+use input::{Action, BookmarkAction, Bookmarks, Menu, MenuTarget, SearchEdit, menu};
 use panes::{
     BigTableState, BigTableWidget, FieldsWidget, GridPane, MarkdownWidget, OneLineWidget,
     OptionalRenderer, Pane, SingleScrollablePane, TableGenerator, TableStyle, Zoom,
@@ -109,12 +109,10 @@ pub struct TerminalDevice {
     motions: Vec<Area<Motion>>,
     /// Filter
     filter: ProcessFilter,
-    /// Menu
-    menu: Vec<MenuEntry>,
     /// Pane kind.
     pane_kind: PaneKind,
-    /// Key map
-    keymap: KeyMap,
+    /// Menu Stack
+    menu_stack: Vec<Rc<Menu>>,
 }
 
 impl TerminalDevice {
@@ -122,6 +120,7 @@ impl TerminalDevice {
         let screen = io::stdout().into_raw_mode()?.into_alternate_screen()?;
         let backend = TermionBackend::new(Box::new(screen));
         let terminal = RefCell::new(Terminal::new(backend)?);
+        let menu_stack = vec![menu()];
 
         Ok(TerminalDevice {
             every,
@@ -130,22 +129,13 @@ impl TerminalDevice {
             tree_data: Rc::new(TreeData::new(Styles::new(theme))),
             motions: vec![Area::default()],
             filter: ProcessFilter::default(),
-            menu: menu(),
             pane_kind: PaneKind::Main,
-            keymap: KeyMap::Main,
+            menu_stack,
         })
     }
 
     pub fn is_available() -> bool {
         is_tty(&io::stdin())
-    }
-
-    /// Set the keymap
-    fn set_keymap(&mut self, keymap: KeyMap) {
-        if self.keymap != keymap {
-            log::debug!("switch keymap from {} to {keymap}", self.keymap);
-            self.keymap = keymap;
-        }
     }
 
     /// Content of the status bar
@@ -275,6 +265,16 @@ impl TerminalDevice {
         }
     }
 
+    /// Filter from action
+    fn map_filter(action: &Action) -> ProcessFilter {
+        match action {
+            Action::FilterUsers => ProcessFilter::UserLand,
+            Action::FilterActive => ProcessFilter::Active,
+            Action::FilterCurrentUser => ProcessFilter::CurrentUser,
+            _ => ProcessFilter::None,
+        }
+    }
+
     /// Execute an interactive action.
     fn react(&mut self, action: Action, timer: &mut Timer) -> io::Result<Action> {
         match action {
@@ -283,6 +283,7 @@ impl TerminalDevice {
             | Action::SelectParent
             | Action::SelectRootPid
             | Action::SwitchBack
+            | Action::SwitchToAbout
             | Action::SwitchToHelp
             | Action::SwitchToDetails
             | Action::SwitchToLimits
@@ -291,22 +292,12 @@ impl TerminalDevice {
             | Action::SwitchToMaps
             | Action::UnselectRootPid
             | Action::Quit => (),
-            Action::Filters => self.set_keymap(KeyMap::Filters),
-            Action::FilterNone => {
-                self.filter = ProcessFilter::None;
-                self.set_keymap(KeyMap::Main);
-            }
-            Action::FilterUsers => {
-                self.filter = ProcessFilter::UserLand;
-                self.set_keymap(KeyMap::Main);
-            }
-            Action::FilterActive => {
-                self.filter = ProcessFilter::Active;
-                self.set_keymap(KeyMap::Main);
-            }
-            Action::FilterCurrentUser => {
-                self.filter = ProcessFilter::CurrentUser;
-                self.set_keymap(KeyMap::Main);
+            Action::FilterNone
+            | Action::FilterUsers
+            | Action::FilterActive
+            | Action::FilterCurrentUser => {
+                self.filter = Self::map_filter(&action);
+                return Ok(Action::SwitchBack);
             }
             Action::MultiplyTimeout(factor) => self.multiply_delay(timer, factor),
             Action::DivideTimeout(factor) => self.divide_delay(timer, factor),
@@ -325,18 +316,16 @@ impl TerminalDevice {
             Action::SearchEnter => {
                 if let Some(data) = Rc::get_mut(&mut self.tree_data) {
                     data.bookmarks.incremental_search();
-                    self.set_keymap(KeyMap::IncrementalSearch);
                 }
             }
             Action::SearchExit => {
                 self.terminal.borrow_mut().hide_cursor()?;
                 if let Some(data) = Rc::get_mut(&mut self.tree_data) {
                     data.bookmarks.fixed_search();
-                    self.set_keymap(KeyMap::Main);
                 }
             }
-            Action::SearchPush(c) => self.edit_search(SearchEdit::Push(c)),
-            Action::SearchPop => self.edit_search(SearchEdit::Pop),
+            Action::PushChar(c) => self.edit_search(SearchEdit::Push(c)),
+            Action::PopChar => self.edit_search(SearchEdit::Pop),
             Action::SearchCancel => self.clear_search(),
             Action::SelectPrevious => {
                 void!(self.set_bookmarks_action(BookmarkAction::Previous))
@@ -384,6 +373,12 @@ impl TerminalDevice {
         })
     }
 
+    /// Last menu
+    fn last_menu(&self) -> Rc<Menu> {
+        Rc::clone(self.menu_stack.last().expect("a menu is expected"))
+    }
+
+    /// Menu widget for incremental search.
     fn search_menu<'t>(pattern: String) -> OneLineWidget<'t> {
         OneLineWidget::new(
             Text::from(format!("Search: {pattern}")),
@@ -392,26 +387,9 @@ impl TerminalDevice {
         )
     }
 
+    /// Menu widget in default case.
     fn default_menu(&self) -> OneLineWidget<'_> {
-        OneLineWidget::with_menu(self.menu.iter(), self.keymap)
-    }
-
-    /// Check if the keymap for the main pane is correct.
-    fn fix_main_keymap(&self) -> Option<KeyMap> {
-        let is_incremental_search = self.tree_data.bookmarks.is_incremental_search();
-        match self.keymap {
-            KeyMap::IncrementalSearch if is_incremental_search => None,
-            KeyMap::Main if !is_incremental_search => None,
-            KeyMap::Filters => None,
-            _ if is_incremental_search => {
-                log::warn!("{}: wrong keymap for incremental search", self.keymap);
-                Some(KeyMap::IncrementalSearch)
-            }
-            _ => {
-                log::warn!("{}: wrong keymap", self.keymap);
-                Some(KeyMap::Main)
-            }
-        }
+        OneLineWidget::with_menu(self.last_menu().entries())
     }
 
     /// Transition between panes.
@@ -423,49 +401,46 @@ impl TerminalDevice {
             Push,
             Pop,
         }
-        fn mismatch(current: PaneKind, new: PaneKind) -> (Option<KeyMap>, Update) {
+        fn mismatch(current: PaneKind, new: PaneKind) -> Update {
             log::error!("cannot move from {:?} to {:?}", current, new);
-            (None, Update::None)
+            Update::None
         }
-        let (keymap, direction) = match self.pane_kind {
+        let direction = match self.pane_kind {
             PaneKind::Main => match kind {
-                PaneKind::Main => (self.fix_main_keymap(), Update::None),
-                PaneKind::Help => (Some(KeyMap::Help), Update::Push),
-                PaneKind::Process(DataKind::Details) => (Some(KeyMap::Details), Update::Push),
+                PaneKind::Main => Update::None,
+                PaneKind::Help => Update::Push,
+                PaneKind::Process(DataKind::Details) => Update::Push,
                 _ => mismatch(self.pane_kind, kind),
             },
             PaneKind::Help => match kind {
-                PaneKind::Help => (None, Update::None),
-                PaneKind::Main => (Some(KeyMap::Main), Update::Pop),
+                PaneKind::Help => Update::None,
+                PaneKind::Main => Update::Pop,
                 _ => mismatch(self.pane_kind, kind),
             },
             PaneKind::Process(DataKind::Details) => match kind {
-                PaneKind::Process(DataKind::Details) => (None, Update::None),
+                PaneKind::Process(DataKind::Details) => Update::None,
                 PaneKind::Process(DataKind::Environment | DataKind::Files | DataKind::Maps) => {
-                    (Some(KeyMap::Process), Update::Push)
+                    Update::Push
                 }
-                PaneKind::Main => (Some(KeyMap::Main), Update::Pop),
+                PaneKind::Main => Update::Pop,
                 _ => mismatch(self.pane_kind, kind),
             },
             PaneKind::Process(DataKind::Environment | DataKind::Files | DataKind::Maps) => {
                 match kind {
                     PaneKind::Process(DataKind::Environment | DataKind::Files | DataKind::Maps) => {
-                        (None, Update::None)
+                        Update::None
                     }
-                    PaneKind::Process(DataKind::Details) => (Some(KeyMap::Details), Update::Pop),
+                    PaneKind::Process(DataKind::Details) => Update::Pop,
                     _ => mismatch(self.pane_kind, kind),
                 }
             }
             PaneKind::Process(DataKind::Limits) => match kind {
-                PaneKind::Process(DataKind::Limits) => (None, Update::None),
-                PaneKind::Process(DataKind::Details) => (Some(KeyMap::Details), Update::Pop),
+                PaneKind::Process(DataKind::Limits) => Update::None,
+                PaneKind::Process(DataKind::Details) => Update::Pop,
                 _ => mismatch(self.pane_kind, kind),
             },
             PaneKind::Process(_) => todo!("not implemented"),
         };
-        if let Some(keymap) = keymap {
-            self.set_keymap(keymap);
-        }
         match direction {
             Update::None => (),
             Update::Push => self.motions.push(Area::default()),
@@ -771,16 +746,36 @@ impl DisplayDevice for TerminalDevice {
     }
 
     /// Wait for a user input or a timeout.
-    fn pause(&mut self, timer: &mut Timer) -> anyhow::Result<PauseStatus> {
-        if let Some(timeout) = timer.remaining() {
-            if let Some(evt) = self.events.receive_timeout(timeout)? {
-                let action = self.react(self.keymap.action_from_event(evt), timer)?;
-                Ok(PauseStatus::Action(self.interaction(action)))
-            } else {
-                Ok(PauseStatus::TimeOut)
-            }
-        } else {
-            Ok(PauseStatus::TimeOut)
+    fn pause(&mut self, timer: &mut Timer) -> io::Result<PauseStatus> {
+        match timer.remaining() {
+            Some(timeout) => match self.events.receive_timeout(timeout)? {
+                Some(evt) => {
+                    match match self.last_menu().map_event(evt) {
+                        Some(MenuTarget::Action(action)) => Some(action),
+                        Some(MenuTarget::Menu(submenu)) => {
+                            log::debug!("push menu {}", submenu.name);
+                            self.menu_stack.push(Rc::clone(&submenu));
+                            submenu.action.ok()
+                        }
+                        None => None,
+                    } {
+                        Some(action) => {
+                            // Either the event is mapped to an action or the menu have a self-action.
+                            let action = self.react(action, timer)?;
+                            if action.parent_menu() && self.menu_stack.len() > 1 {
+                                if let Some(menu) = self.menu_stack.pop() {
+                                    log::debug!("pop menu {}", menu.name);
+                                }
+                                log::debug!("current menu {}", self.last_menu().name);
+                            }
+                            Ok(PauseStatus::Action(self.interaction(action)))
+                        }
+                        None => Ok(PauseStatus::TimeOut),
+                    }
+                }
+                None => Ok(PauseStatus::TimeOut),
+            },
+            None => Ok(PauseStatus::TimeOut),
         }
     }
 }
