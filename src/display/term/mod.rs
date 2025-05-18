@@ -295,10 +295,7 @@ impl TerminalDevice {
             Action::FilterNone
             | Action::FilterUsers
             | Action::FilterActive
-            | Action::FilterCurrentUser => {
-                self.filter = Self::map_filter(&action);
-                return Ok(Action::SwitchBack);
-            }
+            | Action::FilterCurrentUser => self.filter = Self::map_filter(&action),
             Action::MultiplyTimeout(factor) => self.multiply_delay(timer, factor),
             Action::DivideTimeout(factor) => self.divide_delay(timer, factor),
             Action::ScrollLeft => self.scroll_left(),

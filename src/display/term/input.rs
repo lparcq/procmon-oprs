@@ -136,7 +136,15 @@ impl Action {
 
     /// True if the action implies reverting to the parent menu
     pub fn parent_menu(&self) -> bool {
-        matches!(self, Self::SearchExit | Self::SwitchBack)
+        matches!(
+            self,
+            Self::SearchExit
+                | Self::SwitchBack
+                | Self::FilterNone
+                | Self::FilterUsers
+                | Self::FilterActive
+                | Self::FilterCurrentUser
+        )
     }
 }
 
