@@ -399,6 +399,7 @@ pub fn menu() -> Rc<Menu> {
         .with_menu(KEY_LIMITS, menu_process_limits)
         .with_menu(KEY_MAPS, menu_process_maps)
         .import_actions(&menu_nav)
+        .import_shortcuts(&menu_nav)
         .with_self_action(Action::SwitchToDetails)
         .build();
     let menu_isearch = MenuBuilder::new("Incremental Search")
@@ -820,7 +821,7 @@ impl Bookmarks {
 #[cfg(test)]
 mod tests {
 
-    use super::{Action, KEY_ENTER, KEY_MENU_HELP, Key, MenuTarget, menu};
+    use super::{Action, KEY_HELP, KEY_MENU_HELP, Key, MenuBuilder, MenuTarget, menu};
 
     #[test]
     fn test_menu_not_found() {
@@ -832,11 +833,16 @@ mod tests {
     #[test]
     fn test_menu_action() {
         let menu = menu();
-        let entry = dbg!(menu.map_key(&KEY_ENTER));
-        assert!(matches!(
-            entry,
-            Some(MenuTarget::Action(Action::SwitchToDetails))
-        ));
+        match menu.map_key(&KEY_MENU_HELP).unwrap() {
+            MenuTarget::Menu(menu_help) => {
+                let entry = dbg!(menu_help.map_key(&KEY_HELP));
+                assert!(matches!(
+                    entry,
+                    Some(MenuTarget::Action(Action::SwitchToHelp))
+                ));
+            }
+            MenuTarget::Action(_) => panic!("got an action instead of a menu"),
+        }
     }
 
     #[test]
@@ -844,5 +850,74 @@ mod tests {
         let menu = menu();
         let entry = dbg!(menu.map_key(&KEY_MENU_HELP));
         assert!(matches!(entry, Some(MenuTarget::Menu(_))));
+    }
+
+    #[test]
+    fn test_duplicate_menu() {
+        // Create a menu with a submenu without self action
+        let key_submenu_action_a = Key::Char('a');
+        let submenu_wo_action = MenuBuilder::new("SubmenuNoAction")
+            .with_action(key_submenu_action_a, "Action A", Action::ToggleMarks)
+            .build();
+
+        // Create a menu with a submenu with self action
+        let key_submenu_action_b = Key::Char('b');
+        let submenu_wi_action = MenuBuilder::new("SubmenuWithAction")
+            .with_action(key_submenu_action_b, "Action B", Action::ClearMarks)
+            .with_self_action(Action::SelectNext)
+            .build();
+
+        // Create a main menu with both submenus, an action, and a shortcut
+        let key_menu_wo_action = Key::Char('1');
+        let key_menu_wi_action = Key::Char('2');
+        let key_action = Key::Char('c');
+        let key_shortcut = Key::Char('s');
+        let original_menu = MenuBuilder::new("OriginalMenu")
+            .with_menu(key_menu_wo_action, submenu_wo_action)
+            .with_menu(key_menu_wi_action, submenu_wi_action)
+            .with_action(key_action, "Action C", Action::SelectPrevious)
+            .with_shortcut(key_shortcut, Action::Quit)
+            .build();
+
+        // Create a duplicate menu with a different self action
+        let duplicated_menu =
+            MenuBuilder::duplicate("DuplicatedMenu", &original_menu, Action::ChangeScope);
+
+        // Action is set
+        assert!(matches!(duplicated_menu.action, Action::ChangeScope));
+
+        // Menu without actions are ignored
+        assert!(duplicated_menu.map_key(&key_menu_wo_action).is_none());
+
+        // Menu with an action are kept as target
+        match duplicated_menu.map_key(&key_menu_wi_action) {
+            Some(MenuTarget::Menu(menu)) => {
+                assert!(matches!(dbg!(menu.action), Action::SelectNext))
+            }
+            Some(MenuTarget::Action(_)) => panic!("action instead of menu"),
+            None => panic!("unknown key"),
+        }
+
+        // Actions are duplicated
+        assert!(matches!(
+            duplicated_menu.map_key(&key_action),
+            Some(MenuTarget::Action(Action::SelectPrevious))
+        ));
+
+        // Shortcuts are duplicated
+        assert!(matches!(
+            duplicated_menu.map_key(&key_shortcut),
+            Some(MenuTarget::Action(Action::Quit))
+        ));
+
+        // Sub-entries are not duplicated
+        assert!(matches!(
+            duplicated_menu.map_key(&key_submenu_action_a),
+            None
+        ));
+        assert!(matches!(
+            duplicated_menu.map_key(&key_submenu_action_b),
+            None
+        ));
     }
 }
