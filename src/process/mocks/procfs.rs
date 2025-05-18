@@ -56,7 +56,7 @@ pub(crate) mod process {
     }
 
     fn new_error(msg: &str) -> ProcError {
-        io::Error::new(io::ErrorKind::Other, msg)
+        io::Error::other(msg)
     }
 
     #[derive(Debug, Clone)]

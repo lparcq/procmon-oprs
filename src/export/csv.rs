@@ -39,17 +39,17 @@ pub enum Error {
 }
 
 trait ToStr {
-    fn to_str(&self) -> Cow<String>;
+    fn to_str(&self) -> Cow<str>;
 }
 
 impl ToStr for &String {
-    fn to_str(&self) -> Cow<String> {
+    fn to_str(&self) -> Cow<str> {
         Cow::Borrowed(self)
     }
 }
 
 impl ToStr for &u64 {
-    fn to_str(&self) -> Cow<String> {
+    fn to_str(&self) -> Cow<str> {
         Cow::Owned(format!("{self}"))
     }
 }
@@ -81,7 +81,7 @@ impl<'a> CsvLineOutput<'a> {
     {
         for value in row.into_iter() {
             write!(self.out, "{}", self.separator)?;
-            self.write_value(value.to_str().as_str())?;
+            self.write_value(&value.to_str())?;
         }
         writeln!(self.out)?;
         Ok(())
@@ -95,7 +95,7 @@ impl<'a> CsvLineOutput<'a> {
     {
         let mut iter = row.into_iter();
         if let Some(first) = iter.next() {
-            self.write_value(first.to_str().as_str())?;
+            self.write_value(&first.to_str())?;
             self.write_line_rest(iter)?;
         }
         Ok(())
@@ -253,7 +253,7 @@ mod test {
     use super::{CsvLineOutput, ToStr};
 
     impl ToStr for &str {
-        fn to_str(&self) -> Cow<String> {
+        fn to_str(&self) -> Cow<str> {
             Cow::Owned(self.to_string())
         }
     }

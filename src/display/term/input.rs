@@ -919,13 +919,7 @@ mod tests {
         ));
 
         // Sub-entries are not duplicated
-        assert!(matches!(
-            duplicated_menu.map_key(&key_submenu_action_a),
-            None
-        ));
-        assert!(matches!(
-            duplicated_menu.map_key(&key_submenu_action_b),
-            None
-        ));
+        assert!(duplicated_menu.map_key(&key_submenu_action_a).is_none());
+        assert!(duplicated_menu.map_key(&key_submenu_action_b).is_none());
     }
 }
