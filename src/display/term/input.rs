@@ -54,9 +54,9 @@ const KEY_MARK_TOGGLE: Key = Key::Char(' ');
 const KEY_MENU_HELP: Key = Key::F(1);
 const KEY_MENU_EDIT: Key = Key::F(2);
 const KEY_MENU_NAVIGATE: Key = Key::F(3);
-const KEY_MENU_SEARCH: Key = Key::F(5);
-const KEY_MENU_SELECT: Key = Key::F(6);
-const KEY_MENU_FILTER: Key = Key::F(7);
+const KEY_MENU_SEARCH: Key = Key::F(4);
+const KEY_MENU_SELECT: Key = Key::F(5);
+const KEY_MENU_FILTER: Key = Key::F(6);
 const KEY_PAGE_LEFT: Key = Key::BackTab;
 const KEY_PAGE_RIGHT: Key = Key::Char('\t');
 const KEY_QUIT: Key = Key::Char('q');
@@ -249,7 +249,7 @@ impl Menu {
             .get(key)
             .cloned()
             .or_else(|| self.shortcuts.get(key).map(|a| MenuTarget::Action(*a)))
-            .or({
+            .or_else(|| {
                 if self.char_stream {
                     match key {
                         Key::Char(c) => Some(MenuTarget::Action(Action::PushChar(*c))),

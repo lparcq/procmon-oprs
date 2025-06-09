@@ -416,9 +416,9 @@ impl TerminalDevice {
             },
             PaneKind::Process(DataKind::Details) => match kind {
                 PaneKind::Process(DataKind::Details) => Update::None,
-                PaneKind::Process(DataKind::Environment | DataKind::Files | DataKind::Maps) => {
-                    Update::Push
-                }
+                PaneKind::Process(
+                    DataKind::Environment | DataKind::Files | DataKind::Limits | DataKind::Maps,
+                ) => Update::Push,
                 PaneKind::Main => Update::Pop,
                 _ => mismatch(self.pane_kind, kind),
             },
