@@ -1,6 +1,6 @@
-# Help
+# Main window
 
-Keys F1 to F7 opens sub-menus. The action in the sub-menus are most of them time accessible directly as shortcuts from the main menu. The menu is more a quick reminder. When a key is only accessible from its menu, it is followed by a dagger †.
+Keys F1 to F7 opens sub-menus. The action in the sub-menus are most of them time accessible directly as shortcuts from the main menu when the key is unambiguous. The menu can be used as a reminder. When a key is only accessible from its menu, it is followed by a dagger † in this documentation.
 
 Revert to the parent menu with the escape key.
 
@@ -18,17 +18,17 @@ The main screen displays the list of processes with the metrics specified in the
 - (P) Parked
 - (I) Idle
 
-## F1: Help menu
+# F1: Help menu
 
-- This page can be opened with '?'.
+- This page can be opened with '?'†.
 - The about dialog is opened with 'a'†.
 - Quit the application with 'q'.
 
-## F2: Edition
+# F2: Edition
 
 The refresh rate is displayed in the status bar. It can be accelerated with '+' and slowed down with '-'.
 
-## F3: Navigate
+# F3: Navigate
 
 - Up and down: move the cursor up and down.
 - Page up and down: scroll the cursor by pages.
@@ -38,7 +38,7 @@ The refresh rate is displayed in the status bar. It can be accelerated with '+' 
 - Home: go to first column.
 - End: go to last column.
 
-## F4: Searching
+# F4: Searching
 
 - Start an incremental search with '/'.
   . Hit enter to validate the search string.
@@ -49,9 +49,9 @@ The refresh rate is displayed in the status bar. It can be accelerated with '+' 
   and the previous match with 'N'.
 - Hit Ctrl-c to clear the search.
 
-## F5: Selection
+# F5: Selection
 
-### Highlighted line
+## Highlighted line
 
 One line is highlighted when hitting the up or down arrows.
 
@@ -59,7 +59,7 @@ Go to the parent process with 'p' in the main menu.
 
 Hit 'Enter' to see the details. See section "Details" below.
 
-### Marking
+## Marking
 
 The space bar toggles the mark on:
 1. the matched lines if there is a search,
@@ -69,7 +69,7 @@ When no search is enabled, move to the next and previous match with 'n' and 'N'.
 
 Hit Ctrl-c to clear the marks.
 
-### Scope
+## Scope
 
 The list of processes can be narrowed by marking them and hitting 's'. The processes are displayed as a flat list.
 
@@ -77,7 +77,7 @@ Hitting 's' again reverts to the tree mode.
 
 The root process of the tree can be defined with 'r' on the selected process. Revert to the full tree with 'R'. The program can be started at a given root with option '--root' on the command line.
 
-### Details
+## Details
 
 This pane displays informations about a process. Other details are accessible with the following keys.
 
@@ -86,7 +86,7 @@ This pane displays informations about a process. Other details are accessible wi
 - 'l': process limits.
 - 'm': memory maps.
 
-## F6: Filters
+# F6: Filters
 
 - none: show userland and kernel processes
 - user: show only userland processes (default)
