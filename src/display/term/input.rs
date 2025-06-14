@@ -248,7 +248,12 @@ impl Menu {
         self.targets
             .get(key)
             .cloned()
-            .or_else(|| self.shortcuts.get(key).map(|a| MenuTarget::Action(*a)))
+            .or_else(|| {
+                self.shortcuts.get(key).map(|a| {
+                    log::debug!("menu {}: action {a:?}", self.name);
+                    MenuTarget::Action(*a)
+                })
+            })
             .or_else(|| {
                 if self.char_stream {
                     match key {
@@ -369,12 +374,6 @@ impl MenuBuilder {
 
 /// Return the menu
 pub fn menu() -> Rc<Menu> {
-    let menu_help = MenuBuilder::new("Help")
-        .with_action(KEY_HELP, "Help", Action::SwitchToHelp)
-        .with_action(KEY_ABOUT, "About", Action::SwitchToAbout)
-        .with_action(KEY_QUIT, "Quit", Action::Quit)
-        .with_shortcut(KEY_ESCAPE, Action::SwitchBack)
-        .build();
     let menu_edit = MenuBuilder::new("Edit")
         .with_action(KEY_FASTER, "Faster", Action::DivideTimeout(2))
         .with_action(KEY_SLOWER, "Slower", Action::MultiplyTimeout(2))
@@ -396,6 +395,13 @@ pub fn menu() -> Rc<Menu> {
         .with_action(KEY_GOTO_TBL_RIGHT, "Table Right", Action::GotoTableRight)
         .with_shortcut(KEY_ESCAPE, Action::SwitchBack)
         .build();
+    let menu_help_msg = MenuBuilder::duplicate("Help Message", &menu_nav, Action::SwitchToHelp);
+    let menu_help = MenuBuilder::new("Help")
+        .with_menu(KEY_HELP, Rc::clone(&menu_help_msg))
+        .with_action(KEY_ABOUT, "About", Action::SwitchToAbout)
+        .with_action(KEY_QUIT, "Quit", Action::Quit)
+        .with_shortcut(KEY_ESCAPE, Action::SwitchBack)
+        .build();
     let menu_process_env =
         MenuBuilder::duplicate("Environment", &menu_nav, Action::SwitchToEnvironment);
     let menu_process_files = MenuBuilder::duplicate("Files", &menu_nav, Action::SwitchToFiles);
@@ -407,7 +413,7 @@ pub fn menu() -> Rc<Menu> {
         .with_menu(KEY_LIMITS, menu_process_limits)
         .with_menu(KEY_MAPS, menu_process_maps)
         .import_actions(&menu_nav)
-        .import_shortcuts(&menu_nav)
+        .with_shortcut(KEY_ESCAPE, Action::SwitchBack)
         .with_self_action(Action::SwitchToDetails)
         .build();
     let menu_isearch = MenuBuilder::new("Incremental Search")
@@ -461,7 +467,7 @@ pub fn menu() -> Rc<Menu> {
         .with_imported_entries(KEY_MENU_SEARCH, menu_search)
         .with_imported_entries(KEY_MENU_SELECT, menu_select)
         .with_menu(KEY_MENU_FILTER, menu_filter)
-        .with_shortcut(KEY_HELP, Action::SwitchToHelp)
+        .with_menu(KEY_HELP, menu_help_msg)
         .with_shortcut(KEY_QUIT, Action::Quit)
         .with_shortcut(KEY_ESCAPE, Action::Quit)
         .build()
@@ -829,7 +835,7 @@ impl Bookmarks {
 #[cfg(test)]
 mod tests {
 
-    use super::{Action, KEY_HELP, KEY_MENU_HELP, Key, MenuBuilder, MenuTarget, menu};
+    use super::{Action, KEY_ABOUT, KEY_MENU_HELP, Key, MenuBuilder, MenuTarget, menu};
 
     #[test]
     fn test_menu_not_found() {
@@ -843,10 +849,10 @@ mod tests {
         let menu = menu();
         match menu.map_key(&KEY_MENU_HELP).unwrap() {
             MenuTarget::Menu(menu_help) => {
-                let entry = dbg!(menu_help.map_key(&KEY_HELP));
+                let entry = dbg!(menu_help.map_key(&KEY_ABOUT));
                 assert!(matches!(
                     entry,
-                    Some(MenuTarget::Action(Action::SwitchToHelp))
+                    Some(MenuTarget::Action(Action::SwitchToAbout))
                 ));
             }
             MenuTarget::Action(_) => panic!("got an action instead of a menu"),

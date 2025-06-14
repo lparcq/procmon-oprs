@@ -110,10 +110,6 @@ impl Zoom {
         }
     }
 
-    pub fn with_position(position: usize) -> Self {
-        Self::new(position, 0, 0)
-    }
-
     /// Create a scrollbar state if content is bigger than visible size.
     pub fn scrollbar_state(&self) -> Option<ScrollbarState> {
         if self.position > 0 || self.visible_length < self.total_length {
@@ -229,7 +225,7 @@ impl MarkdownWidget<'_> {
 }
 
 impl StatefulWidget for MarkdownWidget<'_> {
-    type State = Zoom;
+    type State = Motion;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State)
     where
@@ -238,8 +234,8 @@ impl StatefulWidget for MarkdownWidget<'_> {
         let borders = BORDER_SIZE * 2;
         let inner_height = area.height - borders;
         let max_offset = self.text.len().saturating_sub(inner_height as usize / 2);
-        state.position = cmp::min(state.position, max_offset);
-        state.visible_length = inner_height as usize;
+        let page_length = inner_height as usize;
+        state.update(max_offset, page_length);
         let mut scroll_state = ScrollbarState::new(max_offset).position(state.position);
         Paragraph::new(Text::from(self.text))
             .block(
@@ -505,23 +501,6 @@ impl<'a, T: TableGenerator> BigTableWidget<'a, T> {
         Self { table, style }
     }
 
-    fn move_position(
-        position: usize,
-        last_position: usize,
-        page_length: usize,
-        scroll: Scroll,
-    ) -> usize {
-        match scroll {
-            Scroll::CurrentPosition => position,
-            Scroll::FirstPosition => 0,
-            Scroll::LastPosition => last_position,
-            Scroll::PreviousPosition => position.saturating_sub(1),
-            Scroll::NextPosition => cmp::min(last_position, position + 1),
-            Scroll::PreviousPage => position.saturating_sub(page_length),
-            Scroll::NextPage => cmp::min(last_position, position + page_length),
-        }
-    }
-
     /// Move the position and adapt the zoom so that the position is visible.
     ///
     /// If a position is given, it is moved and the zoom also if required.
@@ -540,8 +519,9 @@ impl<'a, T: TableGenerator> BigTableWidget<'a, T> {
         let (position, top) = match position {
             Some(position) => {
                 let last_position = total_length.saturating_sub(1);
-                let position =
-                    Self::move_position(position, last_position, page_length, motion.scroll);
+                let position = motion
+                    .with_position(position)
+                    .resolve(last_position, page_length);
                 let top =
                     if position < motion.position || position >= motion.position + visible_length {
                         position.saturating_sub(page_length)
@@ -557,8 +537,7 @@ impl<'a, T: TableGenerator> BigTableWidget<'a, T> {
                     Scroll::NextPosition => (Some(cmp::max(top, min_position)), top),
                     _ => {
                         let last_position = total_length.saturating_sub(visible_length);
-                        let top =
-                            Self::move_position(top, last_position, page_length, motion.scroll);
+                        let top = motion.resolve(last_position, page_length);
                         (None, top)
                     }
                 }
@@ -599,11 +578,9 @@ impl<T: TableGenerator> StatefulWidget for BigTableWidget<'_, T> {
             .saturating_sub(borders)
             .saturating_sub(nheadrows as u16);
         let hzoom = Zoom::new(
-            Self::move_position(
-                state.motion.horizontal.position,
+            state.motion.horizontal.resolve(
                 body_width.saturating_sub(visible_width) as usize,
                 visible_width.div_ceil(2) as usize,
-                state.motion.horizontal.scroll,
             ),
             visible_width as usize,
             body_width as usize,

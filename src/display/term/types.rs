@@ -17,7 +17,7 @@
 use num_traits::{ConstZero, Saturating, Zero};
 use smart_default::SmartDefault;
 use std::{
-    cmp::Ordering,
+    cmp::{self, Ordering},
     ops::{Add, Sub},
 };
 
@@ -34,9 +34,8 @@ pub(crate) enum Unbounded<T: Clone + Copy + Default> {
     Infinite,
 }
 
-impl<
-        T: Clone + Copy + Default + Add<Output = T> + Sub<Output = T> + Zero + ConstZero + PartialEq,
-    > Zero for Unbounded<T>
+impl<T: Clone + Copy + Default + Add<Output = T> + Sub<Output = T> + Zero + ConstZero + PartialEq>
+    Zero for Unbounded<T>
 {
     fn is_zero(&self) -> bool {
         match self {
@@ -50,9 +49,8 @@ impl<
     }
 }
 
-impl<
-        T: Clone + Copy + Default + Add<Output = T> + Sub<Output = T> + Zero + ConstZero + PartialEq,
-    > ConstZero for Unbounded<T>
+impl<T: Clone + Copy + Default + Add<Output = T> + Sub<Output = T> + Zero + ConstZero + PartialEq>
+    ConstZero for Unbounded<T>
 {
     const ZERO: Self = Unbounded::Value(T::ZERO);
 }
@@ -91,9 +89,8 @@ impl<T: Clone + Copy + Default + Add<Output = T> + Sub<Output = T>> Default for 
     }
 }
 
-impl<
-        T: Clone + Copy + Default + Add<Output = T> + Sub<Output = T> + PartialOrd + Ord + Saturating,
-    > PartialOrd for Unbounded<T>
+impl<T: Clone + Copy + Default + Add<Output = T> + Sub<Output = T> + PartialOrd + Ord + Saturating>
+    PartialOrd for Unbounded<T>
 {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         match (self, other) {
@@ -166,11 +163,7 @@ impl MaxLength {
     }
 
     pub(crate) fn max(self, other: Self) -> Self {
-        if self.0 < other.0 {
-            other
-        } else {
-            self
-        }
+        if self.0 < other.0 { other } else { self }
     }
 
     /// Check the length of each lines.
@@ -234,6 +227,13 @@ pub(crate) struct Motion {
 }
 
 impl Motion {
+    /// New motion with same scroll but different position.
+    pub(crate) fn with_position(&self, position: usize) -> Self {
+        let scroll = self.scroll;
+        Self { position, scroll }
+    }
+
+    /// Move to a position and clear the scroll.
     pub(crate) fn move_to(&mut self, position: usize) {
         self.position = position;
         self.current();
@@ -265,5 +265,23 @@ impl Motion {
 
     pub(crate) fn next_page(&mut self) {
         self.scroll = Scroll::NextPage;
+    }
+
+    /// Resolve the position according to the last position and total_length.
+    pub(crate) fn resolve(&self, last_position: usize, page_length: usize) -> usize {
+        match self.scroll {
+            Scroll::CurrentPosition => self.position,
+            Scroll::FirstPosition => 0,
+            Scroll::LastPosition => last_position,
+            Scroll::PreviousPosition => self.position.saturating_sub(1),
+            Scroll::NextPosition => cmp::min(last_position, self.position + 1),
+            Scroll::PreviousPage => self.position.saturating_sub(page_length),
+            Scroll::NextPage => cmp::min(last_position, self.position + page_length),
+        }
+    }
+
+    /// Resolve the position according to the last position and total_length.
+    pub(crate) fn update(&mut self, last_position: usize, page_length: usize) {
+        self.move_to(self.resolve(last_position, page_length));
     }
 }

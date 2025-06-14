@@ -46,7 +46,7 @@ mod types;
 use input::{Action, BookmarkAction, Bookmarks, Menu, MenuTarget, SearchEdit, menu};
 use panes::{
     BigTableState, BigTableWidget, FieldsWidget, GridPane, MarkdownWidget, OneLineWidget,
-    OptionalRenderer, Pane, SingleScrollablePane, TableGenerator, TableStyle, Zoom,
+    OptionalRenderer, Pane, SingleScrollablePane, TableGenerator, TableStyle,
 };
 use tables::{
     EnvironmentTable, FilesTable, LimitsTable, MapsTable, ProcessTreeTable, Styles, TreeData,
@@ -508,9 +508,12 @@ impl TerminalDevice {
 
     fn render_scrollable_pane<W>(&mut self, widget: W) -> anyhow::Result<()>
     where
-        W: StatefulWidget<State = Zoom>,
+        W: StatefulWidget<State = Motion>,
     {
-        let mut state = Zoom::with_position(self.motions.last().unwrap().vertical.position);
+        let Area {
+            horizontal: hmotion,
+            vertical: mut vmotion,
+        } = self.motions.pop().expect("motion for scrollable pane");
         let menu = self.default_menu();
 
         self.terminal.borrow_mut().draw(|frame| {
@@ -519,14 +522,10 @@ impl TerminalDevice {
                 .build();
 
             let mut r = OptionalRenderer::new(frame, &mut rects);
-            r.render_stateful_widget(widget, &mut state);
+            r.render_stateful_widget(widget, &mut vmotion);
             r.render_widget(menu);
         })?;
-        if let Some(motion) = self.motions.last_mut() {
-            motion.vertical.position = state.position;
-        } else {
-            log::error!("cannot update motion");
-        }
+        self.motions.push(Area::new(hmotion, vmotion));
         Ok(())
     }
 
@@ -542,12 +541,11 @@ impl TerminalDevice {
     }
 
     fn render_details(&mut self, details: &ProcessDetails) -> anyhow::Result<()> {
-        let offset = self.motions.last().unwrap().vertical.position;
         let pinfo = details.process();
         let cmdline = pinfo.cmdline();
         let metrics = details.metrics();
 
-        let mut block_count = 0;
+        let mut block_count: usize = 0;
         let cmdline_widget =
             OneLineWidget::new(Text::from(cmdline), Style::default(), Some("Command"));
         block_count += 1;
@@ -586,6 +584,12 @@ impl TerminalDevice {
         let mem_widget = FieldsWidget::new("Memory", &mem_fields);
         block_count += 1;
 
+        let mut motions = self.motions.pop().expect("motions for fields");
+        let hmotion = &mut motions.vertical;
+        hmotion.update(block_count.saturating_sub(1), 1);
+        let offset = hmotion.position;
+        self.motions.push(motions);
+
         let menu = self.default_menu();
 
         self.terminal.borrow_mut().draw(|frame| {
@@ -615,11 +619,6 @@ impl TerminalDevice {
             r.render_widget(Clear);
             r.render_widget(menu);
         })?;
-        if offset >= block_count {
-            if let Some(motion) = self.motions.last_mut() {
-                motion.horizontal.position = block_count.saturating_sub(1);
-            }
-        }
         Ok(())
     }
 
