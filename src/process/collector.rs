@@ -25,7 +25,7 @@ use std::{
 };
 use strum::IntoEnumIterator;
 
-use super::{format, Aggregation, FormattedMetric, MetricId, ProcessInfo, SystemStat};
+use super::{Aggregation, FormattedMetric, MetricId, ProcessInfo, SystemStat, format};
 
 /// Tell if it makes sense to track metric changes
 ///
@@ -141,6 +141,7 @@ impl From<&[&str]> for Sample {
 pub trait ProcessIdentity {
     fn name(&self) -> &str;
     fn pid(&self) -> pid_t;
+    fn parent_pid(&self) -> Option<pid_t>;
 }
 
 /// A list of computed samples for a process
@@ -148,7 +149,6 @@ pub trait ProcessIdentity {
 pub struct ProcessSamples {
     name: String,
     pid: pid_t,
-    #[getset(get_copy = "pub")]
     parent_pid: Option<pid_t>,
     #[getset(get_copy = "pub")]
     state: char,
@@ -199,16 +199,6 @@ impl ProcessSamples {
     }
 }
 
-impl ProcessIdentity for ProcessSamples {
-    fn name(&self) -> &str {
-        self.name.as_str()
-    }
-
-    fn pid(&self) -> pid_t {
-        self.pid
-    }
-}
-
 impl ProcessIdentity for &ProcessSamples {
     fn name(&self) -> &str {
         self.name.as_str()
@@ -216,6 +206,10 @@ impl ProcessIdentity for &ProcessSamples {
 
     fn pid(&self) -> pid_t {
         self.pid
+    }
+
+    fn parent_pid(&self) -> Option<pid_t> {
+        self.parent_pid
     }
 }
 
@@ -376,7 +370,7 @@ impl Updater {
                 ag_index += 1;
             }
         }
-        if pstat.pid() == 0 {
+        if pstat.pid == 0 {
             self.push_samples(pstat.samples_as_slice()); // new system values
         }
     }

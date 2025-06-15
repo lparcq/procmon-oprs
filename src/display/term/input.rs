@@ -28,7 +28,7 @@ use crate::{
     process::ProcessIdentity,
 };
 
-use super::types::Scroll;
+use super::types::{Motion, Scroll};
 
 /// Standard keys
 const KEY_ABOUT: Key = Key::Char('a');
@@ -116,6 +116,7 @@ pub enum Action {
     SelectNext,
     SelectPrevious,
     SelectParent,
+    SelectParentDetails,
     SelectRootPid,
     UnselectRootPid,
 }
@@ -412,7 +413,7 @@ pub fn menu() -> Rc<Menu> {
         .with_menu(KEY_FILES, menu_process_files)
         .with_menu(KEY_LIMITS, menu_process_limits)
         .with_menu(KEY_MAPS, menu_process_maps)
-        .with_action(KEY_SELECT_PARENT, "Parent", Action::SelectParent)
+        .with_action(KEY_SELECT_PARENT, "Parent", Action::SelectParentDetails)
         .import_actions(&menu_nav)
         .with_shortcut(KEY_ESCAPE, Action::SwitchBack)
         .with_self_action(Action::SwitchToDetails)
@@ -699,7 +700,7 @@ impl Bookmarks {
     /// * `lines` - The lines of process identities.
     pub(crate) fn selected_line<I, P>(
         &mut self,
-        scroll: Scroll,
+        motion: &mut Motion,
         occurrences: &mut BTreeSet<pid_t>,
         lines: I,
     ) -> Option<usize>
@@ -708,12 +709,12 @@ impl Bookmarks {
         P: ProcessIdentity,
     {
         occurrences.clear();
+        let mut pids = Vec::new();
         let mut selected_linepid = None;
-        let mut first_linepid = None;
-        let mut last_linepid = None;
+        let mut parent_pid = None;
         let mut matches = Vec::new();
         let mut marks = Vec::new();
-        if !matches!(scroll, Scroll::CurrentPosition) {
+        if !matches!(motion.scroll, Scroll::CurrentPosition) {
             self.search = None;
             self.clear_marks();
         }
@@ -721,19 +722,18 @@ impl Bookmarks {
 
         for (lineno, pi) in lines.enumerate() {
             let pid = pi.pid();
+            pids.push(pid);
             if pid == 0 {
                 continue;
             }
             let this_linepid = LinePid::new(lineno, pi.pid());
-            if first_linepid.is_none() {
-                first_linepid = last_linepid;
-            }
             if self.marks.contains(&pid) {
                 marks.push(this_linepid);
             }
             if let Some(selected_pid) = self.selected_pid {
                 if selected_pid == pid {
                     selected_linepid = Some(this_linepid);
+                    parent_pid = pi.parent_pid();
                 }
             }
             if let Some(pattern) = pattern.as_ref() {
@@ -742,7 +742,6 @@ impl Bookmarks {
                     occurrences.insert(pid);
                 }
             }
-            last_linepid = Some(this_linepid);
         }
         match selected_linepid {
             Some(lp) if !occurrences.is_empty() && occurrences.contains(&lp.pid) => (),
@@ -769,7 +768,25 @@ impl Bookmarks {
                 if matches!(action, BookmarkAction::ToggleMarks) {
                     self.toggle_marks(occurrences);
                 }
-                self.apply_scroll(scroll, selected_linepid, first_linepid, last_linepid)
+                match motion.scroll {
+                    Scroll::Up => {
+                        motion.current();
+                        parent_pid
+                            .and_then(|ppid| Self::select_pid_in(&pids, ppid))
+                            .or(selected_linepid)
+                    }
+                    _ => {
+                        let first_linepid = pids.first().map(|pid| LinePid::new(0, *pid));
+                        let last_linepid =
+                            pids.last().map(|pid| LinePid::new(pids.len() - 1, *pid));
+                        self.apply_scroll(
+                            motion.scroll,
+                            selected_linepid,
+                            first_linepid,
+                            last_linepid,
+                        )
+                    }
+                }
             }
             BookmarkAction::Previous => self
                 .move_to_pid_in_ring(ring, selected_linepid, LinePid::previous_in)
@@ -795,6 +812,13 @@ impl Bookmarks {
             Scroll::LastPosition => last_linepid,
             _ => selected_linepid,
         }
+    }
+
+    /// Select a line pid in a list
+    fn select_pid_in(pids: &[pid_t], pid: pid_t) -> Option<LinePid> {
+        pids.iter()
+            .position(|&x| x == pid)
+            .map(|index| LinePid::new(index, pid))
     }
 
     /// Apply the function to the ring and pid if the latest is set.
@@ -835,7 +859,13 @@ impl Bookmarks {
 #[cfg(test)]
 mod tests {
 
-    use super::{Action, KEY_ABOUT, KEY_MENU_HELP, Key, MenuBuilder, MenuTarget, menu};
+    use libc::pid_t;
+    use std::collections::BTreeSet;
+
+    use super::{
+        Action, Bookmarks, KEY_ABOUT, KEY_MENU_HELP, Key, MenuBuilder, MenuTarget, Motion,
+        ProcessIdentity, Scroll, menu,
+    };
 
     #[test]
     fn test_menu_not_found() {
@@ -927,5 +957,82 @@ mod tests {
         // Sub-entries are not duplicated
         assert!(duplicated_menu.map_key(&key_submenu_action_a).is_none());
         assert!(duplicated_menu.map_key(&key_submenu_action_b).is_none());
+    }
+
+    /*
+     * Bookmarks tests
+     */
+
+    #[derive(Debug)]
+    struct FakeProcessId {
+        name: &'static str,
+        pid: pid_t,
+        parent_pid: Option<pid_t>,
+    }
+
+    impl FakeProcessId {
+        fn new(name: &'static str, pid: pid_t) -> Self {
+            let parent_pid = None;
+            Self {
+                name,
+                pid,
+                parent_pid,
+            }
+        }
+
+        fn with_parent(name: &'static str, pid: pid_t, parent_pid: pid_t) -> Self {
+            let parent_pid = Some(parent_pid);
+            Self {
+                name,
+                pid,
+                parent_pid,
+            }
+        }
+    }
+
+    impl ProcessIdentity for &FakeProcessId {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn pid(&self) -> pid_t {
+            self.pid
+        }
+
+        fn parent_pid(&self) -> Option<pid_t> {
+            self.parent_pid
+        }
+    }
+
+    #[test]
+    fn test_bookmarks_select_parent() {
+        let mut bm = Bookmarks::default();
+        let mut occurrences = BTreeSet::new();
+        let processes = [
+            FakeProcessId::new("system", 0),
+            FakeProcessId::new("root", 10),
+            FakeProcessId::with_parent("child1", 20, 10),
+            FakeProcessId::with_parent("child2", 30, 20),
+        ];
+
+        let mut motion1 = Motion {
+            position: 3,
+            scroll: Scroll::Up,
+        };
+        bm.selected_pid = Some(processes[3].pid);
+
+        let selected_lineno = bm.selected_line(&mut motion1, &mut occurrences, processes.iter());
+        assert_eq!(motion1.position - 1, selected_lineno.unwrap());
+        assert_eq!(processes[2].pid, bm.selected_pid.unwrap());
+        assert!(matches!(motion1.scroll, Scroll::CurrentPosition));
+
+        let mut motion2 = Motion {
+            position: 2,
+            scroll: Scroll::Up,
+        };
+        let selected_lineno2 = bm.selected_line(&mut motion2, &mut occurrences, processes.iter());
+        assert_eq!(motion2.position - 1, selected_lineno2.unwrap());
+        assert_eq!(processes[1].pid, bm.selected_pid.unwrap());
+        assert!(matches!(motion2.scroll, Scroll::CurrentPosition));
     }
 }

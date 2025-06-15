@@ -77,7 +77,7 @@ impl TryFrom<&Action> for Interaction {
     /// Convert actions that have a one to one correspondance.
     fn try_from(value: &Action) -> Result<Self, Self::Error> {
         match value {
-            Action::SelectParent => Ok(Interaction::SelectParent),
+            Action::SelectParentDetails => Ok(Interaction::SelectParent),
             Action::SwitchToHelp => Ok(Interaction::SwitchToHelp),
             Action::SwitchBack => Ok(Interaction::SwitchBack),
             Action::Quit => Ok(Interaction::Quit),
@@ -280,7 +280,7 @@ impl TerminalDevice {
         match action {
             Action::None
             | Action::ChangeScope
-            | Action::SelectParent
+            | Action::SelectParentDetails
             | Action::SelectRootPid
             | Action::SwitchBack
             | Action::SwitchToAbout
@@ -310,6 +310,7 @@ impl TerminalDevice {
             Action::GotoTableBottom => self.goto_bottom(),
             Action::GotoTableLeft => self.goto_left(),
             Action::GotoTableRight => self.goto_right(),
+            Action::SelectParent => self.last_motions().vertical.up(),
             Action::SearchEnter => {
                 if let Some(data) = Rc::get_mut(&mut self.tree_data) {
                     data.bookmarks.incremental_search();
@@ -455,7 +456,7 @@ impl TerminalDevice {
         let mut motion = self.motions.pop().expect("motions for process tree");
         let selected_lineno = Rc::get_mut(&mut self.tree_data).and_then(|data| {
             data.bookmarks.selected_line(
-                motion.vertical.scroll,
+                &mut motion.vertical,
                 &mut data.occurrences,
                 collector.lines(),
             )

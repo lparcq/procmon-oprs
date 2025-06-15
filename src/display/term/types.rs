@@ -218,6 +218,8 @@ pub(crate) enum Scroll {
     PreviousPage,
     /// Next page from the current one.
     NextPage,
+    /// Up in a hierarchy
+    Up,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -267,6 +269,10 @@ impl Motion {
         self.scroll = Scroll::NextPage;
     }
 
+    pub(crate) fn up(&mut self) {
+        self.scroll = Scroll::Up;
+    }
+
     /// Resolve the position according to the last position and total_length.
     pub(crate) fn resolve(&self, last_position: usize, page_length: usize) -> usize {
         match self.scroll {
@@ -277,6 +283,7 @@ impl Motion {
             Scroll::NextPosition => cmp::min(last_position, self.position + 1),
             Scroll::PreviousPage => self.position.saturating_sub(page_length),
             Scroll::NextPage => cmp::min(last_position, self.position + page_length),
+            Scroll::Up => panic!("cannot resolve hierarchical moves"),
         }
     }
 
