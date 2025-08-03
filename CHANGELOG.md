@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.39.1] - 2025-08-03
+
+### 🐛 Bug Fixes
+
+- Revert to main menu if process dies in details
+- Do not clear marks with arrows, only search
+
+### ⚙️ Miscellaneous Tasks
+
+- Fix clippy warnings
+- Update terminal-colorsaurus to version 1
+- Update xdg to version 3
+
 ## [0.39.0] - 2025-06-15
 
 ### 🚀 Features
@@ -27,6 +40,7 @@ All notable changes to this project will be documented in this file.
 - Update edition to 2024
 - Document configuration types.
 - Fix clippy warnings
+- Release procmon-oprs version 0.39.0
 
 ## [0.38.0] - 2025-03-16
 
