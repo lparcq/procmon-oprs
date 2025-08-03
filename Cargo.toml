@@ -40,14 +40,14 @@ simplelog = "0.12"
 smart-default = "0.7"
 strum = { version = "0.27", features = ["derive"] }
 supports-color = { version = "3", optional = true }
-terminal-colorsaurus = { version = "0.4", optional = true }
+terminal-colorsaurus = { version = "1", optional = true }
 termion = { version = "4", optional = true }
 thiserror = "2"
 xdg = "2"
 
 [dev-dependencies]
 rand = "0.9"
-rstest = "0.25"
+rstest = "0.26"
 
 [profile.release]
 lto = true

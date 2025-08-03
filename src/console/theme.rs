@@ -16,7 +16,7 @@
 
 use strum::EnumString;
 use supports_color::Stream;
-use terminal_colorsaurus::{color_scheme, ColorScheme, QueryOptions};
+use terminal_colorsaurus::{theme_mode, QueryOptions, ThemeMode};
 
 #[derive(Clone, Copy, Debug, EnumString, PartialEq, Eq)]
 pub enum BuiltinTheme {
@@ -33,22 +33,20 @@ pub enum BuiltinTheme {
 impl BuiltinTheme {
     /// Guess the theme
     pub fn guess() -> Option<BuiltinTheme> {
-        match color_scheme(QueryOptions::default()) {
+        match theme_mode(QueryOptions::default()) {
             Err(err) => {
                 log::info!("cannot guess theme: {err:?}");
                 None
             }
             Ok(theme) => match (theme, supports_color::on(Stream::Stdout)) {
-                (ColorScheme::Dark, Some(support)) if support.has_16m || support.has_256 => {
+                (ThemeMode::Dark, Some(support)) if support.has_16m || support.has_256 => {
                     Some(BuiltinTheme::Dark)
                 }
-                (ColorScheme::Light, Some(support)) if support.has_16m || support.has_256 => {
+                (ThemeMode::Light, Some(support)) if support.has_16m || support.has_256 => {
                     Some(BuiltinTheme::Light)
                 }
-                (ColorScheme::Dark, Some(support)) if support.has_basic => {
-                    Some(BuiltinTheme::Dark16)
-                }
-                (ColorScheme::Light, Some(support)) if support.has_basic => {
+                (ThemeMode::Dark, Some(support)) if support.has_basic => Some(BuiltinTheme::Dark16),
+                (ThemeMode::Light, Some(support)) if support.has_basic => {
                     Some(BuiltinTheme::Light16)
                 }
                 _ => None,
