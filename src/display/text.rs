@@ -213,7 +213,7 @@ impl Table {
                 width = self.column_width
             );
         }
-        println!("{}", vline);
+        println!("{vline}");
     }
 
     /// Calculate the column width

@@ -25,7 +25,7 @@ use std::{
 };
 use strum::IntoEnumIterator;
 
-use super::{Aggregation, FormattedMetric, MetricId, ProcessInfo, SystemStat, format};
+use super::{format, Aggregation, FormattedMetric, MetricId, ProcessInfo, SystemStat};
 
 /// Tell if it makes sense to track metric changes
 ///
@@ -324,11 +324,7 @@ impl Updater {
                             delta * PERCENT_FACTOR / system_delta
                         }
                     } else {
-                        log::warn!(
-                            "time value goes backward (from {} to {})",
-                            old_value,
-                            new_value,
-                        );
+                        log::warn!("time value goes backward (from {old_value} to {new_value})",);
                         0
                     }
                 } else {
@@ -477,7 +473,7 @@ impl<'a> Collector<'a> {
                     )
                     .is_some()
                 {
-                    log::error!("{}: PID has been replaced", pid);
+                    log::error!("{pid}: PID has been replaced");
                 }
             }
         }

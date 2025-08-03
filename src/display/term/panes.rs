@@ -16,7 +16,6 @@
 
 use getset::CopyGetters;
 use ratatui::{
-    Frame,
     layout::{Alignment, Constraint, Layout},
     prelude::*,
     style::{Modifier, Style},
@@ -25,6 +24,7 @@ use ratatui::{
         Block, Borders, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
         StatefulWidget, Table, Widget, Wrap,
     },
+    Frame,
 };
 use std::{borrow::Cow, cmp, fmt, ops::Range};
 
@@ -190,7 +190,7 @@ impl Widget for OneLineWidget<'_> {
                 .text
                 .block(
                     Block::new()
-                        .title(format!(" {} ", title))
+                        .title(format!(" {title} "))
                         .title_alignment(Alignment::Left)
                         .borders(Borders::ALL),
                 )
@@ -442,8 +442,8 @@ impl<'a, 'b> TableClip<'a, 'b> {
             };
             let llen = llen + indent;
             let s = match alignement {
-                Alignment::Left => format!("{l: <w$}", w = llen),
-                Alignment::Right => format!("{l: >w$}", w = llen),
+                Alignment::Left => format!("{l: <llen$}"),
+                Alignment::Right => format!("{l: >llen$}"),
                 _ => panic!("must be called with left or right alignment"),
             };
             Self::prefix(&s, len).trim().to_owned()
@@ -770,7 +770,11 @@ impl GridPane {
     }
 
     pub(crate) fn with_row_if<W: StackableWidget>(self, row: &[&W], cond: bool) -> Self {
-        if cond { self.with_row(row) } else { self }
+        if cond {
+            self.with_row(row)
+        } else {
+            self
+        }
     }
 
     pub(crate) fn with_line<W: StackableWidget>(mut self, widget: &W) -> Self {

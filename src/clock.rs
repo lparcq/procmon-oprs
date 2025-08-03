@@ -153,7 +153,7 @@ impl DriftMonitor {
                     self.notification_time = now;
                     if let Some(actual_elapsed) = now.checked_duration_since(self.start_time) {
                         let drift = actual_elapsed.as_secs_f64() - new_elapsed.as_secs_f64();
-                        log::debug!("drift {} seconds", drift);
+                        log::debug!("drift {drift} seconds");
                     }
                 }
             }

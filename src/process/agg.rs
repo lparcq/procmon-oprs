@@ -83,15 +83,13 @@ mod tests {
     fn test_each_aggregation() {
         for variant in Aggregation::iter() {
             let mut aggs = AggregationSet::new();
-            assert!(!aggs.has(variant), "{:?}: should not be set", variant);
+            assert!(!aggs.has(variant), "{variant:?}: should not be set");
             aggs.set(variant);
-            assert!(aggs.has(variant), "{:?}: is not set", variant);
+            assert!(aggs.has(variant), "{variant:?}: is not set");
             Aggregation::iter().for_each(|other| {
                 assert!(
                     other.mask() == variant.mask() || !aggs.has(other),
-                    "{:?}: only {:?} shoult be set",
-                    other,
-                    variant
+                    "{other:?}: only {variant:?} shoult be set",
                 );
             });
         }

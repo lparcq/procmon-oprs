@@ -400,7 +400,7 @@ impl TerminalDevice {
             Pop,
         }
         fn mismatch(current: PaneKind, new: PaneKind) -> Update {
-            log::error!("cannot move from {:?} to {:?}", current, new);
+            log::error!("cannot move from {current:?} to {new:?}");
             Update::None
         }
         let direction = match self.pane_kind {

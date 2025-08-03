@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020-2024 Laurent Pelecq
+// Copyright (C) 2020-2025 Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -56,7 +56,7 @@ impl SystemConf {
     pub fn initialize() -> StatResult<&'static SystemConf> {
         let ticks_per_second = procfs::ticks_per_second();
         let kstat =
-            KernelStats::current().map_err(|err| StatError::KernelStats(format!("{:?}", err)))?;
+            KernelStats::current().map_err(|err| StatError::KernelStats(format!("{err:?}")))?;
         let page_size = procfs::page_size();
         Ok(SYS_CONF.get_or_init(|| SystemConf {
             ticks_per_second,

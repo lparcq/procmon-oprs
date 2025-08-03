@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020-2024  Laurent Pelecq
+// Copyright (C) 2020-2025  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -184,7 +184,7 @@ pub fn parse_metric_spec(
     match all_consuming(parse_metric_spec_partial).parse(input) {
         Ok((_, res)) => Ok(res),
         Err(err) => {
-            warn!("{}: parsing failed: {:?}", input, err);
+            warn!("{input}: parsing failed: {err:?}");
             Err(())
         }
     }
@@ -245,7 +245,7 @@ mod tests {
     fn test_syntax_error() {
         for name in &["fault:minor#raw", "fault:minor/km"] {
             if parse_metric_spec(name).is_ok() {
-                panic!("parsing must fail: {}", name);
+                panic!("parsing must fail: {name}");
             }
         }
     }

@@ -302,7 +302,7 @@ impl MetricId {
             _ => {
                 let name: &'static str = self.into();
                 if name.len() > SHORT_NAME_MAX_LEN {
-                    panic!("{}: internal error, no short name", name)
+                    panic!("{name}: internal error, no short name")
                 }
                 Some(name)
             }
@@ -583,8 +583,7 @@ mod tests {
             let mut parser = MetricNamesParser::new(MetricFormat::Raw);
             assert!(
                 parser.parse(&metric_names).is_err(),
-                "pattern \"{}\" works unexpectedly",
-                pattern
+                "pattern \"{pattern}\" works unexpectedly",
             );
         }
     }

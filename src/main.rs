@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020-2024  Laurent Pelecq
+// Copyright (C) 2020-2025  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -38,8 +38,8 @@ mod process;
 mod sighdr;
 
 use application::Application;
-use cfg::{CONFIG_FILE_NAME, DisplayMode, ExportType, LoggingLevel, LoggingSettings};
-use process::{MetricFormat, SystemConf, TargetId, matchers, parsers::parse_size};
+use cfg::{DisplayMode, ExportType, LoggingLevel, LoggingSettings, CONFIG_FILE_NAME};
+use process::{matchers, parsers::parse_size, MetricFormat, SystemConf, TargetId};
 
 #[cfg(feature = "tui")]
 use crate::console::theme::BuiltinTheme;
@@ -349,7 +349,7 @@ fn start(opt: Opt) -> anyhow::Result<()> {
     }));
     let _ = SystemConf::initialize()?;
     if let Err(err) = app.run(&target_ids, opt.root) {
-        log::error!("{}", err);
+        log::error!("{err}");
         if settings.logging.file.is_some() {
             eprintln!("{err}");
         }

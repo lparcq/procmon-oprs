@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020  Laurent Pelecq
+// Copyright (C) 2020-2025  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -204,7 +204,7 @@ impl RrdTool {
         S: AsRef<str>,
     {
         let step = interval.as_secs();
-        log::debug!("rrd create {} step={}", dbname, step);
+        log::debug!("rrd create {dbname} step={step}");
         try_io!(write!(
             self.child_in,
             "create {} --start={} --step={}",
@@ -224,7 +224,7 @@ impl RrdTool {
     where
         I: std::iter::Iterator<Item = u64>,
     {
-        log::debug!("rrd update {}", dbname);
+        log::debug!("rrd update {dbname}");
         try_write!(self.child_in, "update {} {}", dbname, timestamp.as_secs());
         for value in values {
             try_write!(self.child_in, ":{}", value);
@@ -248,16 +248,13 @@ impl RrdTool {
     {
         let start = start_time.as_secs();
         let end = end_time.as_secs();
-        log::debug!("rrd graph {} --start={} --end={}", filename, start, end);
+        log::debug!("rrd graph {filename} --start={start} --end={end}");
         try_write!(
             self.child_in,
-            "graph {} --start={} --end={}",
-            filename,
-            start,
-            end
+            "graph {filename} --start={start} --end={end}",
         );
         if let Some(title) = title {
-            try_write!(self.child_in, " --title=\"{}\"", title);
+            try_write!(self.child_in, " --title=\"{title}\"");
         }
         for def in defs.into_iter() {
             try_write!(self.child_in, " {}", def.as_ref());

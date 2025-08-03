@@ -79,7 +79,7 @@ mod format {
     use super::super::mocks::procfs::ProcError;
 
     pub(crate) fn format_process_error(err: ProcError) -> String {
-        format!("{:?}", err)
+        format!("{err:?}")
     }
 }
 
@@ -595,7 +595,7 @@ impl Forest {
             }
         });
         for pid in invalid_pids {
-            log::debug!("{}: cannot access stat file", pid);
+            log::debug!("{pid}: cannot access stat file");
             self.remove_non_existing_pid(pid);
         }
     }

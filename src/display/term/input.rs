@@ -552,7 +552,7 @@ impl fmt::Display for SearchState {
             Self::Incremental(chars) => &chars.iter().cloned().collect::<String>(),
             Self::Fixed(s) => s,
         };
-        write!(f, "{}", s)
+        write!(f, "{s}")
     }
 }
 

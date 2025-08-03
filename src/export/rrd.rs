@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2020-2024  Laurent Pelecq
+// Copyright (C) 2020-2025  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -161,7 +161,7 @@ impl Exporter for RrdExporter {
                 self.skip.push(false);
                 let ds = format!("DS:{}:{}:{}:0:U", &ds_name, ds_type, heart_beat,);
                 self.variables.push(ds_name);
-                info!("rrd define {}", ds);
+                info!("rrd define {ds}");
                 self.ds.push(ds);
             } else {
                 self.skip.push(true);
@@ -210,13 +210,13 @@ impl Exporter for RrdExporter {
                         "DEF:v{}={}:{}:AVERAGE LINE1:v{}#{:0>6x}:\"{}\"",
                         index, exinfo.db, ds_name, index, exinfo.color, exinfo.name
                     );
-                    debug!("rrd def: {}", def);
+                    debug!("rrd def: {def}");
                     def
                 });
                 let (width, height) =
                     self.tool
                         .graph(&filename, &start, timestamp, defs, Some(&title))?;
-                debug!("graph of size ({}, {})", width, height);
+                debug!("graph of size ({width}, {height})");
             }
         }
         for pid in pids {
