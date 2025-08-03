@@ -696,6 +696,7 @@ impl Bookmarks {
 
     /// Clear marks
     pub fn clear_marks(&mut self) {
+        log::debug!("clear marks");
         self.marks.clear();
     }
 
@@ -780,7 +781,7 @@ impl Bookmarks {
         let mut marks = Vec::new();
         if !matches!(motion.scroll, Scroll::CurrentPosition) {
             self.search = None;
-            self.clear_marks();
+            self.clear_search();
         }
         let pattern = self.search_pattern();
 
@@ -914,6 +915,7 @@ impl Bookmarks {
 
     /// Toggle the mark for the given PID.
     fn toggle_mark(&mut self, pid: pid_t) {
+        log::debug!("toggle mark on {pid}");
         if !self.marks.remove(&pid) {
             self.marks.insert(pid);
         }
