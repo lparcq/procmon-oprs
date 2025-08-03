@@ -261,7 +261,7 @@ macro_rules! override_parameter {
 
 fn start(opt: Opt) -> anyhow::Result<()> {
     // Configuration
-    let dirs = cfg::Directories::new(APP_NAME)?;
+    let dirs = cfg::Directories::new(APP_NAME);
     let mut settings = dirs.read_config_file(CONFIG_FILE_NAME)?;
 
     // Override config file with command line

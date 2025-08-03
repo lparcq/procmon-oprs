@@ -18,7 +18,7 @@ use light_ini::{IniHandler, IniParser};
 use std::{path::PathBuf, str::FromStr};
 use strum::{EnumMessage, EnumString, IntoStaticStr};
 
-use crate::process::{MetricFormat, parsers::parse_size};
+use crate::process::{parsers::parse_size, MetricFormat};
 
 #[cfg(feature = "tui")]
 use crate::console::theme::BuiltinTheme;
@@ -316,11 +316,11 @@ pub struct Directories {
 }
 
 impl Directories {
-    pub fn new(app_name: &str) -> anyhow::Result<Directories> {
-        Ok(Directories {
+    pub fn new(app_name: &str) -> Directories {
+        Self {
             app_name: app_name.to_owned(),
-            app_dirs: xdg::BaseDirectories::with_prefix(app_name)?,
-        })
+            app_dirs: xdg::BaseDirectories::with_prefix(app_name),
+        }
     }
 
     /// Return the first config file in the path
@@ -342,10 +342,9 @@ impl Directories {
 
     /// Default log file name
     pub fn default_log_file(&self) -> Option<PathBuf> {
-        xdg::BaseDirectories::new().ok().and_then(|xdg_dirs| {
-            let log_filename = format!("{}.log", self.app_name);
-            xdg_dirs.place_runtime_file(log_filename).ok()
-        })
+        let xdg_dirs = xdg::BaseDirectories::new();
+        let log_filename = format!("{}.log", self.app_name);
+        xdg_dirs.place_runtime_file(log_filename).ok()
     }
 }
 

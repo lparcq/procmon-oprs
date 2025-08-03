@@ -43,7 +43,7 @@ supports-color = { version = "3", optional = true }
 terminal-colorsaurus = { version = "1", optional = true }
 termion = { version = "4", optional = true }
 thiserror = "2"
-xdg = "2"
+xdg = "3"
 
 [dev-dependencies]
 rand = "0.9"
