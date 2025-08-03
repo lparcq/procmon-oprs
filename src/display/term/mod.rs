@@ -17,7 +17,7 @@
 use chrono::Local;
 use libc::pid_t;
 use ratatui::{
-    Terminal, backend::TermionBackend, prelude::*, style::Style, text::Text, widgets::Clear,
+    backend::TermionBackend, prelude::*, style::Style, text::Text, widgets::Clear, Terminal,
 };
 use std::{cell::RefCell, convert::TryFrom, fmt, io, rc::Rc, time::Duration};
 use termion::{
@@ -27,10 +27,10 @@ use termion::{
 
 use crate::{
     clock::Timer,
-    console::{EventChannel, is_tty, theme::BuiltinTheme},
+    console::{is_tty, theme::BuiltinTheme, EventChannel},
     process::{
-        self, Aggregation, Collector, FormattedMetric, Process, ProcessDetails, ProcessFilter,
-        format::human_duration,
+        self, format::human_duration, Aggregation, Collector, FormattedMetric, Process,
+        ProcessDetails, ProcessFilter,
     },
 };
 
@@ -43,7 +43,7 @@ mod tables;
 #[macro_use]
 mod types;
 
-use input::{Action, BookmarkAction, Bookmarks, Menu, MenuTarget, SearchEdit, menu};
+use input::{menu, Action, BookmarkAction, Bookmarks, Menu, MenuTarget, SearchEdit};
 use panes::{
     BigTableState, BigTableWidget, FieldsWidget, GridPane, MarkdownWidget, OneLineWidget,
     OptionalRenderer, Pane, SingleScrollablePane, TableGenerator, TableStyle,
@@ -445,6 +445,15 @@ impl TerminalDevice {
             Update::Pop => void!(self.motions.pop()),
         }
         self.pane_kind = kind;
+        while !self.last_menu().id().matches_with(&self.pane_kind) {
+            if let Some(menu) = self.menu_stack.pop() {
+                log::debug!(
+                    "pop menu {} incompatible with {:?}",
+                    menu.name(),
+                    self.pane_kind
+                );
+            }
+        }
     }
 
     fn render_tree(&mut self, collector: &Collector) -> anyhow::Result<()> {
@@ -750,9 +759,9 @@ impl DisplayDevice for TerminalDevice {
                     match match self.last_menu().map_event(evt) {
                         Some(MenuTarget::Action(action)) => Some(action),
                         Some(MenuTarget::Menu(submenu)) => {
-                            log::debug!("push menu {}", submenu.name);
+                            log::debug!("push menu {}", submenu.name());
                             self.menu_stack.push(Rc::clone(&submenu));
-                            submenu.action.ok()
+                            submenu.action().ok()
                         }
                         None => None,
                     } {
@@ -761,9 +770,9 @@ impl DisplayDevice for TerminalDevice {
                             let action = self.react(action, timer)?;
                             if action.parent_menu() && self.menu_stack.len() > 1 {
                                 if let Some(menu) = self.menu_stack.pop() {
-                                    log::debug!("pop menu {}", menu.name);
+                                    log::debug!("pop menu {}", menu.name());
                                 }
-                                log::debug!("current menu {}", self.last_menu().name);
+                                log::debug!("current menu {}", self.last_menu().name());
                             }
                             Ok(PauseStatus::Action(self.interaction(action)))
                         }

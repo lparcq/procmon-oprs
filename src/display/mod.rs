@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use smart_default::SmartDefault;
 use std::{io, slice::Iter as SliceIter};
 
 use crate::process::{Collector, FormattedMetric};
@@ -49,8 +50,9 @@ pub enum DataKind {
     _Threads,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, SmartDefault)]
 pub enum PaneKind {
+    #[default]
     Main,
     #[cfg(feature = "tui")]
     Process(DataKind),

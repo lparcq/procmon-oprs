@@ -22,13 +22,17 @@ use std::{
     fmt,
     rc::Rc,
 };
+use strum::IntoStaticStr;
 
 use crate::{
     console::{Event, Key},
     process::ProcessIdentity,
 };
 
-use super::types::{Motion, Scroll};
+use super::{
+    types::{Motion, Scroll},
+    DataKind, PaneKind,
+};
 
 /// Standard keys
 const KEY_ABOUT: Key = Key::Char('a');
@@ -211,16 +215,68 @@ impl MenuEntry {
     }
 }
 
+#[derive(Clone, Copy, Debug, SmartDefault, IntoStaticStr)]
+pub enum MenuId {
+    Details,
+    Edit,
+    Environment,
+    Files,
+    Filters,
+    Help,
+    HelpMessage,
+    IncrementalSearch,
+    Limits,
+    #[default]
+    Main,
+    Maps,
+    Navigate,
+    Search,
+    Select,
+    #[cfg(test)]
+    DuplicatedMenu,
+    #[cfg(test)]
+    OriginalMenu,
+    #[cfg(test)]
+    SubmenuNoAction,
+    #[cfg(test)]
+    SubmenuWithAction,
+}
+
+impl MenuId {
+    /// Associated pane.
+    pub fn matches_with(&self, pane_kind: &PaneKind) -> bool {
+        matches!(
+            (self, pane_kind),
+            (Self::Details, PaneKind::Process(DataKind::Details))
+                | (Self::Edit, PaneKind::Main)
+                | (Self::Environment, PaneKind::Process(DataKind::Environment))
+                | (Self::Files, PaneKind::Process(DataKind::Files))
+                | (Self::Filters, PaneKind::Main)
+                | (Self::Help, PaneKind::Main)
+                | (Self::HelpMessage, PaneKind::Help)
+                | (Self::IncrementalSearch, PaneKind::Main)
+                | (Self::Limits, PaneKind::Process(DataKind::Limits))
+                | (Self::Main, PaneKind::Main)
+                | (Self::Maps, PaneKind::Process(DataKind::Maps))
+                | (Self::Navigate, _)
+                | (Self::Search, PaneKind::Main)
+                | (Self::Select, PaneKind::Main)
+        )
+    }
+}
+
 /// A menu with entries to display and shorcuts.
 ///
 /// A shorcut directly executes an action or opens a sub-menu whether it's
 /// displayed or not.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Getters)]
 pub struct Menu {
     /// Menu name
-    pub name: &'static str,
+    #[getset(get = "pub")]
+    id: MenuId,
     /// The action associated with this menu.
-    pub action: Action,
+    #[getset(get = "pub")]
+    action: Action,
     /// The list of entries to display.
     entries: Vec<MenuEntry>,
     /// The targets for each menu entries.
@@ -232,13 +288,18 @@ pub struct Menu {
 }
 
 impl Menu {
-    fn new(name: &'static str) -> Self {
+    fn new(id: MenuId) -> Self {
         Self {
-            name,
+            id,
             action: Action::None,
             ..Default::default()
         }
     }
+
+    pub fn name(&self) -> &'static str {
+        self.id.into()
+    }
+
     /// Return a slice iterator to the menu entries.
     pub fn entries(&self) -> std::slice::Iter<MenuEntry> {
         self.entries.iter()
@@ -251,7 +312,7 @@ impl Menu {
             .cloned()
             .or_else(|| {
                 self.shortcuts.get(key).map(|a| {
-                    log::debug!("menu {}: action {a:?}", self.name);
+                    log::debug!("menu {}: action {a:?}", self.name());
                     MenuTarget::Action(*a)
                 })
             })
@@ -263,7 +324,7 @@ impl Menu {
                         _ => None,
                     }
                 } else {
-                    log::debug!("menu {}: unknown key {:?}", self.name, key);
+                    log::debug!("menu {}: unknown key {:?}", self.name(), key);
                     None
                 }
             })
@@ -282,8 +343,8 @@ impl Menu {
 struct MenuBuilder(Rc<Menu>);
 
 impl MenuBuilder {
-    fn new(name: &'static str) -> Self {
-        Self(Rc::new(Menu::new(name)))
+    fn new(id: MenuId) -> Self {
+        Self(Rc::new(Menu::new(id)))
     }
 
     fn menu(&mut self) -> &mut Menu {
@@ -305,7 +366,7 @@ impl MenuBuilder {
 
     /// Add a sub-menu.
     fn with_menu(self, key: Key, menu: Rc<Menu>) -> Self {
-        self.with_target(key, menu.name, MenuTarget::Menu(menu))
+        self.with_target(key, menu.name(), MenuTarget::Menu(menu))
     }
 
     /// Add a sub-menu and import all its entries as shortcuts.
@@ -364,8 +425,8 @@ impl MenuBuilder {
     }
 
     /// Duplicate a menu with a different self actions.
-    fn duplicate(name: &'static str, menu: &Menu, action: Action) -> Rc<Menu> {
-        MenuBuilder::new(name)
+    fn duplicate(id: MenuId, menu: &Menu, action: Action) -> Rc<Menu> {
+        MenuBuilder::new(id)
             .import_actions(menu)
             .import_shortcuts(menu)
             .with_self_action(action)
@@ -375,13 +436,13 @@ impl MenuBuilder {
 
 /// Return the menu
 pub fn menu() -> Rc<Menu> {
-    let menu_edit = MenuBuilder::new("Edit")
+    let menu_edit = MenuBuilder::new(MenuId::Edit)
         .with_action(KEY_FASTER, "Faster", Action::DivideTimeout(2))
         .with_action(KEY_SLOWER, "Slower", Action::MultiplyTimeout(2))
         .with_shortcut(KEY_ESCAPE, Action::SwitchBack)
         //.new(KEY_with_action, "Settings", Action::SwitchToSettings))
         .build();
-    let menu_nav = MenuBuilder::new("Navigate")
+    let menu_nav = MenuBuilder::new(MenuId::Navigate)
         .with_action(Key::Up, "Previous line", Action::ScrollLineUp)
         .with_action(Key::Down, "Next line", Action::ScrollLineDown)
         .with_action(Key::Left, "Scroll left", Action::ScrollLeft)
@@ -396,19 +457,22 @@ pub fn menu() -> Rc<Menu> {
         .with_action(KEY_GOTO_TBL_RIGHT, "Table Right", Action::GotoTableRight)
         .with_shortcut(KEY_ESCAPE, Action::SwitchBack)
         .build();
-    let menu_help_msg = MenuBuilder::duplicate("Help Message", &menu_nav, Action::SwitchToHelp);
-    let menu_help = MenuBuilder::new("Help")
+    let menu_help_msg =
+        MenuBuilder::duplicate(MenuId::HelpMessage, &menu_nav, Action::SwitchToHelp);
+    let menu_help = MenuBuilder::new(MenuId::Help)
         .with_menu(KEY_HELP, Rc::clone(&menu_help_msg))
         .with_action(KEY_ABOUT, "About", Action::SwitchToAbout)
         .with_action(KEY_QUIT, "Quit", Action::Quit)
         .with_shortcut(KEY_ESCAPE, Action::SwitchBack)
         .build();
     let menu_process_env =
-        MenuBuilder::duplicate("Environment", &menu_nav, Action::SwitchToEnvironment);
-    let menu_process_files = MenuBuilder::duplicate("Files", &menu_nav, Action::SwitchToFiles);
-    let menu_process_limits = MenuBuilder::duplicate("Limits", &menu_nav, Action::SwitchToLimits);
-    let menu_process_maps = MenuBuilder::duplicate("Maps", &menu_nav, Action::SwitchToMaps);
-    let menu_details = MenuBuilder::new("Details")
+        MenuBuilder::duplicate(MenuId::Environment, &menu_nav, Action::SwitchToEnvironment);
+    let menu_process_files =
+        MenuBuilder::duplicate(MenuId::Files, &menu_nav, Action::SwitchToFiles);
+    let menu_process_limits =
+        MenuBuilder::duplicate(MenuId::Limits, &menu_nav, Action::SwitchToLimits);
+    let menu_process_maps = MenuBuilder::duplicate(MenuId::Maps, &menu_nav, Action::SwitchToMaps);
+    let menu_details = MenuBuilder::new(MenuId::Details)
         .with_menu(KEY_ENV, menu_process_env)
         .with_menu(KEY_FILES, menu_process_files)
         .with_menu(KEY_LIMITS, menu_process_limits)
@@ -418,7 +482,7 @@ pub fn menu() -> Rc<Menu> {
         .with_shortcut(KEY_ESCAPE, Action::SwitchBack)
         .with_self_action(Action::SwitchToDetails)
         .build();
-    let menu_isearch = MenuBuilder::new("Incremental Search")
+    let menu_isearch = MenuBuilder::new(MenuId::IncrementalSearch)
         .enable_char_stream()
         .with_shortcut(KEY_ENTER, Action::SearchExit)
         .with_shortcut(KEY_SEARCH_NEXT, Action::SelectNext)
@@ -426,7 +490,7 @@ pub fn menu() -> Rc<Menu> {
         .with_shortcut(KEY_SEARCH_CANCEL, Action::SearchCancel)
         .with_self_action(Action::SearchEnter)
         .build();
-    let menu_search = MenuBuilder::new("Search")
+    let menu_search = MenuBuilder::new(MenuId::Search)
         .with_menu(KEY_SEARCH, menu_isearch)
         .with_action(KEY_MARK_CLEAR, "Clear", Action::ClearMarks)
         .with_action(
@@ -437,7 +501,7 @@ pub fn menu() -> Rc<Menu> {
         .with_action(KEY_SELECT_NEXT, "Next Match", Action::SelectNext)
         .with_shortcut(KEY_ESCAPE, Action::SwitchBack)
         .build();
-    let menu_filter = MenuBuilder::new("Filters")
+    let menu_filter = MenuBuilder::new(MenuId::Filters)
         .with_action(KEY_FILTER_NONE, "None", Action::FilterNone)
         .with_action(KEY_FILTER_USERS, "Users", Action::FilterUsers)
         .with_action(KEY_FILTER_ACTIVE, "Active", Action::FilterActive)
@@ -448,7 +512,7 @@ pub fn menu() -> Rc<Menu> {
         )
         .with_shortcut(KEY_ESCAPE, Action::SwitchBack)
         .build();
-    let menu_select = MenuBuilder::new("Select")
+    let menu_select = MenuBuilder::new(MenuId::Select)
         .with_menu(KEY_ENTER, menu_details)
         .with_action(KEY_MARK_TOGGLE, "Mark", Action::ToggleMarks)
         .with_action(KEY_MARK_CLEAR, "Clear", Action::ClearMarks)
@@ -462,7 +526,7 @@ pub fn menu() -> Rc<Menu> {
         .with_action(KEY_SELECT_PARENT, "Parent", Action::SelectParent)
         .with_shortcut(KEY_ESCAPE, Action::SwitchBack)
         .build();
-    MenuBuilder::new("Main")
+    MenuBuilder::new(MenuId::Main)
         .with_menu(KEY_MENU_HELP, menu_help)
         .with_imported_entries(KEY_MENU_EDIT, menu_edit)
         .with_imported_entries(KEY_MENU_NAVIGATE, menu_nav)
@@ -863,8 +927,8 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{
-        Action, Bookmarks, KEY_ABOUT, KEY_MENU_HELP, Key, MenuBuilder, MenuTarget, Motion,
-        ProcessIdentity, Scroll, menu,
+        menu, Action, Bookmarks, Key, MenuBuilder, MenuId, MenuTarget, Motion, ProcessIdentity,
+        Scroll, KEY_ABOUT, KEY_MENU_HELP,
     };
 
     #[test]
@@ -900,13 +964,13 @@ mod tests {
     fn test_duplicate_menu() {
         // Create a menu with a submenu without self action
         let key_submenu_action_a = Key::Char('a');
-        let submenu_wo_action = MenuBuilder::new("SubmenuNoAction")
+        let submenu_wo_action = MenuBuilder::new(MenuId::SubmenuNoAction)
             .with_action(key_submenu_action_a, "Action A", Action::ToggleMarks)
             .build();
 
         // Create a menu with a submenu with self action
         let key_submenu_action_b = Key::Char('b');
-        let submenu_wi_action = MenuBuilder::new("SubmenuWithAction")
+        let submenu_wi_action = MenuBuilder::new(MenuId::SubmenuWithAction)
             .with_action(key_submenu_action_b, "Action B", Action::ClearMarks)
             .with_self_action(Action::SelectNext)
             .build();
@@ -916,7 +980,7 @@ mod tests {
         let key_menu_wi_action = Key::Char('2');
         let key_action = Key::Char('c');
         let key_shortcut = Key::Char('s');
-        let original_menu = MenuBuilder::new("OriginalMenu")
+        let original_menu = MenuBuilder::new(MenuId::OriginalMenu)
             .with_menu(key_menu_wo_action, submenu_wo_action)
             .with_menu(key_menu_wi_action, submenu_wi_action)
             .with_action(key_action, "Action C", Action::SelectPrevious)
@@ -925,7 +989,7 @@ mod tests {
 
         // Create a duplicate menu with a different self action
         let duplicated_menu =
-            MenuBuilder::duplicate("DuplicatedMenu", &original_menu, Action::ChangeScope);
+            MenuBuilder::duplicate(MenuId::DuplicatedMenu, &original_menu, Action::ChangeScope);
 
         // Action is set
         assert!(matches!(duplicated_menu.action, Action::ChangeScope));
