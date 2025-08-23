@@ -148,13 +148,13 @@ impl DriftMonitor {
         let now = Instant::now();
         if let Some(new_elapsed) = self.expected_elapsed.checked_add(delay) {
             self.expected_elapsed = new_elapsed;
-            if let Some(notification_delay) = now.checked_duration_since(self.notification_time) {
-                if notification_delay.as_secs() >= self.notification_delay {
-                    self.notification_time = now;
-                    if let Some(actual_elapsed) = now.checked_duration_since(self.start_time) {
-                        let drift = actual_elapsed.as_secs_f64() - new_elapsed.as_secs_f64();
-                        log::debug!("drift {drift} seconds");
-                    }
+            if let Some(notification_delay) = now.checked_duration_since(self.notification_time)
+                && notification_delay.as_secs() >= self.notification_delay
+            {
+                self.notification_time = now;
+                if let Some(actual_elapsed) = now.checked_duration_since(self.start_time) {
+                    let drift = actual_elapsed.as_secs_f64() - new_elapsed.as_secs_f64();
+                    log::debug!("drift {drift} seconds");
                 }
             }
         }

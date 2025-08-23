@@ -16,6 +16,7 @@
 
 use getset::CopyGetters;
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Layout},
     prelude::*,
     style::{Modifier, Style},
@@ -24,7 +25,6 @@ use ratatui::{
         Block, Borders, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
         StatefulWidget, Table, Widget, Wrap,
     },
-    Frame,
 };
 use std::{borrow::Cow, cmp, fmt, ops::Range};
 
@@ -459,12 +459,12 @@ pub(crate) trait TableGenerator {
     fn headers_size(&self) -> Area<usize>;
 
     /// The headers on top.
-    fn top_headers(&self, clip: &TableClip<'_, '_>) -> Vec<Cell>;
+    fn top_headers(&self, clip: &TableClip<'_, '_>) -> Vec<Cell<'_>>;
 
     /// The visible rows.
     ///
     /// * `zoom` - the visibles rows start index and size.
-    fn rows(&self, clip: &TableClip<'_, '_>) -> Vec<Vec<Cell>>;
+    fn rows(&self, clip: &TableClip<'_, '_>) -> Vec<Vec<Cell<'_>>>;
 
     /// Number of rows in the body.
     fn body_row_count(&self) -> usize;
@@ -770,11 +770,7 @@ impl GridPane {
     }
 
     pub(crate) fn with_row_if<W: StackableWidget>(self, row: &[&W], cond: bool) -> Self {
-        if cond {
-            self.with_row(row)
-        } else {
-            self
-        }
+        if cond { self.with_row(row) } else { self }
     }
 
     pub(crate) fn with_line<W: StackableWidget>(mut self, widget: &W) -> Self {

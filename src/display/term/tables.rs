@@ -46,8 +46,8 @@ use super::{
 use crate::{
     console::theme::BuiltinTheme,
     process::{
-        format::{human_format, Unit},
         Collector, ProcessIdentity, ProcessSamples,
+        format::{Unit, human_format},
     },
 };
 
@@ -378,7 +378,7 @@ impl TableGenerator for ProcessTreeTable<'_, '_> {
         self.headers_size
     }
 
-    fn top_headers(&self, clip: &TableClip<'_, '_>) -> Vec<Cell> {
+    fn top_headers(&self, clip: &TableClip<'_, '_>) -> Vec<Cell<'_>> {
         Self::FIXED_HEADERS
             .iter()
             .map(|s| lcell!(*s))
@@ -395,7 +395,7 @@ impl TableGenerator for ProcessTreeTable<'_, '_> {
             .collect::<Vec<Cell>>()
     }
 
-    fn rows(&self, clip: &TableClip<'_, '_>) -> Vec<Vec<Cell>> {
+    fn rows(&self, clip: &TableClip<'_, '_>) -> Vec<Vec<Cell<'_>>> {
         let offset = clip.zoom().vertical.position;
         let height = clip.zoom().vertical.visible_length;
         self.collector
@@ -532,7 +532,7 @@ impl TableGenerator for LimitsTable {
         Area::new(1, 1)
     }
 
-    fn top_headers(&self, clip: &TableClip<'_, '_>) -> Vec<Cell> {
+    fn top_headers(&self, clip: &TableClip<'_, '_>) -> Vec<Cell<'_>> {
         self.headers
             .iter()
             .take(1)
@@ -550,7 +550,7 @@ impl TableGenerator for LimitsTable {
             .collect::<Vec<Cell>>()
     }
 
-    fn rows(&self, clip: &TableClip<'_, '_>) -> Vec<Vec<Cell>> {
+    fn rows(&self, clip: &TableClip<'_, '_>) -> Vec<Vec<Cell<'_>>> {
         let vzoom = &clip.zoom().vertical;
         self.limits
             .iter()
@@ -608,7 +608,7 @@ impl TableGenerator for EnvironmentTable {
         Area::new(1, 1)
     }
 
-    fn top_headers(&self, clip: &TableClip<'_, '_>) -> Vec<Cell> {
+    fn top_headers(&self, clip: &TableClip<'_, '_>) -> Vec<Cell<'_>> {
         vec![
             Some(Text::from("Variable").bold()),
             clip.clip_cell(0, Cow::Borrowed("Value"), Alignment::Left)
@@ -619,7 +619,7 @@ impl TableGenerator for EnvironmentTable {
         .collect::<Vec<_>>()
     }
 
-    fn rows(&self, clip: &TableClip<'_, '_>) -> Vec<Vec<Cell>> {
+    fn rows(&self, clip: &TableClip<'_, '_>) -> Vec<Vec<Cell<'_>>> {
         let vzoom = &clip.zoom().vertical;
         self.env
             .iter()
@@ -719,7 +719,7 @@ impl TableGenerator for FilesTable {
         Area::new(0, 1)
     }
 
-    fn top_headers(&self, clip: &TableClip<'_, '_>) -> Vec<Cell> {
+    fn top_headers(&self, clip: &TableClip<'_, '_>) -> Vec<Cell<'_>> {
         Self::TITLES
             .to_vec()
             .drain(..)
@@ -731,7 +731,7 @@ impl TableGenerator for FilesTable {
             .collect::<Vec<_>>()
     }
 
-    fn rows(&self, clip: &TableClip<'_, '_>) -> Vec<Vec<Cell>> {
+    fn rows(&self, clip: &TableClip<'_, '_>) -> Vec<Vec<Cell<'_>>> {
         let vzoom = &clip.zoom().vertical;
         self.files
             .iter()
@@ -819,7 +819,7 @@ impl TableGenerator for MapsTable {
         Area::new(0, 1)
     }
 
-    fn top_headers(&self, clip: &TableClip<'_, '_>) -> Vec<Cell> {
+    fn top_headers(&self, clip: &TableClip<'_, '_>) -> Vec<Cell<'_>> {
         Self::TITLES
             .to_vec()
             .drain(..)
@@ -831,7 +831,7 @@ impl TableGenerator for MapsTable {
             .collect::<Vec<_>>()
     }
 
-    fn rows(&self, clip: &TableClip<'_, '_>) -> Vec<Vec<Cell>> {
+    fn rows(&self, clip: &TableClip<'_, '_>) -> Vec<Vec<Cell<'_>>> {
         let vzoom = &clip.zoom().vertical;
         self.maps
             .iter()

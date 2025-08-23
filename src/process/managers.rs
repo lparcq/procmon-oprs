@@ -22,9 +22,10 @@ use strum::Display as StrumDisplay;
 use std::borrow::Cow;
 
 use super::{
+    Aggregation, Collector, Forest, FormattedMetric, ProcessInfo, SystemStat, TargetContainer,
+    TargetError, TargetId,
     forest::{ProcessClassifier, ProcessResult},
-    format, Aggregation, Collector, Forest, FormattedMetric, ProcessInfo, SystemStat,
-    TargetContainer, TargetError, TargetId,
+    format,
 };
 
 #[cfg(feature = "tui")]
@@ -144,7 +145,7 @@ impl ProcessDetails<'_> {
     }
 
     /// Process metrics.
-    pub fn metrics(&self) -> Option<ProcessMetrics> {
+    pub fn metrics(&self) -> Option<ProcessMetrics<'_>> {
         self.collector.lines().take(1).next().map(|s| {
             let samples = s.samples_as_slice();
             ProcessMetrics {

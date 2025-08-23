@@ -25,7 +25,7 @@ use std::{
 };
 use strum::IntoEnumIterator;
 
-use super::{format, Aggregation, FormattedMetric, MetricId, ProcessInfo, SystemStat};
+use super::{Aggregation, FormattedMetric, MetricId, ProcessInfo, SystemStat, format};
 
 /// Tell if it makes sense to track metric changes
 ///
@@ -58,18 +58,18 @@ impl Sample {
     }
 
     /// Return the numeric values.
-    pub fn values(&self) -> SliceIter<u64> {
+    pub fn values(&self) -> SliceIter<'_, u64> {
         self.values.iter()
     }
 
     /// Return the formatted strings
-    pub fn strings(&self) -> SliceIter<String> {
+    pub fn strings(&self) -> SliceIter<'_, String> {
         self.strings.iter()
     }
 
     /// Return the trend of formatted strings
     #[cfg(feature = "tui")]
-    pub fn trends(&self) -> SliceIter<Ordering> {
+    pub fn trends(&self) -> SliceIter<'_, Ordering> {
         self.trends.iter()
     }
 
@@ -172,7 +172,7 @@ impl ProcessSamples {
         }
     }
 
-    pub fn samples(&self) -> SliceIter<Sample> {
+    pub fn samples(&self) -> SliceIter<'_, Sample> {
         self.samples.iter()
     }
 
@@ -491,7 +491,7 @@ impl<'a> Collector<'a> {
         self.samples.retain(|pid, _| alive.contains(pid));
     }
 
-    pub fn metrics(&self) -> SliceIter<FormattedMetric> {
+    pub fn metrics(&self) -> SliceIter<'_, FormattedMetric> {
         self.metrics.iter()
     }
 
@@ -507,7 +507,7 @@ impl<'a> Collector<'a> {
     }
 
     /// Return lines
-    pub fn lines(&self) -> LineIter {
+    pub fn lines(&self) -> LineIter<'_> {
         LineIter {
             iter: self.pids.iter(),
             samples: &self.samples,

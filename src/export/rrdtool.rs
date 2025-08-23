@@ -133,14 +133,12 @@ macro_rules! try_writeln {
 fn parse_graph_size(line: &str) -> Result<(usize, usize), Error> {
     let size = line.trim_end();
     let mut tokens = size.splitn(2, 'x');
-    if let Some(first) = tokens.next() {
-        if let Ok(width) = first.parse::<usize>() {
-            if let Some(second) = tokens.next() {
-                if let Ok(height) = second.parse::<usize>() {
-                    return Ok((width, height));
-                }
-            }
-        }
+    if let Some(first) = tokens.next()
+        && let Ok(width) = first.parse::<usize>()
+        && let Some(second) = tokens.next()
+        && let Ok(height) = second.parse::<usize>()
+    {
+        return Ok((width, height));
     }
     Err(Error::InvalidGraphSize(size.to_string()))
 }
@@ -179,7 +177,7 @@ impl RrdTool {
                 "ERROR:" => {
                     return Err(Error::Process(String::from(
                         tokens.next().unwrap_or("no error message"),
-                    )))
+                    )));
                 }
                 _ => {
                     if let Some(ref mut lines) = lines {
@@ -285,7 +283,7 @@ mod test {
     use std::io::{self, BufReader};
     use std::path::PathBuf;
 
-    use super::{parse_graph_size, spawn, Error, RrdTool};
+    use super::{Error, RrdTool, parse_graph_size, spawn};
 
     fn new_tool(output: &str) -> io::Result<RrdTool> {
         let mut process = spawn(output, PathBuf::new())?;

@@ -17,7 +17,7 @@
 use chrono::Local;
 use libc::pid_t;
 use ratatui::{
-    backend::TermionBackend, prelude::*, style::Style, text::Text, widgets::Clear, Terminal,
+    Terminal, backend::TermionBackend, prelude::*, style::Style, text::Text, widgets::Clear,
 };
 use std::{cell::RefCell, convert::TryFrom, fmt, io, rc::Rc, time::Duration};
 use termion::{
@@ -27,10 +27,10 @@ use termion::{
 
 use crate::{
     clock::Timer,
-    console::{is_tty, theme::BuiltinTheme, EventChannel},
+    console::{EventChannel, is_tty, theme::BuiltinTheme},
     process::{
-        self, format::human_duration, Aggregation, Collector, FormattedMetric, Process,
-        ProcessDetails, ProcessFilter,
+        self, Aggregation, Collector, FormattedMetric, Process, ProcessDetails, ProcessFilter,
+        format::human_duration,
     },
 };
 
@@ -43,7 +43,7 @@ mod tables;
 #[macro_use]
 mod types;
 
-use input::{menu, Action, BookmarkAction, Bookmarks, Menu, MenuTarget, SearchEdit};
+use input::{Action, BookmarkAction, Bookmarks, Menu, MenuTarget, SearchEdit, menu};
 use panes::{
     BigTableState, BigTableWidget, FieldsWidget, GridPane, MarkdownWidget, OneLineWidget,
     OptionalRenderer, Pane, SingleScrollablePane, TableGenerator, TableStyle,
@@ -246,22 +246,22 @@ impl TerminalDevice {
     fn multiply_delay(&mut self, timer: &mut Timer, factor: u16) {
         const MAX_TIMEOUT_SECS: u64 = 24 * 3_600; // 24 hours
         let delay = timer.get_delay();
-        if delay.as_secs() * (factor as u64) < MAX_TIMEOUT_SECS {
-            if let Some(delay) = delay.checked_mul(factor as u32) {
-                timer.set_delay(delay);
-                self.every = delay;
-            }
+        if delay.as_secs() * (factor as u64) < MAX_TIMEOUT_SECS
+            && let Some(delay) = delay.checked_mul(factor as u32)
+        {
+            timer.set_delay(delay);
+            self.every = delay;
         }
     }
 
     fn divide_delay(&mut self, timer: &mut Timer, factor: u16) {
         const MIN_TIMEOUT_MSECS: u128 = 1;
         let delay = timer.get_delay();
-        if delay.as_millis() / (factor as u128) > MIN_TIMEOUT_MSECS {
-            if let Some(delay) = delay.checked_div(factor as u32) {
-                timer.set_delay(delay);
-                self.every = delay;
-            }
+        if delay.as_millis() / (factor as u128) > MIN_TIMEOUT_MSECS
+            && let Some(delay) = delay.checked_div(factor as u32)
+        {
+            timer.set_delay(delay);
+            self.every = delay;
         }
     }
 

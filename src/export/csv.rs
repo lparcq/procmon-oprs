@@ -39,17 +39,17 @@ pub enum Error {
 }
 
 trait ToStr {
-    fn to_str(&self) -> Cow<str>;
+    fn to_str(&self) -> Cow<'_, str>;
 }
 
 impl ToStr for &String {
-    fn to_str(&self) -> Cow<str> {
+    fn to_str(&self) -> Cow<'_, str> {
         Cow::Borrowed(self)
     }
 }
 
 impl ToStr for &u64 {
-    fn to_str(&self) -> Cow<str> {
+    fn to_str(&self) -> Cow<'_, str> {
         Cow::Owned(format!("{self}"))
     }
 }
@@ -165,19 +165,19 @@ impl CsvExporter {
     where
         P: AsRef<Path>,
     {
-        if let Some(count) = self.count {
-            if rank + 1 < count {
-                let source = if rank == 0 {
-                    filename.as_ref().to_path_buf()
-                } else {
-                    CsvExporter::shifted_name(filename.as_ref(), rank)
-                };
-                let destination = CsvExporter::shifted_name(filename.as_ref(), rank + 1);
-                if destination.exists() {
-                    self.shift_file(filename, rank + 1)?;
-                }
-                fs::rename(source, destination)?;
+        if let Some(count) = self.count
+            && rank + 1 < count
+        {
+            let source = if rank == 0 {
+                filename.as_ref().to_path_buf()
+            } else {
+                CsvExporter::shifted_name(filename.as_ref(), rank)
+            };
+            let destination = CsvExporter::shifted_name(filename.as_ref(), rank + 1);
+            if destination.exists() {
+                self.shift_file(filename, rank + 1)?;
             }
+            fs::rename(source, destination)?;
         }
         Ok(())
     }
@@ -253,7 +253,7 @@ mod test {
     use super::{CsvLineOutput, ToStr};
 
     impl ToStr for &str {
-        fn to_str(&self) -> Cow<str> {
+        fn to_str(&self) -> Cow<'_, str> {
             Cow::Owned(self.to_string())
         }
     }

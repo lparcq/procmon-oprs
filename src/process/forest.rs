@@ -29,15 +29,14 @@ use super::{FormattedMetric, ProcessStat};
 
 #[cfg(not(test))]
 pub use procfs::{
-    process::{self, all_processes, Process},
     ProcResult,
+    process::{self, Process, all_processes},
 };
 
 #[cfg(test)]
 pub(crate) use super::mocks::procfs::{
-    self,
-    process::{self, all_processes, Process},
-    ProcResult,
+    self, ProcResult,
+    process::{self, Process, all_processes},
 };
 
 #[cfg(feature = "tui")]
@@ -464,22 +463,16 @@ impl Forest {
 
     /// reparent a node if parent PID has changed.
     fn reparent_node(&mut self, new_parent_pid: pid_t, node_id: &NodeId) {
-        if let Some(node) = self.arena.get(*node_id) {
-            if let Some(parent_node_id) = node.parent() {
-                if let Some(parent_pid) =
-                    self.arena.get(parent_node_id).map(|node| node.get().pid())
-                {
-                    if parent_pid != new_parent_pid {
-                        node_id.detach(&mut self.arena);
-                        match self.processes.get(&new_parent_pid) {
-                            Some(parent_node_id) => {
-                                parent_node_id.append(*node_id, &mut self.arena)
-                            }
-                            None => log::error!(
-                                "parent {new_parent_pid} should have been already in the tree"
-                            ),
-                        }
-                    }
+        if let Some(node) = self.arena.get(*node_id)
+            && let Some(parent_node_id) = node.parent()
+            && let Some(parent_pid) = self.arena.get(parent_node_id).map(|node| node.get().pid())
+            && parent_pid != new_parent_pid
+        {
+            node_id.detach(&mut self.arena);
+            match self.processes.get(&new_parent_pid) {
+                Some(parent_node_id) => parent_node_id.append(*node_id, &mut self.arena),
+                None => {
+                    log::error!("parent {new_parent_pid} should have been already in the tree")
                 }
             }
         }
@@ -547,7 +540,7 @@ impl Forest {
     /// Descendants of a pid
     ///
     /// Include the root process itself.
-    pub fn descendants(&self, pid: pid_t) -> ProcessResult<Descendants> {
+    pub fn descendants(&self, pid: pid_t) -> ProcessResult<Descendants<'_, '_>> {
         match self.processes.get(&pid) {
             Some(node_id) => Ok(Descendants {
                 forest: self,
@@ -681,8 +674,8 @@ mod tests {
     };
 
     use super::{
-        pid_t, procfs::ProcessBuilder, AcceptAllProcesses, Forest, Process, ProcessClassifier,
-        ProcessInfo,
+        AcceptAllProcesses, Forest, Process, ProcessClassifier, ProcessInfo, pid_t,
+        procfs::ProcessBuilder,
     };
 
     fn sorted<T, I>(input: I) -> Vec<T>

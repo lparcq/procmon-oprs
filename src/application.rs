@@ -148,7 +148,7 @@ impl<'a> State<'a> {
         self.manager.refresh(&mut self.collector)
     }
 
-    fn pane_data(&self) -> PaneData {
+    fn pane_data<'p>(&self) -> PaneData<'_, 'p> {
         match self.pane_kind {
             PaneKind::Main => PaneData::Collector(&self.collector),
             #[cfg(feature = "tui")]
@@ -387,10 +387,10 @@ impl<'s> Application<'s> {
             }
             if is_interactive {
                 #[cfg(feature = "tui")]
-                if let PauseStatus::Action(action) = device.pause(&mut timer)? {
-                    if !state.interact(&action)? {
-                        break;
-                    }
+                if let PauseStatus::Action(action) = device.pause(&mut timer)?
+                    && !state.interact(&action)?
+                {
+                    break;
                 }
             } else {
                 let mut remaining = Some(self.every);

@@ -30,8 +30,8 @@ use crate::{
 };
 
 use super::{
-    types::{Motion, Scroll},
     DataKind, PaneKind,
+    types::{Motion, Scroll},
 };
 
 /// Standard keys
@@ -301,7 +301,7 @@ impl Menu {
     }
 
     /// Return a slice iterator to the menu entries.
-    pub fn entries(&self) -> std::slice::Iter<MenuEntry> {
+    pub fn entries(&self) -> std::slice::Iter<'_, MenuEntry> {
         self.entries.iter()
     }
 
@@ -710,10 +710,10 @@ impl Bookmarks {
 
     /// Switch to a fixed string search.
     pub fn fixed_search(&mut self) {
-        if let Some(ref mut search) = self.search {
-            if !search.freeze() {
-                self.clear_search();
-            }
+        if let Some(ref mut search) = self.search
+            && !search.freeze()
+        {
+            self.clear_search();
         }
     }
 
@@ -795,17 +795,17 @@ impl Bookmarks {
             if self.marks.contains(&pid) {
                 marks.push(this_linepid);
             }
-            if let Some(selected_pid) = self.selected_pid {
-                if selected_pid == pid {
-                    selected_linepid = Some(this_linepid);
-                    parent_pid = pi.parent_pid();
-                }
+            if let Some(selected_pid) = self.selected_pid
+                && selected_pid == pid
+            {
+                selected_linepid = Some(this_linepid);
+                parent_pid = pi.parent_pid();
             }
-            if let Some(pattern) = pattern.as_ref() {
-                if pi.name().contains(pattern) {
-                    matches.push(this_linepid);
-                    occurrences.insert(pid);
-                }
+            if let Some(pattern) = pattern.as_ref()
+                && pi.name().contains(pattern)
+            {
+                matches.push(this_linepid);
+                occurrences.insert(pid);
             }
         }
         match selected_linepid {
@@ -929,8 +929,8 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{
-        menu, Action, Bookmarks, Key, MenuBuilder, MenuId, MenuTarget, Motion, ProcessIdentity,
-        Scroll, KEY_ABOUT, KEY_MENU_HELP,
+        Action, Bookmarks, KEY_ABOUT, KEY_MENU_HELP, Key, MenuBuilder, MenuId, MenuTarget, Motion,
+        ProcessIdentity, Scroll, menu,
     };
 
     #[test]
