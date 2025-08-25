@@ -165,7 +165,7 @@ struct Opt {
         short = 'r',
         description = "regular expression on the command line"
     )]
-    regex: Option<String>,
+    regexp: Option<String>,
 
     #[argh(
         option,
@@ -321,7 +321,7 @@ fn start(opt: Opt) -> anyhow::Result<()> {
     for name in opt.name {
         target_ids.push(TargetId::ProcessName(name));
     }
-    if let Some(regexp) = opt.regex {
+    if let Some(regexp) = opt.regexp {
         target_ids.push(TargetId::CommandLine(regexp));
     }
     if !opt.glob.is_empty() {

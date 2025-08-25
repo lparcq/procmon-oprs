@@ -95,7 +95,9 @@ Processes are selected using one of the four following options:
 
 - Option `--name`: monitor all processes with the given name.
 
-These options can be specified more than once.
+- Option `--regexp`: select processes that have a command line that matches the [regular expression](https://docs.rs/regex-lite/latest/regex_lite/#syntax).
+
+These options can be specified more than once except `--regexp` since regular expressions support alternatives.
 
 Export
 ------
