@@ -287,6 +287,34 @@ impl<'a> Iterator for Descendants<'a, '_> {
     }
 }
 
+/// Iterator on all processes in the forest.
+pub struct ForestIter<'a, 'b> {
+    root_iter: RootIter<'a, 'b>,
+    descendants: Option<indextree::Descendants<'b, ProcessInfo>>,
+}
+
+impl<'a: 'b, 'b> Iterator for ForestIter<'a, 'b> {
+    type Item = &'a ProcessInfo;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let forest = self.root_iter.forest;
+            if let Some(descendants) = &mut self.descendants
+                && let Some(node_id) = descendants.next()
+            {
+                return Some(forest.get_known_info(node_id));
+            }
+
+            // Move to next root
+            if let Some(root_id) = self.root_iter.inner.next() {
+                self.descendants = Some(forest.descendant_nodes(root_id));
+            } else {
+                return None;
+            }
+        }
+    }
+}
+
 /// Trait to implement filters.
 pub trait ProcessClassifier {
     fn accept(&self, pi: &ProcessInfo) -> bool;
@@ -537,6 +565,11 @@ impl Forest {
         }
     }
 
+    /// Descendant nodes of a node
+    fn descendant_nodes(&self, node_id: &NodeId) -> indextree::Descendants<'_, ProcessInfo> {
+        node_id.descendants(&self.arena)
+    }
+
     /// Descendants of a pid
     ///
     /// Include the root process itself.
@@ -544,9 +577,19 @@ impl Forest {
         match self.processes.get(&pid) {
             Some(node_id) => Ok(Descendants {
                 forest: self,
-                inner: node_id.descendants(&self.arena),
+                inner: self.descendant_nodes(node_id),
             }),
             None => Err(ProcessError::UnknownProcess(pid)),
+        }
+    }
+
+    /// Traverse the forest
+    ///
+    /// The order of PIDs is not preserved.
+    pub fn traverse(&self) -> ForestIter<'_, '_> {
+        ForestIter {
+            root_iter: self.iter_roots(),
+            descendants: None,
         }
     }
 
@@ -737,7 +780,7 @@ mod tests {
                 .parent_pid(parent_pid)
         }
 
-        /// Return a default builder with predefined name and parent pid is the last pid.
+        /// Return a default builder with predefined name and parent pid is the previous pid.
         fn builder(&mut self) -> ProcessBuilder {
             self.builder_with_pid(self.pid + 1)
         }
@@ -763,7 +806,7 @@ mod tests {
         ///
         /// The processes with pid from 0 to `count` are added in the forest.
         ///
-        /// The first process has no parent. By default, process parent is the last process.
+        /// The first process has no parent. By default, process parent is the previous process.
         ///
         /// Ex: [ (2, Some(0)), (3, None) ] means that the parent of process #2 is
         /// process #0 (the root) and that process #3 has no parent. It describes a
@@ -949,15 +992,28 @@ mod tests {
 
     #[test]
     /// Build a forest of two trees and check that there are two roots.
+    ///
+    /// Tree:
+    /// 0
+    /// |_1_2_3
+    /// 4
+    /// |_5_6_7
     fn test_multi_trees() {
+        const FOREST_SIZE: usize = 8;
         let mut factory = ProcessFactory::default();
-        let mut processes = shuffle(factory.with_parent_pids(&[(4, None)], 8));
+        let mut processes = shuffle(factory.with_parent_pids(&[(4, None)], FOREST_SIZE));
 
         let mut forest = Forest::new();
         forest.refresh_from(processes.drain(..), &AcceptAllProcesses::default());
 
-        let expected_pids = vec![1, 5];
-        let pids = sorted(forest.root_pids());
+        let expected_root_pids = vec![1, 5];
+        let root_pids = sorted(forest.root_pids());
+        assert_eq!(expected_root_pids, root_pids);
+
+        const PID_BOUND: i32 = (FOREST_SIZE + 1) as i32;
+        let expected_pids = (1..PID_BOUND).collect::<Vec<_>>();
+        let mut pids = forest.traverse().map(|p| p.pid()).collect::<Vec<_>>();
+        pids.sort();
         assert_eq!(expected_pids, pids);
     }
 

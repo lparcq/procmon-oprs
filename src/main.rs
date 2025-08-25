@@ -38,8 +38,8 @@ mod process;
 mod sighdr;
 
 use application::Application;
-use cfg::{DisplayMode, ExportType, LoggingLevel, LoggingSettings, CONFIG_FILE_NAME};
-use process::{matchers, parsers::parse_size, MetricFormat, SystemConf, TargetId};
+use cfg::{CONFIG_FILE_NAME, DisplayMode, ExportType, LoggingLevel, LoggingSettings};
+use process::{MetricFormat, SystemConf, TargetId, matchers, parsers::parse_size};
 
 #[cfg(feature = "tui")]
 use crate::console::theme::BuiltinTheme;
@@ -162,6 +162,13 @@ struct Opt {
 
     #[argh(
         option,
+        short = 'r',
+        description = "regular expression on the command line"
+    )]
+    regex: Option<String>,
+
+    #[argh(
+        option,
         short = 'g',
         description = "process by pattern matching (ex: syst*)"
     )]
@@ -169,7 +176,7 @@ struct Opt {
 
     #[argh(
         option,
-        short = 'r',
+        short = 'R',
         description = "the process id of the root in tree mode"
     )]
     root: Option<i32>,
@@ -313,6 +320,9 @@ fn start(opt: Opt) -> anyhow::Result<()> {
     }
     for name in opt.name {
         target_ids.push(TargetId::ProcessName(name));
+    }
+    if let Some(regexp) = opt.regex {
+        target_ids.push(TargetId::CommandLine(regexp));
     }
     if !opt.glob.is_empty() {
         matchers::glob(&opt.glob)?

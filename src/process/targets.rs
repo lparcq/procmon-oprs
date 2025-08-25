@@ -16,6 +16,7 @@
 
 use libc::pid_t;
 use log::error;
+use regex_lite::{self, Regex};
 use std::{
     io::{self, Read},
     path::{Path, PathBuf},
@@ -37,8 +38,16 @@ pub enum TargetError {
     InvalidPath(PathBuf),
     #[error("{0}: invalid process id file")]
     InvalidPidFile(PathBuf),
+    #[error("Invalid regular expression: {0}")]
+    InvalidRegExp(String),
     #[error("{0}")]
     ProcessError(ProcessError),
+}
+
+impl From<regex_lite::Error> for TargetError {
+    fn from(err: regex_lite::Error) -> Self {
+        TargetError::InvalidRegExp(err.to_string())
+    }
 }
 
 pub type TargetResult<T> = Result<T, TargetError>;
@@ -49,6 +58,7 @@ pub enum TargetId {
     Pid(pid_t),
     PidFile(PathBuf),
     ProcessName(String),
+    CommandLine(String),
     System,
 }
 
@@ -203,27 +213,36 @@ impl TargetContainer {
         Ok(())
     }
 
+    fn push_pid(&mut self, p: &ProcessInfo) {
+        match Target::new(p.pid()) {
+            Ok(target) => self.targets.push(target),
+            Err(err) => error!("{}: {err}", p.name()),
+        }
+    }
+
     /// Push a target.
     pub fn push(&mut self, target_id: &TargetId, forest: &ProcessForest) -> TargetResult<()> {
         match target_id {
             TargetId::System => {
                 self.with_system = true;
             }
-            TargetId::ProcessName(name) => {
-                forest.iter_roots().for_each(|p| {
-                    if let Ok(descendants) = forest.descendants(p.pid()) {
-                        descendants.for_each(|p| {
-                            if name == p.name() {
-                                match Target::new(p.pid()) {
-                                    Ok(target) => self.targets.push(target),
-                                    Err(err) => error!("{name}: {err}"),
-                                }
-                            }
-                        })
+            TargetId::ProcessName(name) => forest.traverse().for_each(|p| {
+                if name == p.name() {
+                    self.push_pid(p);
+                }
+            }),
+            TargetId::CommandLine(pattern) => {
+                let r = Regex::new(pattern)?;
+                forest.traverse().for_each(|p| {
+                    if let Ok(args) = p.process().cmdline() {
+                        let cmdline = args.join(" ");
+                        if r.is_match(&cmdline) {
+                            self.push_pid(p);
+                        }
                     }
-                });
+                })
             }
-            _ => self.push_by_pid(target_id)?,
+            TargetId::Pid(_) | TargetId::PidFile(_) => self.push_by_pid(target_id)?,
         };
         Ok(())
     }
