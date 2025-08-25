@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.40.0] - 2025-08-25
+
+### 🚀 Features
+
+- Add option --regexp to select processes with a command line that match
+  a regular expression.
+
+### 🚜 Refactor
+
+- Fix warnings
+
 ## [0.39.1] - 2025-08-03
 
 ### 🐛 Bug Fixes
@@ -14,6 +25,7 @@ All notable changes to this project will be documented in this file.
 - Fix clippy warnings
 - Update terminal-colorsaurus to version 1
 - Update xdg to version 3
+- Release procmon-oprs version 0.39.1
 
 ## [0.39.0] - 2025-06-15
 
