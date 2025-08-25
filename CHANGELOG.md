@@ -4,10 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [0.40.0] - 2025-08-25
 
-### 🚀 Features
+### 🐛 Bug Fixes
 
-- Add option --regexp to select processes with a command line that match
-  a regular expression.
+- Rename --regex as --regexp
 
 ### 🚜 Refactor
 
