@@ -106,17 +106,29 @@ pub fn format_result(res: ProcResult<PathBuf>) -> String {
 /// Based of the first element of the command line if it exists or the name of
 /// the executable.
 fn exe_name(process: &Process) -> Option<String> {
-    process
-        .cmdline()
-        .map(|c| c.first().map(PathBuf::from))
-        .ok()
-        .flatten()
-        .or_else(|| process.exe().ok())
+    let cmdline = process.cmdline().ok().flatten();
+    let exe = process.exe().ok();
+    let name = cmdline
+        .as_ref()
+        .and_then(|c| c.first().map(PathBuf::from))
+        .or(exe)
         .and_then(|path| {
             path.file_name()
                 .and_then(|os_name| os_name.to_str())
                 .map(|s| s.to_string())
-        })
+        });
+
+    if let Some(cmdline) = cmdline {
+        if let Some(name) = &name {
+            if name == "java" || name == "python" || name == "perl" {
+                if let Some(script) = cmdline.get(1) {
+                    return Some(format!("{}({})", name, script));
+                }
+            }
+        }
+    }
+
+    name
 }
 
 fn new_stat(process: &Process) -> ProcessResult<process::Stat> {
