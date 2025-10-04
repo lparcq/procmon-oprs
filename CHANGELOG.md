@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.41.0] - 2025-10-04
+
+### 🚀 Features
+
+- Upgrade procfs to version 0.18 with new file descriptor target.
+- Display the script/jar name if the process is java, python or perl.
+
+### 🚜 Refactor
+
+- Modifie exe_name pour inclure le nom du jar ou du script entre parenthèses pour les processus Java, Python et Perl
+
+### ⚙️ Miscellaneous Tasks
+
+- Remove unused type Unbounded
+
 ## [0.40.0] - 2025-08-25
 
 ### 🐛 Bug Fixes
@@ -11,6 +26,10 @@ All notable changes to this project will be documented in this file.
 ### 🚜 Refactor
 
 - Fix warnings
+
+### ⚙️ Miscellaneous Tasks
+
+- Release procmon-oprs version 0.40.0
 
 ## [0.39.1] - 2025-08-03
 
