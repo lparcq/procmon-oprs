@@ -14,111 +14,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use num_traits::{ConstZero, Saturating, Zero};
 use smart_default::SmartDefault;
-use std::{
-    cmp::{self, Ordering},
-    ops::{Add, Sub},
-};
+use std::cmp;
 
 macro_rules! void {
     ($e:expr) => {{
         let _ = $e;
     }};
-}
-
-/// Unsigned integer type with an infinite value.
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum Unbounded<T: Clone + Copy + Default> {
-    Value(T),
-    Infinite,
-}
-
-impl<T: Clone + Copy + Default + Add<Output = T> + Sub<Output = T> + Zero + ConstZero + PartialEq>
-    Zero for Unbounded<T>
-{
-    fn is_zero(&self) -> bool {
-        match self {
-            Unbounded::Value(value) => *value == T::ZERO,
-            _ => false,
-        }
-    }
-
-    fn zero() -> Self {
-        Self::Value(T::ZERO)
-    }
-}
-
-impl<T: Clone + Copy + Default + Add<Output = T> + Sub<Output = T> + Zero + ConstZero + PartialEq>
-    ConstZero for Unbounded<T>
-{
-    const ZERO: Self = Unbounded::Value(T::ZERO);
-}
-
-impl<T: Clone + Copy + Default + Add<Output = T>> Add for Unbounded<T>
-where
-    T: Add,
-{
-    type Output = Unbounded<T::Output>;
-    fn add(self, rhs: Unbounded<T>) -> Unbounded<T::Output> {
-        match (self, rhs) {
-            (Unbounded::Value(lhs), Unbounded::Value(rhs)) => Unbounded::Value(lhs + rhs),
-            _ => Unbounded::Infinite,
-        }
-    }
-}
-
-impl<T: Clone + Copy + Default + Sub<Output = T> + Saturating> Sub for Unbounded<T>
-where
-    T: Sub,
-{
-    type Output = Unbounded<T::Output>;
-    fn sub(self, rhs: Unbounded<T>) -> Unbounded<T::Output> {
-        match (self, rhs) {
-            (Unbounded::Value(lhs), Unbounded::Value(rhs)) => {
-                Unbounded::Value(lhs.saturating_sub(rhs))
-            }
-            _ => Unbounded::Infinite,
-        }
-    }
-}
-
-impl<T: Clone + Copy + Default + Add<Output = T> + Sub<Output = T>> Default for Unbounded<T> {
-    fn default() -> Self {
-        Unbounded::Value(T::default())
-    }
-}
-
-impl<T: Clone + Copy + Default + Add<Output = T> + Sub<Output = T> + PartialOrd + Ord + Saturating>
-    PartialOrd for Unbounded<T>
-{
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        match (self, other) {
-            (Unbounded::Value(value), Unbounded::Value(other_value)) => {
-                Some(value.cmp(other_value))
-            }
-            (Unbounded::Value(_), Unbounded::Infinite) => Some(Ordering::Less),
-            (Unbounded::Infinite, Unbounded::Value(_)) => Some(Ordering::Greater),
-            (Unbounded::Infinite, Unbounded::Infinite) => None,
-        }
-    }
-}
-
-impl<T: Clone + Copy + Default + Add<Output = T> + Sub<Output = T> + PartialEq + Saturating>
-    PartialEq for Unbounded<T>
-{
-    fn eq(&self, other: &Self) -> bool {
-        match self {
-            Unbounded::Value(value) => match other {
-                Unbounded::Value(other_value) => *value == *other_value,
-                Unbounded::Infinite => false,
-            },
-            Unbounded::Infinite => match other {
-                Unbounded::Value(_) => false,
-                Unbounded::Infinite => true,
-            },
-        }
-    }
 }
 
 /// Boolean properties applied to a 2-dimensions area.
@@ -163,7 +65,11 @@ impl MaxLength {
     }
 
     pub(crate) fn max(self, other: Self) -> Self {
-        if self.0 < other.0 { other } else { self }
+        if self.0 < other.0 {
+            other
+        } else {
+            self
+        }
     }
 
     /// Check the length of each lines.
