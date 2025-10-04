@@ -46,8 +46,8 @@ use super::{
 use crate::{
     console::theme::BuiltinTheme,
     process::{
+        format::{human_format, Unit},
         Collector, ProcessIdentity, ProcessSamples,
-        format::{Unit, human_format},
     },
 };
 
@@ -699,6 +699,7 @@ impl FilesTable {
             FDTarget::AnonInode(_) => "inode",
             FDTarget::MemFD(_) => "memfd",
             FDTarget::Other(_, _) => "other",
+            FDTarget::Unknown(_, _) => "unknown",
         }
     }
 
@@ -710,6 +711,7 @@ impl FilesTable {
             }
             FDTarget::AnonInode(value) | FDTarget::MemFD(value) => value.to_string(),
             FDTarget::Other(s, n) => format!("{s}[{n}]"),
+            FDTarget::Unknown(s1, s2) => format!("{s1}: {s2}"),
         }
     }
 }

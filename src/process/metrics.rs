@@ -102,9 +102,14 @@ pub enum MetricId {
     FdMemFile,
     #[strum(
         serialize = "fd:other",
-        message = "number of file descriptors in no other category"
+        message = "number of file descriptors with i-node in no other category"
     )]
     FdOther,
+    #[strum(
+        serialize = "fd:unknown",
+        message = "number of file descriptors in unknown category"
+    )]
+    FdUnknown,
     #[strum(
         serialize = "io:read:call",
         message = "number of read operations with system calls such as read(2) and pread(2)"
@@ -321,7 +326,8 @@ impl MetricId {
             | MetricId::FdPipe
             | MetricId::FdAnon
             | MetricId::FdMemFile
-            | MetricId::FdOther => MetricDataType::Gauge,
+            | MetricId::FdOther
+            | MetricId::FdUnknown => MetricDataType::Gauge,
             MetricId::IoReadCall
             | MetricId::IoReadTotal
             | MetricId::IoReadStorage

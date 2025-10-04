@@ -203,6 +203,7 @@ impl FdStats {
                 FDTarget::Path(_) => MetricId::FdFile,
                 FDTarget::Pipe(_) => MetricId::FdPipe,
                 FDTarget::Socket(_) => MetricId::FdSocket,
+                FDTarget::Unknown(_, _) => MetricId::FdUnknown,
             };
             if let Some(count_ref) = kinds.get_mut(&key) {
                 *count_ref += 1
@@ -425,6 +426,7 @@ impl ProcessStat {
                 | MetricId::FdMemFile
                 | MetricId::FdNet
                 | MetricId::FdOther
+                | MetricId::FdUnknown
                 | MetricId::FdPipe
                 | MetricId::FdSocket => {
                     self.on_fd_stats(process, |stat| stat.kinds[&metric.id] as u64)
