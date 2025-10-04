@@ -64,6 +64,7 @@ pub(crate) mod process {
         pid: pid_t,
         parent_pid: Rc<RefCell<pid_t>>,
         exe: Option<String>,
+        cmdline: Option<Vec<String>>,
         start_time: u64,
         cpu_time: Rc<RefCell<CpuTime>>,
         ttl: Option<Rc<RefCell<u16>>>,
@@ -74,6 +75,7 @@ pub(crate) mod process {
             pid: pid_t,
             parent_pid: pid_t,
             exe: Option<&str>,
+            cmdline: Option<Vec<String>>,
             start_time: u64,
             cpu_time: CpuTime,
             ttl: Option<u16>,
@@ -82,6 +84,7 @@ pub(crate) mod process {
                 pid,
                 parent_pid: Rc::new(RefCell::new(parent_pid)),
                 exe: exe.map(str::to_string),
+                cmdline,
                 start_time,
                 cpu_time: Rc::new(RefCell::new(cpu_time)),
                 ttl: ttl.map(RefCell::new).map(Rc::new),
@@ -90,7 +93,15 @@ pub(crate) mod process {
 
         pub(crate) fn new(pid: pid_t) -> ProcResult<Self> {
             let cpu_time = CpuTime::default();
-            Ok(Self::new_fake(pid, 0, None, 0, cpu_time, None))
+            Ok(Self::new_fake(pid, 0, None, None, 0, cpu_time, None))
+        }
+
+        pub(crate) fn with_cmdline(
+            exe: Option<&str>,
+            cmdline: Option<Vec<String>>,
+        ) -> ProcResult<Self> {
+            let cpu_time = CpuTime::default();
+            Ok(Self::new_fake(1, 0, exe, cmdline, 0, cpu_time, None))
         }
 
         pub(crate) fn reparent(&mut self, parent_pid: pid_t) {
@@ -134,9 +145,9 @@ pub(crate) mod process {
         }
 
         pub(crate) fn cmdline(&self) -> ProcResult<Vec<String>> {
-            self.exe
+            self.cmdline
                 .as_ref()
-                .map(|exe| vec![exe.to_string()])
+                .cloned()
                 .ok_or_else(|| new_error("no command line"))
         }
 
@@ -302,6 +313,7 @@ impl ProcessBuilder {
             self.pid,
             self.parent_pid,
             Some(&exe),
+            Some(vec![exe.to_string()]),
             self.start_time,
             self.cpu_time,
             self.ttl,
