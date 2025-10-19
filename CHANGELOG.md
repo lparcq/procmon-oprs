@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.42.0] - 2025-10-19
+
+### 🚀 Features
+
+- Better process name for interpreters like python.
+
 ## [0.41.0] - 2025-10-04
 
 ### 🚀 Features
@@ -16,6 +22,7 @@ All notable changes to this project will be documented in this file.
 ### ⚙️ Miscellaneous Tasks
 
 - Remove unused type Unbounded
+- Release procmon-oprs version 0.41.0
 
 ## [0.40.0] - 2025-08-25
 
