@@ -96,14 +96,6 @@ pub(crate) mod process {
             Ok(Self::new_fake(pid, 0, None, None, 0, cpu_time, None))
         }
 
-        pub(crate) fn with_cmdline(
-            exe: Option<&str>,
-            cmdline: Option<Vec<String>>,
-        ) -> ProcResult<Self> {
-            let cpu_time = CpuTime::default();
-            Ok(Self::new_fake(1, 0, exe, cmdline, 0, cpu_time, None))
-        }
-
         pub(crate) fn reparent(&mut self, parent_pid: pid_t) {
             *self.parent_pid.borrow_mut() = parent_pid;
         }

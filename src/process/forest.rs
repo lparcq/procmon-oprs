@@ -25,7 +25,7 @@ use std::{
     slice::Iter,
 };
 
-use super::{FormattedMetric, ProcessStat};
+use super::{FormattedMetric, ProcessStat, interpreters};
 
 #[cfg(not(test))]
 pub use procfs::{
@@ -101,35 +101,11 @@ pub fn format_result(res: ProcResult<PathBuf>) -> String {
     }
 }
 
-/// Returns the string that ends with the given suffix.
-pub fn find_string_with_suffix<'a>(strings: &'a [String], suffix: &'a str) -> Option<&'a String> {
-    strings.iter().find(|s| s.ends_with(suffix))
-}
-
-/// Path basename
-fn basename<S: AsRef<str>>(path: S) -> String {
-    let path = path.as_ref();
-    match path.rsplit_once('/') {
-        Some((_, name)) => name.to_string(),
-        None => path.to_string(),
-    }
-}
-
 fn basepath<P: AsRef<Path>>(path: P) -> Option<String> {
     path.as_ref()
         .file_name()
         .and_then(|os_name| os_name.to_str())
         .map(|s| s.to_string())
-}
-
-fn interpreter_ext(name: &str) -> Option<&'static str> {
-    match name {
-        "java" => Some(".jar"),
-        "python" => Some(".py"),
-        "perl" => Some(".pl"),
-        _ if name.starts_with("python") => Some(".py"),
-        _ => None,
-    }
 }
 
 /// Executable name
@@ -142,15 +118,7 @@ fn exe_name(process: &Process) -> Option<String> {
     process
         .cmdline()
         .ok()
-        .and_then(|cmdline| {
-            cmdline.first().map(basename).map(|name| {
-                match interpreter_ext(&name).and_then(|ext| find_string_with_suffix(&cmdline, ext))
-                {
-                    Some(script) => format!("{}({})", name, basename(script)),
-                    None => name,
-                }
-            })
-        })
+        .and_then(|cmdline| interpreters::friendly_name(&cmdline))
         .or_else(|| process.exe().ok().and_then(basepath))
 }
 
@@ -752,13 +720,9 @@ mod tests {
     };
 
     use super::{
-        AcceptAllProcesses, Forest, Process, ProcessClassifier, ProcessInfo, exe_name, pid_t,
+        AcceptAllProcesses, Forest, Process, ProcessClassifier, ProcessInfo, pid_t,
         procfs::ProcessBuilder,
     };
-
-    macro_rules! strings {
-        ($($x:expr),*) => (vec![$($x.to_string()),*]);
-    }
 
     fn sorted<T, I>(input: I) -> Vec<T>
     where
@@ -890,38 +854,6 @@ mod tests {
             let parent_pid = proc.stat().unwrap().ppid;
             assert_eq!(*expected_ppid, parent_pid);
         }
-    }
-
-    #[test]
-    fn test_exe_name() {
-        // Name from exe if there is no command line.
-        let p1 = Process::with_cmdline(Some("/bin/proc"), None).unwrap();
-        assert_eq!(Some("proc".to_string()), exe_name(&p1));
-
-        // Name from command line in priority
-        let p2 = Process::with_cmdline(Some("/bin/proc"), Some(strings!["/bin/proc1"])).unwrap();
-        assert_eq!(Some("proc1".to_string()), exe_name(&p2));
-
-        // Name for interpreter without script
-        let p3 = Process::with_cmdline(Some("/bin/python"), Some(strings!["/bin/python", "-V"]))
-            .unwrap();
-        assert_eq!(Some("python".to_string()), exe_name(&p3));
-
-        // Name for interpreter with a script
-        let p4 = Process::with_cmdline(
-            Some("/bin/java"),
-            Some(strings!["/bin/java", "-Dx=y", "prog.jar", "arg"]),
-        )
-        .unwrap();
-        assert_eq!(Some("java(prog.jar)".to_string()), exe_name(&p4));
-
-        // Name for python with a script
-        let p5 = Process::with_cmdline(
-            Some("/bin/python3"),
-            Some(strings!["/bin/python3", "-B", "/home/script.py", "arg"]),
-        )
-        .unwrap();
-        assert_eq!(Some("python3(script.py)".to_string()), exe_name(&p5));
     }
 
     #[test]
