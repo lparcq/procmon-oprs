@@ -62,7 +62,10 @@ impl Interpreter {
         let mut next_arg = false;
         for arg in cmdline.iter().skip(1) {
             match arg.strip_suffix(self.extension) {
-                Some(name) => return Some(format!("{prog_name}({name})")),
+                Some(path) => {
+                    let name = basename(path);
+                    return Some(format!("{prog_name}({name})"));
+                }
                 None if next_arg => return Some(format!("{prog_name}({arg})")),
                 None => {
                     if let Some(option) = self.mod_option {
@@ -107,42 +110,48 @@ mod tests {
 
     #[test]
     fn test_java_interpreter() {
+        let prog = "/path/to/prog.jar";
+
         // Name for interpreter without script
         let r1 = friendly_name(strings!["/usr/local/bin/java", "-V"]);
         assert_eq_some_string!("java", r1);
 
         // Name from jar alone
-        let r2 = friendly_name(strings!["/usr/bin/java", "-jar", "prog.jar"]);
+        let r2 = friendly_name(strings!["/usr/bin/java", "-jar", prog]);
         assert_eq_some_string!("java(prog)", r2);
 
         // Name from jar with arguments
-        let r3 = friendly_name(strings!["/bin/java", "-Dx=y", "-jar", "prog.jar", "arg"]);
+        let r3 = friendly_name(strings!["/bin/java", "-Dx=y", "-jar", prog, "arg"]);
         assert_eq_some_string!("java(prog)", r3);
     }
 
     #[test]
     fn test_perl_interpreter() {
+        let prog = "/path/to/prog.pl";
+
         // Name from exe if there is no command line
         let r1 = friendly_name(strings!["/usr/local/bin/perl"]);
         assert_eq_some_string!("perl", r1);
 
         // Name from script by extension
-        let r2 = friendly_name(strings!["/usr/bin/perl", "prog.pl"]);
+        let r2 = friendly_name(strings!["/usr/bin/perl", prog]);
         assert_eq_some_string!("perl(prog)", r2);
 
         // Name for module
-        let r3 = friendly_name(strings!["/bin/perl", "-Dtls", "prog.pl", "arg"]);
+        let r3 = friendly_name(strings!["/bin/perl", "-Dtls", prog, "arg"]);
         assert_eq_some_string!("perl(prog)", r3);
     }
 
     #[test]
     fn test_python_interpreter() {
+        let prog = "/path/to/prog.py";
+
         // Name from exe if there is no command line.
         let r1 = friendly_name(strings!["/usr/local/bin/python", "-h"]);
         assert_eq_some_string!("python", r1);
 
         // Name from script by extension
-        let r2 = friendly_name(strings!["/usr/bin/python", "-v", "prog.py"]);
+        let r2 = friendly_name(strings!["/usr/bin/python", "-v", prog]);
         assert_eq_some_string!("python(prog)", r2);
 
         // Name for python with a module
