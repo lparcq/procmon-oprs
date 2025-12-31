@@ -35,13 +35,13 @@ globset = "0.4"
 indextree = "4"
 itertools = "0.14"
 libc = "0.2"
-light-ini = "0.3"
+light-ini = "0.4"
 log = "0"
 memchr = "2"
 nom = "8"
 num-traits = { version = "0.2", optional = true }
 procfs = "0.18"
-ratatui = { version = "0.29", default-features = false, features = [
+ratatui = { version = "0.30", default-features = false, features = [
     "termion",
 ], optional = true }
 regex-lite = "0.1"
