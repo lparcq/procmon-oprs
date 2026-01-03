@@ -4,6 +4,7 @@ Oprs
 ![Rust](https://github.com/lparcq/procmon-oprs/workflows/Rust/badge.svg)
 [![Crates.io](https://img.shields.io/crates/v/procmon-oprs.svg)](https://crates.io/crates/procmon-oprs)
 ![Crates.io License](https://img.shields.io/crates/l/procmon-oprs)
+[![Built With Ratatui](https://ratatui.rs/built-with-ratatui/badge.svg)](https://ratatui.rs/)
 
 Oprs is a process monitor for Linux. The name is an abbreviation for Observe Process ReSources.
 
