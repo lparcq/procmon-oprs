@@ -30,7 +30,7 @@ use crate::{
     console::{EventChannel, is_tty, theme::BuiltinTheme},
     process::{
         self, Aggregation, Collector, FormattedMetric, Process, ProcessDetails, ProcessFilter,
-        format::human_duration,
+        Signal, format::human_duration,
     },
 };
 
@@ -60,6 +60,7 @@ const HELP: &str = include_str!("help_en.md");
 pub enum Interaction {
     None,
     Filter(ProcessFilter),
+    KillProcess(Signal),
     SwitchBack,
     SwitchToHelp,
     SwitchTo(DataKind),
@@ -331,6 +332,14 @@ impl TerminalDevice {
             Action::SelectNext => void!(self.set_bookmarks_action(BookmarkAction::Next)),
             Action::ClearMarks => self.clear_bookmarks(),
             Action::ToggleMarks => void!(self.set_bookmarks_action(BookmarkAction::ToggleMarks)),
+            Action::PopMenu
+            | Action::SigCont
+            | Action::SigHup
+            | Action::SigKill
+            | Action::SigStop
+            | Action::SigTerm
+            | Action::SigUsr1
+            | Action::SigUsr2 => self.pop_menu(),
         }
         Ok(action)
     }
@@ -367,6 +376,13 @@ impl TerminalDevice {
             Action::SwitchToEnvironment => Interaction::SwitchTo(DataKind::Environment),
             Action::SwitchToFiles => Interaction::SwitchTo(DataKind::Files),
             Action::SwitchToMaps => Interaction::SwitchTo(DataKind::Maps),
+            Action::SigCont => Interaction::KillProcess(Signal::SIGCONT),
+            Action::SigHup => Interaction::KillProcess(Signal::SIGHUP),
+            Action::SigKill => Interaction::KillProcess(Signal::SIGKILL),
+            Action::SigStop => Interaction::KillProcess(Signal::SIGSTOP),
+            Action::SigTerm => Interaction::KillProcess(Signal::SIGTERM),
+            Action::SigUsr1 => Interaction::KillProcess(Signal::SIGUSR1),
+            Action::SigUsr2 => Interaction::KillProcess(Signal::SIGUSR2),
             _ => Interaction::None,
         })
     }
@@ -388,6 +404,16 @@ impl TerminalDevice {
     /// Menu widget in default case.
     fn default_menu(&self) -> OneLineWidget<'_> {
         OneLineWidget::with_menu(self.last_menu().entries())
+    }
+
+    /// Remove last menu
+    fn pop_menu(&mut self) {
+        if self.menu_stack.len() > 1
+            && let Some(menu) = self.menu_stack.pop()
+        {
+            log::debug!("pop menu {}", menu.name());
+        }
+        log::debug!("current menu {}", self.last_menu().name());
     }
 
     /// Transition between panes.
@@ -768,11 +794,8 @@ impl DisplayDevice for TerminalDevice {
                         Some(action) => {
                             // Either the event is mapped to an action or the menu have a self-action.
                             let action = self.react(action, timer)?;
-                            if action.parent_menu() && self.menu_stack.len() > 1 {
-                                if let Some(menu) = self.menu_stack.pop() {
-                                    log::debug!("pop menu {}", menu.name());
-                                }
-                                log::debug!("current menu {}", self.last_menu().name());
+                            if action.parent_menu() {
+                                self.pop_menu();
                             }
                             Ok(PauseStatus::Action(self.interaction(action)))
                         }

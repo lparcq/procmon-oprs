@@ -226,6 +226,11 @@ impl<'a> State<'a> {
                     self.pane_kind = PaneKind::Process(*kind);
                 }
             }
+            Interaction::KillProcess(signal) => {
+                if let Some(details) = &self.details {
+                    details.process().kill(*signal);
+                }
+            }
             Interaction::SelectPid(pid) => {
                 self.details = Self::get_details(*pid, self.format);
                 if self.details.is_some() {

@@ -35,12 +35,13 @@ use super::{MetricFormat, MetricNamesParser, Sample};
 const INACTIVITY: u16 = 5;
 
 /// High-level filter on processes
-#[derive(Clone, Copy, Debug, StrumDisplay)]
+#[derive(Clone, Copy, Default, Debug, StrumDisplay)]
 pub enum ProcessFilter {
     #[cfg(feature = "tui")]
     #[strum(serialize = "none")]
     None,
     #[strum(serialize = "users")]
+    #[default]
     UserLand,
     #[cfg(feature = "tui")]
     #[strum(serialize = "active")]
@@ -48,12 +49,6 @@ pub enum ProcessFilter {
     #[cfg(feature = "tui")]
     #[strum(serialize = "myself")]
     CurrentUser,
-}
-
-impl Default for ProcessFilter {
-    fn default() -> Self {
-        Self::UserLand
-    }
 }
 
 /// Context for mananagers.

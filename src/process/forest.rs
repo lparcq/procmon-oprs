@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2024-2025  Laurent Pelecq
+// Copyright (C) 2024-2026  Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -17,6 +17,7 @@
 use getset::{CopyGetters, Getters};
 use indextree::{Arena, NodeId};
 use libc::pid_t;
+use log::error;
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
@@ -24,6 +25,7 @@ use std::{
     path::{Path, PathBuf},
     slice::Iter,
 };
+use strum::IntoStaticStr;
 
 use super::{FormattedMetric, ProcessStat, interpreters};
 
@@ -126,6 +128,40 @@ fn new_stat(process: &Process) -> ProcessResult<process::Stat> {
     process
         .stat()
         .map_err(|_| ProcessError::UnknownProcess(process.pid()))
+}
+
+/// Supported signals
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Clone, Copy, Debug, IntoStaticStr)]
+pub enum Signal {
+    SIGHUP,
+    SIGKILL,
+    SIGUSR1,
+    SIGUSR2,
+    SIGTERM,
+    SIGCONT,
+    SIGSTOP,
+}
+
+impl From<Signal> for libc::c_int {
+    fn from(val: Signal) -> libc::c_int {
+        match val {
+            // SIGHUP x86/ARM/others, Alpha/SPARC, MIPS and PARISC: 1
+            Signal::SIGHUP => 1,
+            // SIGKILL in x86/ARM/others, Alpha/SPARC, MIPS and PARISC: 9
+            Signal::SIGKILL => 9,
+            // SIGUSR1 x86/ARM/others: 10, Alpha/SPARC: 30, MIPS and PARISC: 16
+            Signal::SIGUSR1 => 10,
+            // SIGUSR2 x86/ARM/others: 12, Alpha/SPARC: 31, MIPS and PARISC: 17
+            Signal::SIGUSR2 => 12,
+            // SIGTERM x86/ARM/others, Alpha/SPARC, MIPS and PARISC: 15
+            Signal::SIGTERM => 15,
+            // SIGCONT x86/ARM/others: 18, Alpha/SPARC: 19, MIPS: 25, PARISC: 26
+            Signal::SIGCONT => 18,
+            // SIGSTOP x86/ARM/others: 19, Alpha/SPARC: 17, MIPS: 23, PARISC: 24
+            Signal::SIGSTOP => 19,
+        }
+    }
 }
 
 /// Record CPU activity.
@@ -257,6 +293,15 @@ impl ProcessInfo {
         self.stats
             .borrow_mut()
             .extract_metrics(metrics, &self.process)
+    }
+
+    pub fn kill(&self, signal: Signal) {
+        let ret = unsafe { libc::kill(self.pid, signal.into()) };
+        if ret != 0 {
+            let pid = self.pid;
+            let signal: &'static str = signal.into();
+            error!("cannot kill {pid} with signal {signal}: errno {ret}");
+        }
     }
 }
 

@@ -1,5 +1,5 @@
 // Oprs -- process monitor for Linux
-// Copyright (C) 2024 Laurent Pelecq
+// Copyright (C) 2024-2026 Laurent Pelecq
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -38,7 +38,7 @@ pub(crate) use self::collector::{Collector, ProcessIdentity, ProcessSamples};
 
 #[cfg(feature = "tui")]
 pub(crate) use self::forest::format_result;
-pub(crate) use self::forest::{Forest, Process, ProcessError, ProcessInfo, ProcessResult};
+pub(crate) use self::forest::{Forest, Process, ProcessError, ProcessInfo, ProcessResult, Signal};
 
 pub(crate) use self::managers::{FlatProcessManager, ForestProcessManager, ProcessManager};
 #[cfg(feature = "tui")]

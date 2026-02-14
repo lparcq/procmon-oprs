@@ -51,6 +51,14 @@ const KEY_GOTO_TBL_LEFT: Key = Key::Home;
 const KEY_GOTO_TBL_RIGHT: Key = Key::End;
 const KEY_GOTO_TBL_TOP: Key = Key::CtrlHome;
 const KEY_HELP: Key = Key::Char('?');
+const KEY_KILL: Key = Key::Char('k');
+const KEY_KILL_TERM: Key = Key::Char('t');
+const KEY_KILL_HUP: Key = Key::Char('h');
+const KEY_KILL_KILL: Key = Key::Char('K');
+const KEY_KILL_CONT: Key = Key::Char('c');
+const KEY_KILL_STOP: Key = Key::Char('s');
+const KEY_KILL_USR1: Key = Key::Char('1');
+const KEY_KILL_USR2: Key = Key::Char('2');
 const KEY_LIMITS: Key = Key::Char('l');
 const KEY_MAPS: Key = Key::Char('m');
 const KEY_MARK_CLEAR: Key = Key::Ctrl('c');
@@ -92,6 +100,13 @@ pub enum Action {
     GotoTableLeft,
     GotoTableRight,
     GotoTableTop,
+    SigCont,
+    SigHup,
+    SigKill,
+    SigStop,
+    SigTerm,
+    SigUsr1,
+    SigUsr2,
     SwitchToAbout,
     SwitchToHelp,
     SwitchBack,
@@ -105,6 +120,7 @@ pub enum Action {
     MultiplyTimeout(u16),
     PushChar(char),
     PopChar,
+    PopMenu,
     Quit,
     ScrollLeft,
     ScrollLineDown,
@@ -217,20 +233,36 @@ impl MenuEntry {
 
 #[derive(Clone, Copy, Debug, SmartDefault, IntoStaticStr)]
 pub enum MenuId {
+    /// Single process details.
     Details,
+    /// Sub-menu Edit in main pane.
     Edit,
+    /// Single process environment.
     Environment,
+    /// Single process files.
     Files,
+    /// Sub-menu Filters in main pane.
     Filters,
+    /// Sub-menu Help in main pane.
     Help,
+    /// Sub-menu for the help page in help pane.
     HelpMessage,
+    /// Sub-menu for incremental search in main pane.
     IncrementalSearch,
+    /// Sub-menu Kill Process in single process pane.
+    KillProcess,
+    /// Single process limits.
     Limits,
     #[default]
+    /// Main pane.
     Main,
+    /// Single process maps.
     Maps,
+    /// Sub-menu Navigate in main pane.
     Navigate,
+    /// Sub-menu Search in main pane.
     Search,
+    /// Sub-menu Select in main pane.
     Select,
     #[cfg(test)]
     DuplicatedMenu,
@@ -255,6 +287,7 @@ impl MenuId {
                 | (Self::Help, PaneKind::Main)
                 | (Self::HelpMessage, PaneKind::Help)
                 | (Self::IncrementalSearch, PaneKind::Main)
+                | (Self::KillProcess, PaneKind::Process(DataKind::Details))
                 | (Self::Limits, PaneKind::Process(DataKind::Limits))
                 | (Self::Main, PaneKind::Main)
                 | (Self::Maps, PaneKind::Process(DataKind::Maps))
@@ -271,9 +304,12 @@ impl MenuId {
 /// displayed or not.
 #[derive(Debug, Default, Getters)]
 pub struct Menu {
-    /// Menu name
+    /// Menu id
     #[getset(get = "pub")]
     id: MenuId,
+    /// Menu name
+    #[getset(get = "pub")]
+    name: &'static str,
     /// The action associated with this menu.
     #[getset(get = "pub")]
     action: Action,
@@ -291,13 +327,10 @@ impl Menu {
     fn new(id: MenuId) -> Self {
         Self {
             id,
+            name: id.into(),
             action: Action::None,
             ..Default::default()
         }
-    }
-
-    pub fn name(&self) -> &'static str {
-        self.id.into()
     }
 
     /// Return a slice iterator to the menu entries.
@@ -312,7 +345,7 @@ impl Menu {
             .cloned()
             .or_else(|| {
                 self.shortcuts.get(key).map(|a| {
-                    log::debug!("menu {}: action {a:?}", self.name());
+                    log::debug!("menu {}: action {a:?}", self.name);
                     MenuTarget::Action(*a)
                 })
             })
@@ -324,7 +357,7 @@ impl Menu {
                         _ => None,
                     }
                 } else {
-                    log::debug!("menu {}: unknown key {:?}", self.name(), key);
+                    log::debug!("menu {}: unknown key {:?}", self.name, key);
                     None
                 }
             })
@@ -349,6 +382,12 @@ impl MenuBuilder {
 
     fn menu(&mut self) -> &mut Menu {
         Rc::get_mut(&mut self.0).expect("no reference to menu when constructed")
+    }
+
+    /// Change default name
+    fn with_name(mut self, name: &'static str) -> Self {
+        self.menu().name = name;
+        self
     }
 
     /// Add a target.
@@ -425,12 +464,11 @@ impl MenuBuilder {
     }
 
     /// Duplicate a menu with a different self actions.
-    fn duplicate(id: MenuId, menu: &Menu, action: Action) -> Rc<Menu> {
+    fn duplicate(id: MenuId, menu: &Menu, action: Action) -> Self {
         MenuBuilder::new(id)
             .import_actions(menu)
             .import_shortcuts(menu)
             .with_self_action(action)
-            .build()
     }
 }
 
@@ -439,7 +477,7 @@ pub fn menu() -> Rc<Menu> {
     let menu_edit = MenuBuilder::new(MenuId::Edit)
         .with_action(KEY_FASTER, "Faster", Action::DivideTimeout(2))
         .with_action(KEY_SLOWER, "Slower", Action::MultiplyTimeout(2))
-        .with_shortcut(KEY_ESCAPE, Action::SwitchBack)
+        .with_shortcut(KEY_ESCAPE, Action::PopMenu)
         //.new(KEY_with_action, "Settings", Action::SwitchToSettings))
         .build();
     let menu_nav = MenuBuilder::new(MenuId::Navigate)
@@ -455,28 +493,44 @@ pub fn menu() -> Rc<Menu> {
         .with_action(KEY_GOTO_TBL_BOTTOM, "Table Bottom", Action::GotoTableBottom)
         .with_action(KEY_GOTO_TBL_LEFT, "Table Left", Action::GotoTableLeft)
         .with_action(KEY_GOTO_TBL_RIGHT, "Table Right", Action::GotoTableRight)
-        .with_shortcut(KEY_ESCAPE, Action::SwitchBack)
+        .with_shortcut(KEY_ESCAPE, Action::PopMenu)
         .build();
     let menu_help_msg =
-        MenuBuilder::duplicate(MenuId::HelpMessage, &menu_nav, Action::SwitchToHelp);
+        MenuBuilder::duplicate(MenuId::HelpMessage, &menu_nav, Action::SwitchToHelp)
+            .with_name("Help Page")
+            .with_shortcut(KEY_ESCAPE, Action::SwitchBack)
+            .build();
     let menu_help = MenuBuilder::new(MenuId::Help)
         .with_menu(KEY_HELP, Rc::clone(&menu_help_msg))
         .with_action(KEY_ABOUT, "About", Action::SwitchToAbout)
         .with_action(KEY_QUIT, "Quit", Action::Quit)
-        .with_shortcut(KEY_ESCAPE, Action::SwitchBack)
+        .with_shortcut(KEY_ESCAPE, Action::PopMenu)
         .build();
     let menu_process_env =
-        MenuBuilder::duplicate(MenuId::Environment, &menu_nav, Action::SwitchToEnvironment);
+        MenuBuilder::duplicate(MenuId::Environment, &menu_nav, Action::SwitchToEnvironment).build();
     let menu_process_files =
-        MenuBuilder::duplicate(MenuId::Files, &menu_nav, Action::SwitchToFiles);
+        MenuBuilder::duplicate(MenuId::Files, &menu_nav, Action::SwitchToFiles).build();
     let menu_process_limits =
-        MenuBuilder::duplicate(MenuId::Limits, &menu_nav, Action::SwitchToLimits);
-    let menu_process_maps = MenuBuilder::duplicate(MenuId::Maps, &menu_nav, Action::SwitchToMaps);
+        MenuBuilder::duplicate(MenuId::Limits, &menu_nav, Action::SwitchToLimits).build();
+    let menu_process_maps =
+        MenuBuilder::duplicate(MenuId::Maps, &menu_nav, Action::SwitchToMaps).build();
+    let menu_kill_process = MenuBuilder::new(MenuId::KillProcess)
+        .with_name("Kill")
+        .with_action(KEY_KILL_TERM, "Term", Action::SigTerm)
+        .with_action(KEY_KILL_HUP, "Hup", Action::SigHup)
+        .with_action(KEY_KILL_KILL, "Kill", Action::SigKill)
+        .with_action(KEY_KILL_CONT, "Cont", Action::SigCont)
+        .with_action(KEY_KILL_STOP, "Stop", Action::SigStop)
+        .with_action(KEY_KILL_USR1, "Usr1", Action::SigUsr1)
+        .with_action(KEY_KILL_USR2, "Usr2", Action::SigUsr2)
+        .with_shortcut(KEY_ESCAPE, Action::PopMenu)
+        .build();
     let menu_details = MenuBuilder::new(MenuId::Details)
         .with_menu(KEY_ENV, menu_process_env)
         .with_menu(KEY_FILES, menu_process_files)
         .with_menu(KEY_LIMITS, menu_process_limits)
         .with_menu(KEY_MAPS, menu_process_maps)
+        .with_menu(KEY_KILL, menu_kill_process)
         .with_action(KEY_SELECT_PARENT, "Parent", Action::SelectParentDetails)
         .import_actions(&menu_nav)
         .with_shortcut(KEY_ESCAPE, Action::SwitchBack)
@@ -484,6 +538,7 @@ pub fn menu() -> Rc<Menu> {
         .build();
     let menu_isearch = MenuBuilder::new(MenuId::IncrementalSearch)
         .enable_char_stream()
+        .with_name("Incremental Search")
         .with_shortcut(KEY_ENTER, Action::SearchExit)
         .with_shortcut(KEY_SEARCH_NEXT, Action::SelectNext)
         .with_shortcut(KEY_SEARCH_PREVIOUS, Action::SelectPrevious)
@@ -499,7 +554,7 @@ pub fn menu() -> Rc<Menu> {
             Action::SelectPrevious,
         )
         .with_action(KEY_SELECT_NEXT, "Next Match", Action::SelectNext)
-        .with_shortcut(KEY_ESCAPE, Action::SwitchBack)
+        .with_shortcut(KEY_ESCAPE, Action::PopMenu)
         .build();
     let menu_filter = MenuBuilder::new(MenuId::Filters)
         .with_action(KEY_FILTER_NONE, "None", Action::FilterNone)
