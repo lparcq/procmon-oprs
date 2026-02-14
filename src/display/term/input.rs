@@ -1046,7 +1046,8 @@ mod tests {
 
         // Create a duplicate menu with a different self action
         let duplicated_menu =
-            MenuBuilder::duplicate(MenuId::DuplicatedMenu, &original_menu, Action::ChangeScope);
+            MenuBuilder::duplicate(MenuId::DuplicatedMenu, &original_menu, Action::ChangeScope)
+                .build();
 
         // Action is set
         assert!(matches!(duplicated_menu.action, Action::ChangeScope));
