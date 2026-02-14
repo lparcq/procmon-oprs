@@ -13,6 +13,7 @@ All notable changes to this project will be documented in this file.
 - Update dependencies
 - Add badge build with ratatui in readme
 - Update dependencies
+- Release procmon-oprs version 0.43.0
 
 ## [0.42.1] - 2025-10-20
 
