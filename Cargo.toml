@@ -29,7 +29,7 @@ anyhow = "1"
 argh = "0.1"
 chrono = "0.4"
 console = "0"
-ctrlc = { version = "3.0", features = ["termination"] }
+ctrlc = { version = "3.5", features = ["termination"] }
 getset = "0.1"
 globset = "0.4"
 indextree = "4"
@@ -55,7 +55,7 @@ thiserror = "2"
 xdg = "3"
 
 [dev-dependencies]
-rand = "0.9"
+rand = "0.10"
 rstest = "0.26"
 
 [profile.release]
