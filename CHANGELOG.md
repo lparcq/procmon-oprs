@@ -2,12 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.43.0] - 2026-02-14
+
+### 🚀 Features
+
+- Add kill process feature in process details
+
+### ⚙️ Miscellaneous Tasks
+
+- Update dependencies
+- Add badge build with ratatui in readme
+- Update dependencies
+
 ## [0.42.1] - 2025-10-20
 
 ### 🐛 Bug Fixes
 
 - Display only basename of scripts in process name
 - Better process name for interpreters like python
+
+### ⚙️ Miscellaneous Tasks
+
+- Release procmon-oprs version 0.42.1
 
 ## [0.42.0] - 2025-10-19
 
