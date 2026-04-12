@@ -47,7 +47,7 @@ ratatui = { version = "0.30", default-features = false, features = [
 regex-lite = "0.1"
 simplelog = "0.12"
 smart-default = "0.7"
-strum = { version = "0.27", features = ["derive"] }
+strum = { version = "0.28", features = ["derive"] }
 supports-color = { version = "3", optional = true }
 terminal-colorsaurus = { version = "1", optional = true }
 termion = { version = "4", optional = true }
